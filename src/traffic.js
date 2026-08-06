@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { rand, clamp, choice, lerpAngle, makeTaxiTexture, makePlateTexture, mergeColored, makeSpeechSprite, updateSpeechSprite, isInPlayerView } from './utils.js';
+import { rand, clamp, choice, lerpAngle, makeTaxiTexture, makePlateTexture, mergeColored, makeSpeechSprite, updateSpeechSprite } from './utils.js';
 import { Events } from './eventbus.js';
 
 const _tempTrafficWp = { x: 0, z: 0 };
@@ -71,18 +71,6 @@ export class TrafficManager {
         this.say(d.car, choice(DRIVER_RAM_QUOTES), 3.0);
       }
     });
-  }
-
-  /* Реплика водителя машины трафика в 3D-облаке речи */
-  say(car, text, duration = 3.0) {
-    if (!car.speechSprite) {
-      car.speechSprite = makeSpeechSprite(text);
-      car.speechSprite.position.y = 2.6;
-      car.mesh.add(car.speechSprite);
-    } else {
-      updateSpeechSprite(car.speechSprite, text);
-    }
-    car.speechT = duration;
   }
 
   /* --- Сборка модели типа (каждый вызов — новая машина) --- */

@@ -195,6 +195,8 @@ export class PedestrianManager {
     p.angerT = 0; p.kickT = 0; p.kickCd = 0; p.speechT = 0;
     p.chatCd = rand(10, 30);
     if (p.speechSprite) updateSpeechSprite(p.speechSprite, '');
+    const wp = this._worldPos(p, _tempPedWp);
+    p.x = wp.x; p.z = wp.z;
     this._sync(p);
   }
 
@@ -532,9 +534,8 @@ export class PedestrianManager {
   }
 
   _sync(p) {
-    const wp = this._worldPos(p, _tempPedWpSync);
-    const h = this.world ? this.world.heightAt(wp.x, wp.z) : 0;
-    p.mesh.position.set(wp.x, h + 0.02, wp.z);
+    const h = this.world ? this.world.heightAt(p.x, p.z) : 0;
+    p.mesh.position.set(p.x, h + 0.02, p.z);
     if (p.knockT > 0) {
       p.mesh.rotation.set(0, Math.atan2(p.fvx, p.fvz), Math.PI / 2);
     } else {
