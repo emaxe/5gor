@@ -6910,6 +6910,13 @@ class Game {
     if (!this.clock) { this.clock = new THREE.Clock(); return; }
     const t0 = this._debugOverlay ? performance.now() : 0;
     try { this._update(dt); } catch (e) { showError(e); }
+
+    const throttled = this._renderThrottle && this._renderThrottle > 0;
+    if (throttled) {
+      this._renderAccum = (this._renderAccum || 0) + dt;
+      if (this._renderAccum < 1 / 15) return;
+      this._renderAccum = 0;
+    }
     this.renderer.render(this.scene, this.camera);
     if (this._debugOverlay) this._updateDebugOverlay(dt, performance.now() - t0);
   }
@@ -6955,11 +6962,12 @@ class Game {
       return;
     }
     if (st === 'driving') {
+      this._renderThrottle = 0;
       this._drive(dt);
       return;
     }
-    // пауза, карта, настройки, итоги — мир замер
-    this.renderer.render(this.scene, this.camera);
+    // пауза, карта, настройки, итоги — мир замер, троттлинг рендера
+    this._renderThrottle = 1;
   }
 
   _drive(dt) {
