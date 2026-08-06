@@ -6319,6 +6319,37 @@ class UIManager {
 
 
 
+const RAIN_VERT = `
+uniform float uTime;
+uniform float uFallSpeed;   // м/с, ЕДИНИЦЫ КАК В СТАРОМ КОДЕ: 38.0, а не 38/uHeight
+uniform float uWindX;
+uniform float uWindZ;
+uniform float uHeight;
+uniform float uSize;        // мировой радиус капли (был 0.3 у PointsMaterial)
+uniform float uScale;       // калибровочный коэффициент перспективного attenuation
+
+// position.x = baseX, position.y = phase[0..1], position.z = baseZ (тот же смысл, что в seed-буфере)
+
+void main() {
+  float t = mod(uTime * uFallSpeed + position.y * uHeight, uHeight);
+  float y = uHeight - t;                    // падение сверху вниз, y ∈ [0, uHeight)
+  float fallProgress = t / uFallSpeed;      // время с момента последнего "сброса" этой капли, сек
+  float x = position.x + fallProgress * uWindX;
+  float z = position.z + fallProgress * uWindZ;
+
+  vec4 mvPosition = modelViewMatrix * vec4(x, y, z, 1.0);
+  gl_Position = projectionMatrix * mvPosition;
+  gl_PointSize = uSize * (uScale / -mvPosition.z);
+}
+`;
+
+const RAIN_FRAG = `
+uniform float uOpacity;
+void main() {
+  gl_FragColor = vec4(0.58, 0.72, 0.88, uOpacity);
+}
+`;
+
 /**
  * Главный класс игры, управляющий игровым циклом, состояниями, рендерером и подсистемами.
  */
@@ -6408,6 +6439,9 @@ class Game {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     window.addEventListener('resize', () => {
       this.renderer.setSize(window.innerWidth, window.innerHeight);
+      if (this.rainUniforms) {
+        this.rainUniforms.uScale.value = window.innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(62) / 2));
+      }
     });
   }
 
@@ -6441,23 +6475,34 @@ class Game {
     this.stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, sizeAttenuation: false, transparent: true, opacity: 0 }));
     this.scene.add(this.stars);
 
-    // дождь (1200 частиц)
+    // дождь (1200 частиц, анимация на GPU через ShaderMaterial)
     const RAIN_COUNT = 1200;
     const rainGeo = new THREE.BufferGeometry();
-    const rainPos = new Float32Array(RAIN_COUNT * 3);
+    const rainSeeds = new Float32Array(RAIN_COUNT * 3);
     for (let i = 0; i < RAIN_COUNT; i++) {
-      rainPos[i * 3] = (Math.random() - 0.5) * 220;
-      rainPos[i * 3 + 1] = Math.random() * 55;
-      rainPos[i * 3 + 2] = (Math.random() - 0.5) * 220;
+      rainSeeds[i * 3] = (Math.random() - 0.5) * 220;  // base X
+      rainSeeds[i * 3 + 1] = Math.random();              // phase [0..1]
+      rainSeeds[i * 3 + 2] = (Math.random() - 0.5) * 220;  // base Z
     }
-    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
-    this.rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({
-      color: 0x94b8e0,
-      size: 0.3,
+    rainGeo.setAttribute('position', new THREE.BufferAttribute(rainSeeds, 3));
+    this.rainUniforms = {
+      uTime:      { value: 0 },
+      uFallSpeed: { value: 38.0 },  // м/с — как в исходном CPU-цикле, НЕ 38/55
+      uWindX:     { value: -4.0 },
+      uWindZ:     { value: -2.0 },
+      uHeight:    { value: 55.0 },
+      uSize:      { value: 0.3 },   // мировой размер, как у прежнего PointsMaterial({ size: 0.3 })
+      uScale:     { value: window.innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(62) / 2)) },
+      uOpacity:   { value: 0.65 },
+    };
+    const rainMat = new THREE.ShaderMaterial({
+      uniforms: this.rainUniforms,
+      vertexShader: RAIN_VERT,
+      fragmentShader: RAIN_FRAG,
       transparent: true,
-      opacity: 0.65,
       depthWrite: false,
-    }));
+    });
+    this.rain = new THREE.Points(rainGeo, rainMat);
     this.rain.frustumCulled = false;
     this.scene.add(this.rain);
   }
@@ -6901,25 +6946,11 @@ class Game {
     this.stars.material.opacity = nf * (1 - this._rainFactor * 0.8 - this._fogFactor * 0.8);
     this.stars.visible = nf > 0.05 && this._rainFactor < 0.9 && this._fogFactor < 0.9;
 
-    // Система частиц дождя с ветром
+    // Система частиц дождя с ветром (анимация на GPU через uTime)
     this.rain.visible = this._rainFactor > 0.02;
     if (this.rain.visible) {
-      this.rain.material.opacity = 0.65 * this._rainFactor;
-      const arr = this.rain.geometry.attributes.position.array;
-      const fallSpeed = 38 * dt;
-      const windX = -4 * dt;
-      const windZ = -2 * dt;
-      for (let i = 0; i < 1200; i++) {
-        arr[i * 3] += windX;
-        arr[i * 3 + 1] -= fallSpeed;
-        arr[i * 3 + 2] += windZ;
-        if (arr[i * 3 + 1] < 0) {
-          arr[i * 3] = (Math.random() - 0.5) * 220;
-          arr[i * 3 + 1] = 50 + Math.random() * 5;
-          arr[i * 3 + 2] = (Math.random() - 0.5) * 220;
-        }
-      }
-      this.rain.geometry.attributes.position.needsUpdate = true;
+      this.rainUniforms.uTime.value += dt;
+      this.rainUniforms.uOpacity.value = 0.65 * this._rainFactor;
       this.rain.position.set(this.chaseCam.position.x, 0, this.chaseCam.position.z);
     }
 
