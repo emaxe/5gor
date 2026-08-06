@@ -235,16 +235,29 @@ export class AudioManager {
       destNode = panner;
     }
 
-    if (type === 'angry' || type === 'driver') {
-      // Возмущённый выкрик водителя (грубый низкий синтез)
-      const o = c.createOscillator(); o.type = 'sawtooth';
-      o.frequency.setValueAtTime(160, t);
-      o.frequency.exponentialRampToValueAtTime(280, t + 0.1);
-      o.frequency.exponentialRampToValueAtTime(190, t + 0.22);
-      const g = c.createGain(); g.gain.setValueAtTime(vol * 0.18, t);
-      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
-      o.connect(g); g.connect(destNode);
-      o.start(t); o.stop(t + 0.26);
+    if (type === 'angry' || type === 'driver' || type === 'grump' || type === 'crash') {
+      // Грубое ворчание / злобный выкрик (низкий saw-осциллятор с модуляцией и дисторшном)
+      const o1 = c.createOscillator(); o1.type = 'sawtooth';
+      const o2 = c.createOscillator(); o2.type = 'square';
+      o1.frequency.setValueAtTime(110, t);
+      o1.frequency.linearRampToValueAtTime(160, t + 0.1);
+      o1.frequency.linearRampToValueAtTime(95, t + 0.28);
+
+      o2.frequency.setValueAtTime(85, t);
+      o2.frequency.linearRampToValueAtTime(130, t + 0.1);
+      o2.frequency.linearRampToValueAtTime(75, t + 0.28);
+
+      const flt = c.createBiquadFilter();
+      flt.type = 'lowpass';
+      flt.frequency.setValueAtTime(450, t);
+      flt.frequency.linearRampToValueAtTime(800, t + 0.1);
+      flt.frequency.linearRampToValueAtTime(350, t + 0.28);
+
+      const g = c.createGain(); g.gain.setValueAtTime(vol * 0.26, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.32);
+
+      o1.connect(flt); o2.connect(flt); flt.connect(g); g.connect(destNode);
+      o1.start(t); o2.start(t); o1.stop(t + 0.33); o2.stop(t + 0.33);
     } else if (type === 'scream' || type === 'hit') {
       // Испуганный вскрик пешехода (высокий тон)
       const o = c.createOscillator(); o.type = 'triangle';
@@ -256,7 +269,7 @@ export class AudioManager {
       o.connect(g); g.connect(destNode);
       o.start(t); o.stop(t + 0.31);
     } else if (type === 'greeting' || type === 'passenger_happy') {
-      // Приветливый голос пассажира
+      // Приветливый мажорный аккорд пассажира
       const freqs = [440, 554, 659];
       freqs.forEach((f, idx) => {
         const o = c.createOscillator(); o.type = 'sine';
@@ -267,7 +280,7 @@ export class AudioManager {
         o.start(t + idx * 0.06); o.stop(t + idx * 0.06 + 0.13);
       });
     } else if (type === 'shock' || type === 'drift') {
-      // Вскрик от дрифта / испуга
+      // Вскрик от дрифта / виража
       const o = c.createOscillator(); o.type = 'sine';
       o.frequency.setValueAtTime(620, t);
       o.frequency.exponentialRampToValueAtTime(320, t + 0.2);

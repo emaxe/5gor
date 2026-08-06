@@ -294,20 +294,23 @@ export class Game {
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
 
     events.on('spatial:shout', (d) => {
+      const soundType = d.type || (d.avatar === '🚘' ? 'driver' : 'grump');
       if (this.player && this.audio) {
-        this.audio.spatialSpeak(d.x, d.z, this.player.x, this.player.z, d.type || 'shout', this.player.heading);
+        this.audio.spatialSpeak(d.x, d.z, this.player.x, this.player.z, soundType, this.player.heading);
       }
       if (d.text && this.player) {
         const dist = Math.hypot(d.x - this.player.x, d.z - this.player.z);
-        if (dist < 45) {
-          this.ui.toast((d.avatar || '🗣️') + ' ' + d.text, d.color || '#ffab70');
+        if (dist < 38) {
+          const speaker = d.type === 'driver' ? 'Водитель рядом' : 'Пешеход рядом';
+          this.ui.showDialogue(speaker, d.text, d.avatar || '🗣️', d.color || '#ffab70');
         }
       }
     });
 
     events.on('passenger:speak', (d) => {
       if (this.audio) {
-        this.audio.spatialSpeak(null, null, 0, 0, d.type || 'greeting');
+        const toneType = d.event === 'crash' || d.event === 'offroad' ? 'grump' : d.event === 'fast' ? 'drift' : 'greeting';
+        this.audio.spatialSpeak(null, null, 0, 0, toneType);
       }
       if (d.text) {
         this.ui.showDialogue(d.speaker, d.text, d.avatar, d.color);

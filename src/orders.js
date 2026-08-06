@@ -360,6 +360,9 @@ class PassengerManager {
     if (order.state !== 'open') return false;
     order.state = 'active';
     order.startTime = performance.now();
+    if (order.timeLimit) {
+      order.timer = order.timeLimit;
+    }
     this._removeMarker(order);
     // пассажир садится в такси
     if (order.passenger) {
