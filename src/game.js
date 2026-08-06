@@ -757,8 +757,12 @@ export class Game {
       this._hornActive = false;
     }
 
-    // HUD
-    this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world);
+    // HUD (троттлинг до ~15 Гц — DOM-запись не нуждается в 60 Гц)
+    this._hudAccum = (this._hudAccum || 0) + dt;
+    if (this._hudAccum >= 1 / 15) {
+      this._hudAccum = 0;
+      this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world);
+    }
     this.ui.renderMinimap(this.player, this.orders, this.world);
 
     // автосохранение

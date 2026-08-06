@@ -12,6 +12,12 @@ export class UIManager {
   constructor(game) {
     this.game = game;
     this.$ = (id) => document.getElementById(id);
+    this._els = {};
+    for (const id of [
+      'money', 'rating', 'clock', 'day', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
+      'order-card', 'order-title', 'order-desc', 'order-timer', 'order-pay',
+      'nav-arrow-wrap', 'nav-arrow', 'nav-dist',
+    ]) this._els[id] = document.getElementById(id);
     this.screens = {
       menu: this.$('menu'), pause: this.$('pause'), garage: this.$('garage'),
       settings: this.$('settings'), map: this.$('map-screen'), shiftend: this.$('shiftend'),
@@ -143,35 +149,40 @@ export class UIManager {
   showHud(show) { this.$('hud').classList.toggle('hidden', !show); }
 
   /* ---------- HUD ---------- */
+  _setText(el, text) {
+    if (el.textContent !== text) el.textContent = text; // сравнение строк дешевле лишней DOM-записи
+  }
+
   updateHud(player, gameState, orders, hour, camera, world) {
-    this.$('money').textContent = fmtMoney(gameState.money);
+    const els = this._els;
+    this._setText(els.money, fmtMoney(gameState.money));
     const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
-    this.$('rating').textContent = stars + ' ' + Math.round(gameState.rating);
-    this.$('clock').textContent = fmtClock(hour);
-    this.$('day').textContent = 'День ' + gameState.day;
+    this._setText(els.rating, stars + ' ' + Math.round(gameState.rating));
+    this._setText(els.clock, fmtClock(hour));
+    this._setText(els.day, 'День ' + gameState.day);
     const kmh = Math.round(Math.abs(player.speed) * 3.6);
-    this.$('speed-val').textContent = kmh;
-    this.$('fuel-bar').style.width = clamp(player.fuel / player.stats.tank * 100, 0, 100) + '%';
-    this.$('dmg-bar').style.width = player.damage + '%';
-    this.$('dmg-bar').style.background = player.damage > 60 ? '#ff7b72' : 'linear-gradient(90deg,#e3b341,#ff7b72)';
-    this.$('dirt-tip').classList.toggle('hidden', player.dirt < 0.35);
+    els['speed-val'].textContent = kmh;
+    els['fuel-bar'].style.width = clamp(player.fuel / player.stats.tank * 100, 0, 100) + '%';
+    els['dmg-bar'].style.width = player.damage + '%';
+    els['dmg-bar'].style.background = player.damage > 60 ? '#ff7b72' : 'linear-gradient(90deg,#e3b341,#ff7b72)';
+    els['dirt-tip'].classList.toggle('hidden', player.dirt < 0.35);
 
     // карточка заказа
     const a = orders.active;
-    const oc = this.$('order-card');
+    const oc = els['order-card'];
     if (a) {
       oc.classList.remove('hidden');
-      this.$('order-title').textContent = a.title;
-      this.$('order-desc').textContent = a.drops[a.dropIdx].name;
-      this.$('order-timer').style.display = a.timeLimit ? '' : 'none';
-      if (a.timeLimit) this.$('order-timer').textContent = '⏱ ' + Math.ceil(a.timer) + ' с';
-      this.$('order-pay').textContent = '≈ ' + fmtMoney(a.estPay) + ' + чаевые';
+      els['order-title'].textContent = a.title;
+      els['order-desc'].textContent = a.drops[a.dropIdx].name;
+      els['order-timer'].style.display = a.timeLimit ? '' : 'none';
+      if (a.timeLimit) els['order-timer'].textContent = '⏱ ' + Math.ceil(a.timer) + ' с';
+      els['order-pay'].textContent = '≈ ' + fmtMoney(a.estPay) + ' + чаевые';
     } else {
       oc.classList.add('hidden');
     }
 
     // стрелка-навигатор: к точке высадки, а без заказа — к ближайшему свободному
-    const nw = this.$('nav-arrow-wrap');
+    const nw = els['nav-arrow-wrap'];
     let target = orders.activeDrop;
     if (!target && orders.open.length) {
       // ближайший свободный заказ (маркер на карте)
@@ -190,8 +201,8 @@ export class UIManager {
       // доворачивалась кратчайшим путём, а не через 270°.
       let ang = Math.atan2(dx, dz) - player.heading - Math.PI / 2;
       ang = Math.atan2(Math.sin(ang), Math.cos(ang));
-      this.$('nav-arrow').style.transform = 'rotate(' + Math.round(ang * 180 / Math.PI * 10) / 10 + 'deg)';
-      this.$('nav-dist').textContent = Math.round(dist2D(player.x, player.z, target.x, target.z)) + ' м';
+      els['nav-arrow'].style.transform = 'rotate(' + Math.round(ang * 180 / Math.PI * 10) / 10 + 'deg)';
+      els['nav-dist'].textContent = Math.round(dist2D(player.x, player.z, target.x, target.z)) + ' м';
     } else {
       nw.classList.add('hidden');
     }
