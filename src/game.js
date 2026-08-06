@@ -619,7 +619,10 @@ export class Game {
     const throttled = this._renderThrottle && this._renderThrottle > 0;
     if (throttled) {
       this._renderAccum = (this._renderAccum || 0) + dt;
-      if (this._renderAccum < 1 / 15) return;
+      if (this._renderAccum < 1 / 15) {
+        if (this._debugOverlay) this._updateDebugOverlay(dt, performance.now() - t0);
+        return;
+      }
       this._renderAccum = 0;
     }
     this.renderer.render(this.scene, this.camera);
