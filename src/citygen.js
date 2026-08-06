@@ -67,6 +67,7 @@ export class World {
 
   /* --- Высота земли в точке (Машук + серпантин) --- */
   heightAt(x, z) {
+    if (Math.abs(x) > 200 || z > -230) return 0;
     let h = 0;
     const hx = x - this.hill.x, hz = z - this.hill.z;
     const d = Math.hypot(hx, hz);
