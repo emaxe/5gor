@@ -6314,6 +6314,9 @@ class Game {
     this.soundOn = true;
     this.musicOn = true;
 
+    /** @type {boolean} debug-оверлей (FPS/CPU/draw calls), включается ?debug в URL */
+    this._debugOverlay = new URLSearchParams(location.search).has('debug');
+
     this.canvas = document.getElementById('game-canvas');
     this.ui = new UIManager(this);
     this.input = new InputManager(this.canvas);
@@ -6424,7 +6427,9 @@ class Game {
 
   _initWorld() {
     this.world = new World(this.scene);
+    const t0 = performance.now();
     this.world.build();
+    if (this._debugOverlay) console.log(`world.build(): ${(performance.now() - t0).toFixed(1)}ms`);
     WORLD_INTERSECTIONS = this.world.intersections;
   }
 
@@ -6879,8 +6884,28 @@ class Game {
     requestAnimationFrame(() => this._loop());
     const dt = Math.min(this.clock ? this.clock.getDelta() : 0.016, 0.05);
     if (!this.clock) { this.clock = new THREE.Clock(); return; }
+    const t0 = this._debugOverlay ? performance.now() : 0;
     try { this._update(dt); } catch (e) { showError(e); }
     this.renderer.render(this.scene, this.camera);
+    if (this._debugOverlay) this._updateDebugOverlay(dt, performance.now() - t0);
+  }
+
+  _updateDebugOverlay(dt, cpuMs) {
+    this._dbgAccum = (this._dbgAccum || 0) + dt;
+    this._dbgFrames = (this._dbgFrames || 0) + 1;
+    if (this._dbgAccum < 0.5) return; // обновляем раз в полсекунды, а не каждый кадр
+    const fps = Math.round(this._dbgFrames / this._dbgAccum);
+    const info = this.renderer.info;
+    if (!this._dbgEl) {
+      this._dbgEl = document.createElement('div');
+      this._dbgEl.style.cssText = 'position:fixed;top:4px;left:4px;z-index:9999;background:#000a;color:#7ee787;font:12px monospace;padding:6px 8px;pointer-events:none;white-space:pre;';
+      document.body.appendChild(this._dbgEl);
+    }
+    this._dbgEl.textContent =
+      `FPS: ${fps}  CPU: ${cpuMs.toFixed(1)}ms\n` +
+      `calls: ${info.render.calls}  tris: ${info.render.triangles}\n` +
+      `tex: ${info.memory.textures}  geo: ${info.memory.geometries}`;
+    this._dbgAccum = 0; this._dbgFrames = 0;
   }
 
   _update(dt) {
