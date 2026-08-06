@@ -1,0 +1,491 @@
+/* ============================================================
+ * ui.js — HUD, мини-карта, меню, гараж, тосты, тач-управление
+ * ============================================================ */
+
+class UIManager {
+  constructor(game) {
+    this.game = game;
+    this.$ = (id) => document.getElementById(id);
+    this.screens = {
+      menu: this.$('menu'), pause: this.$('pause'), garage: this.$('garage'),
+      settings: this.$('settings'), map: this.$('map-screen'), shiftend: this.$('shiftend'),
+    };
+    this.isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+    this.interactCb = null;
+    this._bindButtons();
+    this._bindTouch();
+    this._baseMap = null;
+    this._garageTab = 'upgrades';
+    this.toastCount = 0;
+  }
+
+  /* ---------- Кнопки ---------- */
+  _bindButtons() {
+    const on = (id, cb) => { const el = this.$(id); if (el) el.addEventListener('click', cb); };
+    on('btn-newgame', () => this.game.newGame());
+    on('btn-continue', () => this.game.continueGame());
+    on('btn-menu-garage', () => this.game.openGarage('menu'));
+    on('btn-menu-settings', () => this.game.openSettings('menu'));
+    on('btn-resume', () => this.game.togglePause());
+    on('btn-pause-garage', () => this.game.openGarage('pause'));
+    on('btn-pause-settings', () => this.game.openSettings('pause'));
+    on('btn-evac', () => this.game.evacuate());
+    on('btn-endshift', () => this.game.endShift());
+    on('btn-menu', () => this.game.toMenu());
+    on('btn-garage-back', () => this.game.closeGarage());
+    on('btn-settings-back', () => this.game.closeSettings());
+    on('btn-map', () => this.game.toggleMap());
+    on('btn-map-close', () => this.game.toggleMap());
+    on('btn-pause', () => this.game.togglePause());
+    on('btn-horn', () => this.game.pressHorn());
+    on('btn-lights', () => this.game.toggleLights());
+    on('btn-repair', () => this.game.garageRepair());
+    on('btn-wash', () => this.game.garageWash());
+    on('btn-refuel', () => this.game.garageRefuel());
+    on('btn-next-shift', () => this.game.startNewShift());
+    on('btn-se-menu', () => this.game.toMenu());
+    on('btn-interact', () => { if (this.interactCb) this.interactCb(); });
+    on('btn-copy-err', () => { const t = this.$('err-text'); if (t) navigator.clipboard && navigator.clipboard.writeText(t.textContent); });
+    on('btn-reload', () => location.reload());
+    // вкладки гаража
+    document.querySelectorAll('.garage-tabs button').forEach((b) => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.garage-tabs button').forEach((x) => x.classList.remove('active'));
+        b.classList.add('active');
+        this._garageTab = b.dataset.tab;
+        this.renderGarage();
+      });
+    });
+    // настройки
+    on('chk-sound', () => this.game.setSound(this.$('chk-sound').checked));
+    on('chk-music', () => this.game.setMusic(this.$('chk-music').checked));
+    on('sel-quality', () => this.game.setQuality(this.$('sel-quality').value));
+    // клавиатура: Esc/M/G обрабатывает Game через очереди InputManager
+  }
+
+  /* ---------- Сенсорное управление: виртуальный джойстик ---------- */
+  _bindTouch() {
+    this.touch = { gas: 0, brake: 0, hb: false, steer: 0, joyId: null };
+    if (!this.isTouch) return;
+    this.$('touch-controls').classList.remove('hidden');
+
+    // ручник — отдельная кнопка справа
+    const hbBtn = this.$('btn-hb');
+    if (hbBtn) {
+      const hold = (key) => {
+        hbBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.touch[key] = true; hbBtn._pressed = true; hbBtn.setPointerCapture(e.pointerId); });
+        hbBtn.addEventListener('pointerup', () => { this.touch[key] = false; hbBtn._pressed = false; });
+        hbBtn.addEventListener('pointercancel', () => { this.touch[key] = false; hbBtn._pressed = false; });
+        hbBtn.addEventListener('contextmenu', (e) => e.preventDefault());
+      };
+      hold('hb');
+    }
+
+    // джойстик слева: по X — руль, по Y — газ (вверх) / тормоз-задний ход (вниз)
+    const zone = this.$('joy-zone');
+    const knob = this.$('joy-knob');
+    const R = 58; // радиус хода ручки в px
+    const reset = () => {
+      this.touch.joyId = null;
+      this.touch.gas = 0; this.touch.brake = 0; this.touch.steer = 0;
+      if (knob) knob.style.transform = 'translate(-50%,-50%) translate(0px,0px)';
+    };
+    const move = (e) => {
+      const rect = zone.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+      let dx = e.clientX - cx, dy = e.clientY - cy;
+      const len = Math.hypot(dx, dy);
+      if (len > R) { dx = dx / len * R; dy = dy / len * R; }
+      this.touch.steer = Math.abs(dx) < 6 ? 0 : clamp(dx / R, -1, 1);
+      this.touch.gas = dy < -8 ? clamp(-dy / R, 0, 1) : 0;
+      this.touch.brake = dy > 8 ? clamp(dy / R, 0, 1) : 0;
+      if (knob) knob.style.transform = 'translate(-50%,-50%) translate(' + dx + 'px,' + dy + 'px)';
+    };
+    zone.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      if (this.touch.joyId !== null) return; // один палец на джойстике
+      this.touch.joyId = e.pointerId;
+      zone.setPointerCapture(e.pointerId);
+      move(e);
+    });
+    zone.addEventListener('pointermove', (e) => { if (this.touch.joyId === e.pointerId) move(e); });
+    const end = (e) => { if (this.touch.joyId === e.pointerId) reset(); };
+    zone.addEventListener('pointerup', end);
+    zone.addEventListener('pointercancel', end);
+    zone.addEventListener('contextmenu', (e) => e.preventDefault());
+  }
+
+  getTouchInput() {
+    if (!this.isTouch) return null;
+    return {
+      gas: this.touch.gas,
+      brake: this.touch.brake,
+      hb: this.touch.hb,
+      steer: this.touch.steer,
+    };
+  }
+
+  /* ---------- Экраны ---------- */
+  showScreen(name, show) {
+    for (const k in this.screens) this.screens[k].classList.toggle('hidden', true);
+    if (name) this.screens[name].classList.toggle('hidden', !show);
+  }
+
+  showHud(show) { this.$('hud').classList.toggle('hidden', !show); }
+
+  /* ---------- HUD ---------- */
+  updateHud(player, gameState, orders, hour, camera, world) {
+    this.$('money').textContent = fmtMoney(gameState.money);
+    const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
+    this.$('rating').textContent = stars + ' ' + Math.round(gameState.rating);
+    this.$('clock').textContent = fmtClock(hour);
+    this.$('day').textContent = 'День ' + gameState.day;
+    const kmh = Math.round(Math.abs(player.speed) * 3.6);
+    this.$('speed-val').textContent = kmh;
+    this.$('fuel-bar').style.width = clamp(player.fuel / player.stats.tank * 100, 0, 100) + '%';
+    this.$('dmg-bar').style.width = player.damage + '%';
+    this.$('dmg-bar').style.background = player.damage > 60 ? '#ff7b72' : 'linear-gradient(90deg,#e3b341,#ff7b72)';
+    this.$('dirt-tip').classList.toggle('hidden', player.dirt < 0.35);
+
+    // карточка заказа
+    const a = orders.active;
+    const oc = this.$('order-card');
+    if (a) {
+      oc.classList.remove('hidden');
+      this.$('order-title').textContent = a.title;
+      this.$('order-desc').textContent = a.drops[a.dropIdx].name;
+      this.$('order-timer').style.display = a.timeLimit ? '' : 'none';
+      if (a.timeLimit) this.$('order-timer').textContent = '⏱ ' + Math.ceil(a.timer) + ' с';
+      this.$('order-pay').textContent = '≈ ' + fmtMoney(a.estPay) + ' + чаевые';
+    } else {
+      oc.classList.add('hidden');
+    }
+
+    // стрелка-навигатор: к точке высадки, а без заказа — к ближайшему свободному
+    const nw = this.$('nav-arrow-wrap');
+    let target = orders.activeDrop;
+    if (!target && orders.open.length) {
+      // ближайший свободный заказ (маркер на карте)
+      let bd = Infinity;
+      for (const o of orders.open) {
+        const d = dist2D(player.x, player.z, o.pickup.x, o.pickup.z);
+        if (d < bd) { bd = d; target = o.pickup; }
+      }
+    }
+    if (target) {
+      nw.classList.remove('hidden');
+      const dx = target.x - player.x, dz = target.z - player.z;
+      // ➤ указывает вправо при rotate(0) — смещаем на 90°, чтобы «вперёд» было вверх.
+      // Считаем относительно КУРСА МАШИНЫ (heading), а не камеры — иначе при вращении
+      // камеры мышью стрелка показывает не туда. Нормализуем в [-π, π], чтобы стрелка
+      // доворачивалась кратчайшим путём, а не через 270°.
+      let ang = Math.atan2(dx, dz) - player.heading - Math.PI / 2;
+      ang = Math.atan2(Math.sin(ang), Math.cos(ang));
+      this.$('nav-arrow').style.transform = 'rotate(' + Math.round(ang * 180 / Math.PI * 10) / 10 + 'deg)';
+      this.$('nav-dist').textContent = Math.round(dist2D(player.x, player.z, target.x, target.z)) + ' м';
+    } else {
+      nw.classList.add('hidden');
+    }
+  }
+
+  /* ---------- Мини-карта (heading-up: карта вращается, стрелка всегда вверх) ---------- */
+  renderMinimap(player, orders, world) {
+    const c = this.$('minimap');
+    const g = c.getContext('2d');
+    const W = c.width;
+    this._ensureBaseMap(world);
+    const view = 260; // видимая область в единицах мира
+    const scale = W / view;
+    g.clearRect(0, 0, W, W);
+    g.save();
+    // поворот: направление машины (heading) всегда смотрит вверх экрана
+    g.translate(W / 2, W / 2);
+    g.rotate(player.heading - Math.PI);
+    g.translate(-player.x * scale, -player.z * scale);
+    if (this._baseMap) {
+      // базовая карта в пикселях: world->px = (w + 320) * (SIZE/640)
+      const bsc = this._mapScale;
+      const vx0 = player.x - view / 2, vz0 = player.z - view / 2;
+      const srcX = (vx0 + 320) * bsc, srcY = (vz0 + 320) * bsc;
+      g.drawImage(this._baseMap, srcX, srcY, view * bsc, view * bsc, vx0 * scale, vz0 * scale, view * scale, view * scale);
+    }
+    // маршрут до точки высадки, если взят заказ (по дорожной сетке: L-путь через
+    // ближайшую вертикальную дорогу; мир-координаты уже в повёрнутом контексте)
+    const activeDrop = orders.activeDrop;
+    if (orders.active && activeDrop) {
+      const CELL = 64;
+      const vx = Math.round(player.x / CELL) * CELL;
+      const rx = (x) => x * scale, rz = (z) => z * scale;
+      g.strokeStyle = 'rgba(255, 214, 80, 0.9)';
+      g.lineWidth = 2.5;
+      g.lineJoin = 'round';
+      g.beginPath();
+      g.moveTo(rx(player.x), rz(player.z));
+      g.lineTo(rx(vx), rz(player.z));
+      g.lineTo(rx(vx), rz(activeDrop.z));
+      g.lineTo(rx(activeDrop.x), rz(activeDrop.z));
+      g.stroke();
+    }
+    // заказы
+    for (const o of orders.open) {
+      const x = o.pickup.x * scale, y = o.pickup.z * scale;
+      g.fillStyle = o.color;
+      g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill();
+    }
+    // цель
+    const drop = orders.activeDrop;
+    if (drop) {
+      const x = drop.x * scale, y = drop.z * scale;
+      g.fillStyle = '#ff4040';
+      g.beginPath(); g.arc(x, y, 5, 0, 7); g.fill();
+      g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+      g.beginPath(); g.arc(x, y, 8, 0, 7); g.stroke();
+    }
+    g.restore();
+    // стрелка игрока — фиксированная, всегда вверх (направление машины)
+    g.save();
+    g.translate(W / 2, W / 2);
+    g.fillStyle = '#f2c12e';
+    g.beginPath();
+    g.moveTo(0, -7); g.lineTo(5, 6); g.lineTo(0, 3); g.lineTo(-5, 6);
+    g.closePath(); g.fill();
+    g.strokeStyle = '#1a1a1a'; g.lineWidth = 1; g.stroke();
+    g.restore();
+  }
+
+  /* Базовая карта города (рисуем один раз) */
+  _ensureBaseMap(world) {
+    if (this._baseMap) return;
+    const SIZE = 680; // пикселей на 640 единиц мира
+    this._mapScale = SIZE / 640;
+    const c = document.createElement('canvas');
+    c.width = SIZE; c.height = SIZE;
+    const g = c.getContext('2d');
+    const sc = SIZE / 640;
+    g.fillStyle = '#182030'; g.fillRect(0, 0, SIZE, SIZE);
+    // кварталы-районы лёгкой заливкой
+    g.fillStyle = 'rgba(60,90,60,0.35)';
+    for (let i = 0; i < 8; i++) for (let j = 0; j < 8; j++) {
+      g.fillRect((i * 64 + 10 + 320) * sc, (j * 64 + 10 + 320) * sc, 44 * sc, 44 * sc);
+    }
+    // дороги
+    g.fillStyle = '#39424e';
+    for (let i = 0; i <= 8; i++) {
+      g.fillRect((i * 64 - 6 + 320) * sc, 0, 12 * sc, SIZE);
+      g.fillRect(0, (i * 64 - 6 + 320) * sc, SIZE, 12 * sc);
+    }
+    // озеро
+    g.fillStyle = '#2e7fd0';
+    g.beginPath(); g.arc((-96 + 320) * sc, (-160 + 320) * sc, 24 * sc, 0, 7); g.fill();
+    // здания
+    g.fillStyle = 'rgba(180,190,205,0.55)';
+    for (const b of world.buildings) {
+      g.fillRect((b.x0 + 320) * sc, (b.z0 + 320) * sc, (b.x1 - b.x0) * sc, (b.z1 - b.z0) * sc);
+    }
+    // заправки
+    g.fillStyle = '#2ecc40';
+    for (const s of world.fuelStations) {
+      g.fillRect((s.x - 2 + 320) * sc, (s.z - 2 + 320) * sc, 4 * sc, 4 * sc);
+    }
+    // достопримечательности
+    g.fillStyle = 'rgba(255,255,255,0.85)';
+    for (const lm of world.landmarks) {
+      g.beginPath(); g.arc((lm.x + 320) * sc, (lm.z + 320) * sc, 2.2 * sc, 0, 7); g.fill();
+    }
+    this._baseMap = c;
+  }
+
+  /* ---------- Большая карта ---------- */
+  renderBigMap(player, orders, world) {
+    const c = this.$('bigmap');
+    const availW = window.innerWidth * 0.96, availH = window.innerHeight * 0.86;
+    const size = Math.min(availW, availH);
+    c.width = size; c.height = size;
+    const g = c.getContext('2d');
+    this._ensureBaseMap(world);
+    g.drawImage(this._baseMap, 0, 0, size, size);
+    // подписи районов
+    g.font = '13px system-ui'; g.fillStyle = 'rgba(255,255,255,0.85)'; g.textAlign = 'center';
+    const centers = {
+      center: [32, 32], kurort: [-150, -40], prigorod: [40, 180],
+      sanatorii: [180, -30], mashuk: [-100, -160], proval: [-96, -160],
+      rynok: [96, -32], vokzal: [160, 96],
+    };
+    for (const d of DISTRICTS) {
+      const p = centers[d.id];
+      if (!p) continue;
+      const x = (p[0] + 320) / 640 * size, y = (p[1] + 320) / 640 * size;
+      g.fillStyle = 'rgba(10,14,20,0.75)';
+      const w = g.measureText(d.name).width + 12;
+      g.fillRect(x - w / 2, y - 10, w, 20);
+      g.fillStyle = d.unlock > 0 && player ? '#ffd75e' : '#e8e8e8';
+      g.fillText(d.name, x, y + 4);
+    }
+    // заказы
+    for (const o of orders.open) {
+      const x = (o.pickup.x + 320) / 640 * size, y = (o.pickup.z + 320) / 640 * size;
+      g.fillStyle = o.color;
+      g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill();
+      g.font = 'bold 11px system-ui'; g.fillStyle = '#fff'; g.textAlign = 'center';
+      g.fillText(o.icon, x, y + 4);
+    }
+    // цель
+    const drop = orders.activeDrop;
+    if (drop) {
+      const x = (drop.x + 320) / 640 * size, y = (drop.z + 320) / 640 * size;
+      g.strokeStyle = '#ff4040'; g.lineWidth = 4;
+      g.beginPath(); g.arc(x, y, 10, 0, 7); g.stroke();
+      g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+      g.beginPath(); g.arc(x, y, 15, 0, 7); g.stroke();
+    }
+    // игрок
+    const px = (player.x + 320) / 640 * size, py = (player.z + 320) / 640 * size;
+    g.fillStyle = '#f2c12e';
+    g.beginPath(); g.arc(px, py, 7, 0, 7); g.fill();
+    g.strokeStyle = '#1a1a1a'; g.lineWidth = 2; g.stroke();
+  }
+
+  /* ---------- Контекстная кнопка ---------- */
+  setInteract(label, cb) {
+    const wrap = this.$('btn-interact-wrap');
+    if (label) {
+      wrap.classList.remove('hidden');
+      this.$('btn-interact').textContent = label;
+      this.interactCb = cb;
+    } else {
+      wrap.classList.add('hidden');
+      this.interactCb = null;
+    }
+  }
+
+  /* ---------- Тосты ---------- */
+  toast(text, color) {
+    const box = this.$('toasts');
+    const el = document.createElement('div');
+    el.className = 'toast';
+    el.textContent = text;
+    if (color) el.style.borderColor = color;
+    box.appendChild(el);
+    while (box.children.length > 3) box.removeChild(box.firstChild);
+    setTimeout(() => { el.style.opacity = '0'; el.style.transition = 'opacity 0.4s'; setTimeout(() => el.remove(), 400); }, 3200);
+  }
+
+  /* ---------- Гараж ---------- */
+  renderGarage(upgrades, money, player) {
+    const st = upgrades.stats();
+    const car = CARS[upgrades.carId];
+    this.$('garage-car-name').textContent = car.name;
+    this.$('garage-car-desc').textContent = car.desc;
+    this.$('garage-stats').innerHTML =
+      '<span>Макс. скорость: <b>' + Math.round(st.maxSpeed * 3.6) + '</b> км/ч</span>' +
+      '<span>Разгон: <b>' + st.accel.toFixed(1) + '</b></span>' +
+      '<span>Тормоза: <b>' + Math.round(st.brake) + '</b></span>' +
+      '<span>Управление: <b>' + st.grip.toFixed(2) + '</b></span>' +
+      '<span>Прочность: <b>' + st.armor.toFixed(2) + '</b></span>' +
+      '<span>Бак: <b>' + st.tank + '</b> л</span>' +
+      '<span>Вместимость: <b>' + st.capacity + '</b> мест</span>' +
+      '<span>Урон: <b>' + Math.round(player.damage) + '%</b></span>';
+
+    const list = this.$('garage-list');
+    list.innerHTML = '';
+    if (this._garageTab === 'upgrades') {
+      for (const key in UPGRADES) {
+        const u = UPGRADES[key];
+        const lvl = upgrades.levels[key];
+        const cost = upgrades.costOf(key);
+        const row = document.createElement('div');
+        row.className = 'up-row';
+        row.innerHTML =
+          '<div class="icon">' + u.icon + '</div>' +
+          '<div class="info"><div class="name">' + u.name + '</div><div class="desc">' + u.desc + '</div></div>' +
+          '<div class="pips">' + '●'.repeat(lvl) + '<span style="color:#4a5462">' + '●'.repeat(u.max - lvl) + '</span></div>' +
+          (cost < 0 ? '<button disabled>МАКС</button>' : '<button ' + (money < cost ? 'disabled' : '') + '>' + fmtMoney(cost) + '</button>');
+        if (cost >= 0 && money >= cost) {
+          row.querySelector('button').addEventListener('click', () => this.game.buyUpgrade(key));
+        }
+        list.appendChild(row);
+      }
+    } else if (this._garageTab === 'tuning') {
+      const tune = upgrades.tuning;
+      const row1 = document.createElement('div');
+      row1.className = 'tune-row';
+      row1.innerHTML = '<b style="font-size:13px">Цвет:</b>';
+      for (const tc of TUNING.colors) {
+        const s = document.createElement('div');
+        s.className = 'swatch' + (tune.color === tc.c ? ' active' : '');
+        s.style.background = tc.c;
+        s.addEventListener('click', () => { upgrades.tuning.color = tc.c; this.game.applyTuning(); this.renderGarage(upgrades, money, player); });
+        row1.appendChild(s);
+      }
+      list.appendChild(row1);
+      const row2 = document.createElement('div');
+      row2.className = 'tune-row';
+      row2.innerHTML = '<b style="font-size:13px">Диски:</b>';
+      TUNING.rims.forEach((rc, i) => {
+        const s = document.createElement('div');
+        s.className = 'swatch' + (tune.rims === i ? ' active' : '');
+        s.style.background = rc.c;
+        s.addEventListener('click', () => { upgrades.tuning.rims = i; this.game.applyTuning(); this.renderGarage(upgrades, money, player); });
+        row2.appendChild(s);
+      });
+      list.appendChild(row2);
+      const row3 = document.createElement('div');
+      row3.className = 'tune-row';
+      row3.innerHTML = '<b style="font-size:13px">Спойлер:</b> <input type="checkbox" ' + (tune.spoiler ? 'checked' : '') + ' id="chk-spoiler">';
+      list.appendChild(row3);
+      this.$('chk-spoiler').addEventListener('change', (e) => { upgrades.tuning.spoiler = e.target.checked; this.game.applyTuning(); });
+    } else if (this._garageTab === 'cars') {
+      for (const key in CARS) {
+        const cc = CARS[key];
+        const owned = upgrades.ownedCars.includes(key);
+        const div = document.createElement('div');
+        div.className = 'car-card';
+        div.innerHTML =
+          '<div class="name">' + cc.name + (upgrades.carId === key ? ' ✅' : '') + '</div>' +
+          '<div class="desc">' + cc.desc + '<br>Макс: ' + Math.round(cc.base.maxSpeed * 3.6) + ' км/ч · Бак: ' + cc.base.tank + '</div>' +
+          (owned
+            ? (upgrades.carId === key ? '' : '<button data-a="select">Выбрать</button>')
+            : '<button data-a="buy">' + fmtMoney(cc.price) + '</button>');
+        const btn = div.querySelector('button');
+        if (btn) {
+          btn.addEventListener('click', () => {
+            if (btn.dataset.a === 'buy') this.game.buyCar(key);
+            else this.game.selectCar(key);
+          });
+        }
+        list.appendChild(div);
+      }
+    }
+    // кнопки обслуживания
+    this.$('btn-repair').textContent = '🔧 Ремонт' + (player.damage > 0 ? ' (' + fmtMoney(Math.round(player.damage * CFG.repairCostPerDmg)) + ')' : '');
+    this.$('btn-repair').disabled = player.damage <= 0;
+    this.$('btn-wash').textContent = '🧼 Мойка' + (player.dirt > 0.05 ? ' (60 ₽)' : '');
+    this.$('btn-wash').disabled = player.dirt <= 0.05;
+    const fuelCost = Math.round((st.tank - player.fuel) * CFG.fuelPrice);
+    this.$('btn-refuel').textContent = '⛽ Заправить (' + fmtMoney(fuelCost) + ')';
+    this.$('btn-refuel').disabled = player.fuel >= st.tank - 1;
+  }
+
+  /* ---------- Итоги смены ---------- */
+  renderShiftEnd(gameState, shiftStats) {
+    const s = shiftStats;
+    const g = gameState;
+    const stars = '★'.repeat(Math.round(g.rating / 20)) + '☆'.repeat(5 - Math.round(g.rating / 20));
+    this.$('se-stats').innerHTML =
+      '<div class="big">+ ' + fmtMoney(s.earned) + '</div>' +
+      'Выполнено заказов: <b>' + s.orders + '</b> (провалено: ' + s.failed + ')<br>' +
+      'Чаевые: <b>' + fmtMoney(s.tips) + '</b><br>' +
+      'Пройдено: <b>' + Math.round(s.km) + '</b> км<br>' +
+      'Аварий: <b>' + s.crashes + '</b> · Пешеходов задето: <b>' + s.peds + '</b><br>' +
+      'Рейтинг: <b>' + Math.round(g.rating) + '</b> ' + stars + '<br>' +
+      'Миссий выполнено: <b>' + s.missions + '</b><br>' +
+      'Накоплено: <b>' + fmtMoney(g.money) + '</b>';
+  }
+
+  /* ---------- Настройки ---------- */
+  syncSettings(sound, music, quality) {
+    this.$('chk-sound').checked = sound;
+    this.$('chk-music').checked = music;
+    this.$('sel-quality').value = quality;
+  }
+}

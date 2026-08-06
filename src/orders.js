@@ -1,0 +1,489 @@
+/* ============================================================
+ * orders.js — заказы и миссии: генерация, маркеры, оплата
+ * ============================================================ */
+
+const ORDER_META = {
+  normal:  { name: 'Обычная поездка',  icon: 'P', color: '#3e8ede', mult: 1.0,  time: 0,   desc: 'Обычная поездка по городу' },
+  urgent:  { name: 'Срочный заказ',    icon: '!', color: '#e03a3a', mult: 1.6,  time: 75,  desc: 'Срочно! Пассажир торопится' },
+  vip:     { name: 'VIP-клиент',       icon: 'V', color: '#d4af37', mult: 1.5,  time: 0,   desc: 'Аккуратная езда, без аварий' },
+  package: { name: 'Посылка',          icon: 'Г', color: '#8a5a2a', mult: 1.15, time: 0,   desc: 'Хрупкий груз — без резких движений' },
+  drunk:   { name: 'Весёлый пассажир', icon: 'Д', color: '#9a5ac0', mult: 1.35, time: 0,   desc: 'Может передумать по пути...' },
+  group:   { name: 'Коллективная',     icon: 'К', color: '#3e9e6e', mult: 0.9,  time: 0,   desc: 'Несколько остановок' },
+  race:    { name: 'Гонка с таксистом',icon: 'R', color: '#e86020', mult: 1.9,  time: 90,  desc: 'Обгони конкурента у вокзала!' },
+  tour:    { name: 'Экскурсия',        icon: 'Т', color: '#2e9ec8', mult: 2.0,  time: 0,   desc: 'Покажите клиенту достопримечательности' },
+};
+
+const MISSION_TEMPLATES = [
+  {
+    id: 'grandma', type: 'mission', title: 'Бабушка на рынок', rating: 10, pay: 900, icon: 'Б', color: '#e87a3a', time: 0,
+    desc: 'Бабушка Зинаида просит отвезти её на рынок «Лира». Она щедрая!',
+    make(world) {
+      return { pickup: Orders.pickPoint(world, 'center'), drops: [{ x: 96, z: -32, name: 'Рынок «Лира»' }] };
+    },
+  },
+  {
+    id: 'doctor', type: 'mission', title: 'Врач в санаторий', rating: 25, pay: 1200, icon: '+', color: '#d94040', time: 100,
+    desc: 'Доктор Соколова опаздывает на обход. Домчите до санатория!',
+    make(world) {
+      return { pickup: Orders.pickPoint(world, 'vokzal'), drops: [{ x: 140, z: -80, name: 'Санаторий «Лесной»' }] };
+    },
+  },
+  {
+    id: 'race', type: 'race', title: 'Гонка с бомбилой', rating: 35, pay: 1600, icon: 'R', color: '#e86020', time: 85,
+    desc: 'Конкурент вызвался наперегонки до вокзала. Успеешь — премия!',
+    make(world) {
+      return { pickup: Orders.pickPoint(world, 'kurort'), drops: [{ x: 160, z: 96, name: 'Ж/д вокзал' }] };
+    },
+  },
+  {
+    id: 'tour', type: 'tour', title: 'Экскурсия по Пятигорску', rating: 45, pay: 2400, icon: 'Т', color: '#2e9ec8', time: 0,
+    desc: 'Туристы хотят увидеть Провал, Эолову арфу и смотровую башню.',
+    make(world) {
+      return {
+        pickup: Orders.pickPoint(world, 'center'),
+        drops: [
+          { x: -96, z: -160, name: 'Озеро Провал' },
+          { x: 10, z: -357, name: 'Эолова арфа' },
+          { x: 0, z: -448, name: 'Смотровая башня' },
+        ],
+      };
+    },
+  },
+  {
+    id: 'night', type: 'mission', title: 'Ночной рейс на Машук', rating: 60, pay: 1900, icon: 'М', color: '#6a6ac8', time: 130,
+    desc: 'Клиент хочет встретить рассвет на Машуке. Ночью платят вдвойне!',
+    make(world) {
+      return { pickup: Orders.pickPoint(world, 'prigorod'), drops: [{ x: 0, z: -448, name: 'Смотровая башня' }] };
+    },
+  },
+];
+
+class PassengerManager {
+  constructor(world) {
+    this.world = world;
+    this.open = [];      // доступные заказы
+    this.active = null;  // текущий заказ
+    this._id = 1;
+    this._spawnT = 0.4;  // первый заказ почти сразу
+    this.completed = []; // id выполненных миссий за смену
+    this._dropBeam = null;   // световой столб финальной точки высадки
+    this._dropT = 0;
+    this._cabPassenger = null; // пассажир в салоне (виден сквозь стекло)
+    this._walkers = [];        // пассажиры, которые вышли и уходят
+  }
+
+  static pickPoint(world, districtId) {
+    const pts = world.pickupPoints.filter((p) => p.district === districtId);
+    return pts.length ? choice(pts) : choice(world.pickupPoints);
+  }
+
+  /* Случайная точка района, чаще — недалеко от игрока */
+  _randPoint(districtId, player) {
+    const pts = this.world.pickupPoints.filter((p) => p.district === districtId);
+    if (!pts.length) return choice(this.world.pickupPoints);
+    // 60%: точка в радиусе 60..240 м от игрока (чтобы заказ был достижим и виден)
+    if (player && Math.random() < 0.6) {
+      const near = pts.filter((p) => {
+        const d = dist2D(p.x, p.z, player.x, player.z);
+        return d > 40 && d < 240;
+      });
+      if (near.length) return choice(near);
+    }
+    return choice(pts);
+  }
+
+  unlockedDistricts(rating) {
+    return DISTRICTS.filter((d) => rating >= d.unlock);
+  }
+
+  /* --- Генерация нового заказа --- */
+  spawn(rating, hour, capacity, player) {
+    if (this.open.length >= CFG.maxOpenOrders) return;
+    const unDistricts = this.unlockedDistricts(rating);
+    if (!unDistricts.length) return;
+
+    // миссия?
+    const available = MISSION_TEMPLATES.filter((m) => rating >= m.rating && !this.completed.includes(m.id));
+    if (available.length && Math.random() < 0.3) {
+      const m = choice(available);
+      const geo = m.make(this.world);
+      const order = this._makeOrder(m.type, m.title, m.desc, geo.pickup, geo.drops, m.pay, m.time, m.icon, m.color, m.id, hour, capacity);
+      if (order) { this.open.push(order); this._placeMarker(order); this._placePassenger(order); }
+      return;
+    }
+
+    // обычный заказ
+    const typeRoll = Math.random();
+    let type = 'normal';
+    if (typeRoll < 0.20) type = 'urgent';
+    else if (typeRoll < 0.32) type = 'vip';
+    else if (typeRoll < 0.44) type = 'package';
+    else if (typeRoll < 0.52) type = 'drunk';
+    else if (typeRoll < 0.62 && capacity >= 2) type = 'group';
+    else if (typeRoll < 0.70 && rating >= 15) type = 'tour';
+
+    const pickD = choice(unDistricts);
+    const dropD = choice(unDistricts.filter((d) => d.id !== pickD.id || Math.random() < 0.3));
+    let pickup = this._randPoint(pickD.id, player);
+    // не спавнить у игрока
+    for (let i = 0; i < 5 && dist2D(pickup.x, pickup.z, player.x, player.z) < 18; i++) pickup = this._randPoint(pickD.id, player);
+
+    let drops;
+    if (type === 'group') {
+      drops = [this._randPoint(dropD.id, player), this._randPoint(choice(unDistricts).id, player)];
+      drops = drops.map((p) => ({ x: p.x, z: p.z, name: this._districtName(p.district) }));
+    } else if (type === 'tour') {
+      const lm = this._randomLandmark(rating);
+      drops = [{ x: lm.x, z: lm.z, name: lm.name }];
+      if (Math.random() < 0.5) {
+        const lm2 = this._randomLandmark(rating, lm.id);
+        drops.push({ x: lm2.x, z: lm2.z, name: lm2.name });
+      }
+    } else {
+      const dp = this._randPoint(dropD.id, player);
+      drops = [{ x: dp.x, z: dp.z, name: this._districtName(dp.district) }];
+    }
+
+    const order = this._makeOrder(type, ORDER_META[type].name, ORDER_META[type].desc, pickup, drops, null, ORDER_META[type].time, ORDER_META[type].icon, ORDER_META[type].color, null, hour, capacity);
+    if (order) { this.open.push(order); this._placeMarker(order); this._placePassenger(order); }
+  }
+
+  _districtName(id) {
+    const d = DISTRICTS.find((dd) => dd.id === id);
+    return d ? d.name : id;
+  }
+
+  _randomLandmark(rating, excludeId) {
+    const lm = this.world.landmarks.filter((l) => l.id !== excludeId && this._lmUnlock(l) <= rating);
+    return lm.length ? choice(lm) : choice(this.world.landmarks);
+  }
+
+  _lmUnlock(lm) {
+    const map = { proval: 15, rynok: 30, vokzal: 75, cable: 60, gazebo: 60, tower: 60 };
+    return map[lm.id] || 0;
+  }
+
+  /* Создать объект заказа */
+  _makeOrder(type, title, desc, pickup, drops, payOverride, timeLimit, icon, color, missionId, hour, capacity) {
+    if (!pickup) return null;
+    let dist = 0;
+    let prev = pickup;
+    for (const d of drops) { dist += Math.abs(d.x - prev.x) + Math.abs(d.z - prev.z); prev = d; }
+    const estPay = payOverride || Math.round((CFG.baseFare + dist * CFG.farePerUnit) * ORDER_META[type].mult);
+    return {
+      id: this._id++, type, title, desc, icon, color, missionId,
+      pickup, drops, dropIdx: 0,
+      state: 'open',          // open | active | done | failed
+      estPay, pay: estPay,
+      timeLimit: timeLimit || 0,
+      timer: timeLimit || 0,
+      dist,
+      marker: null,
+      drunkChanged: false,
+      fragileBroken: false,
+      startTime: 0,
+    };
+  }
+
+  /* --- Маркер на карте --- */
+  _placeMarker(order) {
+    const tex = makeMarkerTexture(order.color, order.icon);
+    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false, depthTest: false });
+    const spr = new THREE.Sprite(mat);
+    spr.scale.set(4.2, 4.2, 1);
+    spr.position.set(order.pickup.x, 4.2, order.pickup.z);
+    this.world.scene.add(spr);
+    const beam = makeBeamSprite(order.color, 12);
+    beam.position.set(order.pickup.x, 0, order.pickup.z);
+    this.world.scene.add(beam);
+    order.marker = { spr, beam, t: Math.random() * 6 };
+  }
+
+  /* --- Пассажир: ждёт у точки → садится → едет → выходит --- */
+  _faceRoad(mesh, x, z) {
+    let bx = 0, bz = 0, best = 1e9;
+    for (const r of this.world.roadsV) {
+      const d = Math.abs(x - r.c);
+      if (d < best) { best = d; bx = r.c - x; bz = 0; }
+    }
+    for (const r of this.world.roadsH) {
+      const d = Math.abs(z - r.c);
+      if (d < best) { best = d; bx = 0; bz = r.c - z; }
+    }
+    const l = Math.hypot(bx, bz) || 1;
+    mesh.rotation.y = Math.atan2(bx / l, bz / l);
+  }
+
+  _placePassenger(order) {
+    const mesh = buildPedMesh();
+    mesh.position.set(order.pickup.x, 0, order.pickup.z);
+    this._faceRoad(mesh, order.pickup.x, order.pickup.z);
+    this.world.scene.add(mesh);
+    order.passenger = { mesh, state: 'wait', t: rand(0, 6), walkT: 0, wx: 0, wz: 0 };
+  }
+
+  _removePassenger(order) {
+    if (order.passenger) {
+      if (order.passenger.mesh.parent) this.world.scene.remove(order.passenger.mesh);
+      order.passenger = null;
+    }
+  }
+
+  /* Пассажир в салоне (виден сквозь стекло): голова и плечи на пассажирском сиденье */
+  _cabIn(player) {
+    if (!player || !player.group) return;
+    if (!this._cabPassenger) {
+      const mesh = buildPedMesh();
+      for (const leg of mesh.userData.legs) leg.visible = false;
+      for (const arm of mesh.userData.arms) arm.visible = false;
+      mesh.scale.setScalar(0.78);
+      mesh.position.set(0.55, 0.06, -0.25);
+      this._cabPassenger = mesh;
+    }
+    if (!this._cabPassenger.parent) player.group.add(this._cabPassenger);
+    this._cabPassenger.visible = true;
+  }
+
+  _cabOut() {
+    if (this._cabPassenger) this._cabPassenger.visible = false;
+  }
+
+  /* --- Световой столб над финальной точкой высадки (подсветка в мире) --- */
+  _showDropMarker(drop, dt) {
+    if (!this._dropBeam) {
+      this._dropBeam = makeBeamSprite('#ffd040', 13);
+      this.world.scene.add(this._dropBeam);
+    }
+    this._dropBeam.visible = true;
+    this._dropBeam.position.set(drop.x, 0, drop.z);
+    this._dropT += dt;
+    const s = 1.6 + Math.sin(this._dropT * 4) * 0.25;
+    this._dropBeam.scale.set(s, 13, 1);
+  }
+
+  _hideDropMarker() {
+    if (this._dropBeam) this._dropBeam.visible = false;
+  }
+
+  /* --- Взять заказ --- */
+  accept(order, player) {
+    if (order.state !== 'open') return false;
+    order.state = 'active';
+    order.startTime = performance.now();
+    this._removeMarker(order);
+    // пассажир садится в такси
+    if (order.passenger) {
+      order.passenger.state = 'riding';
+      order.passenger.mesh.visible = false;
+    }
+    this._cabIn(player);
+    this.active = order;
+    this.open = this.open.filter((o) => o.id !== order.id);
+    player.passengerCount = 1;
+    player.style = 0.7;
+    player.styleTimer = 0;
+    Events.emit('pickup', {});
+    return true;
+  }
+
+  _removeMarker(order) {
+    if (order.marker) {
+      this.world.scene.remove(order.marker.spr);
+      this.world.scene.remove(order.marker.beam);
+      order.marker.spr.material.dispose();
+      order.marker.beam.material.dispose();
+      order.marker = null;
+    }
+  }
+
+  /* --- Обновление --- */
+  update(dt, player, hour, rating, capacity, world) {
+    // спавн новых заказов
+    this._spawnT -= dt;
+    if (this._spawnT <= 0) {
+      this.spawn(rating, hour, capacity, player);
+      this._spawnT = CFG.orderSpawnEverySec + rand(0, 4);
+    }
+    // таймеры открытых заказов
+    for (let i = this.open.length - 1; i >= 0; i--) {
+      const o = this.open[i];
+      if (o.marker) {
+        o.marker.t += dt;
+        const s = 4.2 + Math.sin(o.marker.t * 3) * 0.6;
+        o.marker.spr.scale.set(s, s, 1);
+      }
+      // пассажир ждёт: лёгкое покачивание
+      const pas = o.passenger;
+      if (pas && pas.state === 'wait') {
+        pas.t += dt;
+        pas.mesh.position.y = Math.abs(Math.sin(pas.t * 2)) * 0.05;
+      }
+      if (o.timeLimit) {
+        o.timer -= dt;
+        if (o.timer <= 0) { this._removeMarker(o); this._removePassenger(o); this.open.splice(i, 1); }
+      } else {
+        // случайное исчезновение старых заказов
+        o._age = (o._age || 0) + dt;
+        if (o._age > CFG.orderExpireSec && Math.random() < dt * 0.5) { this._removeMarker(o); this._removePassenger(o); this.open.splice(i, 1); }
+      }
+    }
+
+    // активный заказ
+    const a = this.active;
+    if (a) {
+      if (a.timeLimit) {
+        a.timer -= dt;
+        if (a.timer <= 0) { this.fail(a, 'time'); return; }
+      }
+      const drop = a.drops[a.dropIdx];
+      // подсветка финальной точки высадки в мире
+      this._showDropMarker(drop, dt);
+      // «пьяный» пассажир меняет маршрут на полпути
+      if (a.type === 'drunk' && !a.drunkChanged) {
+        const done = this._legProgress(player, drop, a);
+        if (done > 0.45) {
+          a.drunkChanged = true;
+          const nd = this._randPoint(choice(this.unlockedDistricts(rating)).id, player);
+          a.drops[a.dropIdx] = { x: nd.x, z: nd.z, name: '…передумал, едем: ' + this._districtName(nd.district) };
+          a.estPay = Math.round(a.estPay * 1.3);
+          Events.emit('toast', { text: 'Пассажир передумал! Новый адрес: ' + a.drops[a.dropIdx].name, color: '#c070e0' });
+        }
+      }
+      // у VIP клиент выходит при аварии
+      // (обрабатывается через Events.crash в game)
+    } else {
+      this._hideDropMarker();
+    }
+
+    // вышедшие пассажиры уходят (идут от дороги и исчезают)
+    for (let i = this._walkers.length - 1; i >= 0; i--) {
+      const p = this._walkers[i];
+      p.walkT += dt;
+      if (p.walkT > 6) { this.world.scene.remove(p.mesh); this._walkers.splice(i, 1); continue; }
+      p.mesh.position.x += p.wx * 1.8 * dt;
+      p.mesh.position.z += p.wz * 1.8 * dt;
+      const ph = p.walkT * 9;
+      const u = p.mesh.userData;
+      if (u && u.legs) {
+        u.legs[0].rotation.x = Math.sin(ph) * 0.55;
+        u.legs[1].rotation.x = -Math.sin(ph) * 0.55;
+        u.arms[0].rotation.x = -Math.sin(ph) * 0.4;
+        u.arms[1].rotation.x = Math.sin(ph) * 0.4;
+      }
+    }
+  }
+
+  _legProgress(player, drop, order) {
+    const d0 = order.dist || 1;
+    const legDist = Math.abs(drop.x - order.pickup.x) + Math.abs(drop.z - order.pickup.z);
+    const remaining = Math.abs(player.x - drop.x) + Math.abs(player.z - drop.z);
+    return clamp(1 - remaining / Math.max(legDist, 1), 0, 1);
+  }
+
+  /* --- Завершение поездки --- */
+  complete(player, hour, rating) {
+    const a = this.active;
+    if (!a) return null;
+    const drop = a.drops[a.dropIdx];
+    const dist = dist2D(player.x, player.z, drop.x, drop.z);
+    if (dist > 7) return null;
+    // финальная остановка?
+    const isLast = a.dropIdx >= a.drops.length - 1;
+    if (!isLast) {
+      // следующая остановка
+      a.dropIdx++;
+      Events.emit('toast', { text: 'Следующая остановка: ' + a.drops[a.dropIdx].name, color: '#3e9e6e' });
+      return { partial: true };
+    }
+    // расчёт оплаты
+    const night = hour >= CFG.nightStartHour || hour < CFG.nightEndHour;
+    const timeFrac = a.timeLimit ? clamp(1 - a.timer / a.timeLimit, 0, 1) : 0;
+    let pay = a.estPay;
+    if (a.timeLimit) pay = Math.round(pay * (1 + CFG.timeBonusMax * (1 - timeFrac)));
+    if (night) pay = Math.round(pay * CFG.nightMult);
+    if (rating >= 60) pay = Math.round(pay * 1.15); // премиум-клиенты
+    // чаевые за стиль
+    const dirtPenalty = 1 - player.dirt * 0.5;
+    const tips = Math.round(CFG.tipsMax * player.style * (a.type === 'vip' ? 1.5 : 1) * dirtPenalty);
+    if (a.type === 'package' && a.fragileBroken) pay = Math.round(pay * 0.5);
+    const total = pay + tips;
+
+    this.active = null;
+    this._hideDropMarker();
+    // пассажир выходит из такси и уходит
+    this._cabOut();
+    const pas = a.passenger;
+    if (pas) {
+      pas.state = 'walk';
+      pas.walkT = 0;
+      pas.mesh.visible = true;
+      pas.mesh.position.set(drop.x, 0, drop.z);
+      // уходит в сторону от дороги (вглубь квартала)
+      let bx = 0, bz = 0, best = 1e9;
+      for (const r of this.world.roadsV) {
+        const d = Math.abs(drop.x - r.c);
+        if (d < best) { best = d; bx = drop.x - r.c; bz = 0; }
+      }
+      for (const r of this.world.roadsH) {
+        const d = Math.abs(drop.z - r.c);
+        if (d < best) { best = d; bx = 0; bz = drop.z - r.c; }
+      }
+      const l = Math.hypot(bx, bz) || 1;
+      pas.wx = bx / l; pas.wz = bz / l;
+      pas.mesh.rotation.y = Math.atan2(pas.wx, pas.wz);
+      this._walkers.push(pas);
+    }
+    player.passengerCount = 0;
+    const res = {
+      title: a.title, pay: pay, tips, total, type: a.type, missionId: a.missionId,
+      est: a.estPay, dist: a.dist, partial: false,
+    };
+    Events.emit('orderDone', res);
+    return res;
+  }
+
+  /* --- Провал заказа --- */
+  fail(a, reason) {
+    if (!this.active || this.active.id !== a.id) return;
+    this.active = null;
+    this._hideDropMarker();
+    this._cabOut();
+    this._removePassenger(a);
+    Events.emit('fail', { reason });
+    Events.emit('toast', { text: reason === 'time' ? 'Заказ провален: время вышло!' : 'Пассажир ушёл!', color: '#e05050' });
+  }
+
+  /* Авария во время поездки (вызывается из game при crash) */
+  onCrash(impact) {
+    const a = this.active;
+    if (!a) return;
+    if (a.type === 'package') a.fragileBroken = true;
+    if (a.type === 'vip' && impact > 12) {
+      this.fail(a, 'vip');
+      Events.emit('toast', { text: 'VIP-клиент в шоке и ушёл. -100 ₽', color: '#e05050' });
+      return -100;
+    }
+    return 0;
+  }
+
+  markerPositions() {
+    return this.open.map((o) => ({ x: o.pickup.x, z: o.pickup.z, icon: o.icon, color: o.color, title: o.title }));
+  }
+
+  get activeDrop() {
+    return this.active ? this.active.drops[this.active.dropIdx] : null;
+  }
+
+  reset() {
+    for (const o of this.open) { this._removeMarker(o); this._removePassenger(o); }
+    this.open = [];
+    this.active = null;
+    this.completed = [];
+    this._hideDropMarker();
+    this._cabOut();
+    for (const p of this._walkers) this.world.scene.remove(p.mesh);
+    this._walkers = [];
+  }
+}
+
+const Orders = PassengerManager;

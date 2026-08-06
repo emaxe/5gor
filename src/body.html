@@ -1,0 +1,134 @@
+<canvas id="game-canvas"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="hud-tl">
+    <div id="money">800 ₽</div>
+    <div id="rating">☆☆☆☆☆</div>
+    <div id="clock">09:00</div>
+    <div id="day">День 1</div>
+  </div>
+  <div id="hud-tc">
+    <div id="order-card" class="hidden">
+      <div id="order-title"></div>
+      <div id="order-desc"></div>
+      <div id="order-timer"></div>
+      <div id="order-pay"></div>
+    </div>
+    <div id="nav-arrow-wrap" class="hidden">
+      <div id="nav-arrow">➤</div>
+      <div id="nav-dist"></div>
+    </div>
+  </div>
+  <div id="hud-tr">
+    <canvas id="minimap" width="180" height="180"></canvas>
+    <div id="hud-btns">
+      <button id="btn-map" title="Карта (M)">🗺️</button>
+      <button id="btn-pause" title="Пауза (Esc)">⏸</button>
+      <button id="btn-horn" title="Сигнал (H)">📯</button>
+      <button id="btn-lights" title="Фары (L)">💡</button>
+    </div>
+  </div>
+  <div id="hud-bl">
+    <div id="speed-wrap"><div id="speed-val">0</div><div id="speed-unit">км/ч</div></div>
+    <div class="bar-row"><span>⛽</span><div class="bar"><div id="fuel-bar"></div></div></div>
+    <div class="bar-row"><span>🔧</span><div class="bar"><div id="dmg-bar"></div></div></div>
+    <div id="dirt-tip" class="hidden">🧼 Машина грязная — чаевые ниже</div>
+  </div>
+  <div id="btn-interact-wrap" class="hidden">
+    <button id="btn-interact">Взять заказ</button>
+  </div>
+  <div id="touch-controls" class="hidden">
+    <div id="joy-zone">
+      <div id="joy-base"><div id="joy-knob"></div></div>
+      <div id="joy-label">ГАЗ · РУЛЬ</div>
+    </div>
+    <button id="btn-hb">🛞</button>
+  </div>
+</div>
+
+<div id="menu" class="screen">
+  <div class="card">
+    <h1>5<span>GOR</span></h1>
+    <div class="subtitle">Симулятор таксиста в Пятигорске</div>
+    <button id="btn-newgame">🚕 Новая игра</button>
+    <button id="btn-continue" class="hidden">▶ Продолжить</button>
+    <button id="btn-menu-garage">🔧 Гараж</button>
+    <button id="btn-menu-settings">⚙ Настройки</button>
+    <div id="menu-hint">WASD / стрелки — движение · E — действие · H — сигнал<br>L — фары · M — карта · Esc — пауза · G — гараж</div>
+  </div>
+</div>
+
+<div id="pause" class="screen hidden">
+  <div class="card">
+    <h2>⏸ Пауза</h2>
+    <button id="btn-resume">▶ Продолжить</button>
+    <button id="btn-pause-garage">🔧 Гараж</button>
+    <button id="btn-pause-settings">⚙ Настройки</button>
+    <button id="btn-evac">🚑 Эвакуатор (400 ₽)</button>
+    <button id="btn-endshift">🌙 Завершить смену</button>
+    <button id="btn-menu">🏠 В меню</button>
+  </div>
+</div>
+
+<div id="garage" class="screen hidden">
+  <div class="card">
+    <div class="garage-layout">
+      <div class="garage-info">
+        <h2 id="garage-car-name">«Пятёрочка»</h2>
+        <div id="garage-car-desc"></div>
+        <div id="garage-stats"></div>
+        <div class="garage-tabs">
+          <button data-tab="upgrades" class="active">Улучшения</button>
+          <button data-tab="tuning">Тюнинг</button>
+          <button data-tab="cars">Автомобили</button>
+        </div>
+        <div id="garage-list"></div>
+        <div id="garage-actions">
+          <button id="btn-repair">🔧 Ремонт</button>
+          <button id="btn-wash">🧼 Мойка</button>
+          <button id="btn-refuel">⛽ Заправить</button>
+          <button id="btn-garage-back">← Назад</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="settings" class="screen hidden">
+  <div class="card">
+    <h2>⚙ Настройки</h2>
+    <label><input type="checkbox" id="chk-sound" checked> Звук</label>
+    <label><input type="checkbox" id="chk-music" checked> Музыка</label>
+    <label>Качество:
+      <select id="sel-quality">
+        <option value="high">Высокое</option>
+        <option value="low">Низкое (слабые устройства)</option>
+      </select>
+    </label>
+    <button id="btn-settings-back">← Назад</button>
+  </div>
+</div>
+
+<div id="map-screen" class="screen hidden">
+  <canvas id="bigmap"></canvas>
+  <button id="btn-map-close">✖ Закрыть</button>
+  <div id="map-legend">
+    🟡 — заказы · 🔴 — цель · 🟢 — заправки<br>📍 — достопримечательности
+  </div>
+</div>
+
+<div id="shiftend" class="screen hidden">
+  <div class="card">
+    <h2>🌇 Смена завершена!</h2>
+    <div id="se-stats"></div>
+    <button id="btn-next-shift">🌅 Новая смена</button>
+    <button id="btn-se-menu">🏠 В меню</button>
+  </div>
+</div>
+
+<div id="toasts"></div>
+<div id="error-overlay" class="hidden">
+  <pre id="err-text"></pre>
+  <button id="btn-copy-err">Копировать ошибку</button>
+  <button id="btn-reload">Перезагрузить</button>
+</div>

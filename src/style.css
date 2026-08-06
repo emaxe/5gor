@@ -1,0 +1,241 @@
+/* ============================================================
+ * 5GOR — стили
+ * ============================================================ */
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body { width: 100%; height: 100%; overflow: hidden; background: #0d1117; }
+body {
+  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  color: #e8e8e8;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+.hidden { display: none !important; }
+
+/* ---------- HUD ---------- */
+#hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
+#hud button { pointer-events: auto; }
+#hud-tl {
+  position: absolute; top: 10px; left: 10px;
+  background: rgba(10, 14, 20, 0.72); backdrop-filter: blur(6px);
+  border-radius: 12px; padding: 8px 12px; font-size: 14px; line-height: 1.35;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+#money { font-weight: 800; font-size: 17px; color: #7ee787; }
+#rating { color: #ffd75e; font-size: 13px; letter-spacing: 1px; }
+#clock { font-variant-numeric: tabular-nums; color: #c9d1d9; font-size: 13px; }
+#day { color: #8b949e; font-size: 12px; }
+
+#hud-tc {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+  display: flex; flex-direction: column; align-items: center; gap: 6px; max-width: 46vw;
+}
+#order-card {
+  background: rgba(10, 14, 20, 0.78); backdrop-filter: blur(6px);
+  border-radius: 12px; padding: 8px 14px; text-align: center;
+  border: 1px solid rgba(255,255,255,0.1); min-width: 200px;
+}
+#order-title { font-weight: 700; font-size: 15px; }
+#order-desc { font-size: 12px; color: #9aa4b0; margin-top: 2px; }
+#order-timer { font-size: 14px; font-weight: 700; color: #ff7b72; font-variant-numeric: tabular-nums; }
+#order-pay { font-size: 13px; color: #7ee787; font-weight: 600; }
+#nav-arrow-wrap {
+  background: rgba(10,14,20,0.7); border-radius: 50%; width: 64px; height: 64px;
+  display: flex; align-items: center; justify-content: center; position: relative;
+  border: 1px solid rgba(255,255,255,0.12);
+}
+#nav-arrow { font-size: 26px; color: #58a6ff; transition: transform 0.1s; }
+#nav-dist { position: absolute; bottom: -20px; font-size: 12px; color: #c9d1d9; background: rgba(10,14,20,0.7); border-radius: 8px; padding: 1px 8px; }
+
+#hud-tr { position: absolute; top: 10px; right: 10px; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; }
+#minimap {
+  width: 168px; height: 168px; border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: #141a22;
+  box-shadow: 0 4px 18px rgba(0,0,0,0.5);
+}
+#hud-btns { display: flex; gap: 6px; }
+#hud-btns button, #btn-interact {
+  width: 46px; height: 46px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(10,14,20,0.78); color: #e8e8e8; font-size: 20px; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
+#hud-btns button:active { background: rgba(60,80,120,0.8); transform: scale(0.94); }
+
+#hud-bl {
+  position: absolute; left: 10px; bottom: 12px;
+  background: rgba(10, 14, 20, 0.72); backdrop-filter: blur(6px);
+  border-radius: 12px; padding: 8px 12px; border: 1px solid rgba(255,255,255,0.08);
+  min-width: 130px;
+}
+#speed-wrap { display: flex; align-items: baseline; gap: 6px; }
+#speed-val { font-size: 30px; font-weight: 800; font-variant-numeric: tabular-nums; color: #fff; }
+#speed-unit { font-size: 12px; color: #8b949e; }
+.bar-row { display: flex; align-items: center; gap: 6px; font-size: 13px; margin-top: 4px; }
+.bar { flex: 1; height: 8px; background: rgba(255,255,255,0.12); border-radius: 4px; overflow: hidden; }
+#fuel-bar { height: 100%; width: 100%; background: linear-gradient(90deg, #7ee787, #e3b341); transition: width 0.15s; }
+#dmg-bar { height: 100%; width: 0%; background: linear-gradient(90deg, #e3b341, #ff7b72); transition: width 0.15s; }
+#dirt-tip { font-size: 13px; margin-top: 4px; color: #d0a050; }
+
+/* контекстная кнопка действия (поверх тач-управления) */
+#btn-interact-wrap {
+  position: absolute; bottom: 18%; left: 50%; transform: translateX(-50%);
+  pointer-events: auto; z-index: 30;
+}
+#btn-interact {
+  width: auto; min-width: 170px; height: 54px; padding: 0 22px;
+  font-size: 17px; font-weight: 700; border-radius: 27px;
+  background: linear-gradient(135deg, #f2c12e, #e8a020);
+  color: #1a1a1a; border: none; box-shadow: 0 6px 22px rgba(242,193,46,0.35);
+  animation: pulse 1.6s infinite;
+}
+@keyframes pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+
+/* ---------- Сенсорное управление: виртуальный джойстик ---------- */
+#touch-controls { position: fixed; inset: 0; pointer-events: none; z-index: 12; }
+#joy-zone {
+  position: absolute; left: 18px; bottom: calc(26px + env(safe-area-inset-bottom));
+  width: 140px; height: 140px;
+  pointer-events: auto; touch-action: none;
+}
+#joy-base {
+  position: absolute; inset: 0; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, rgba(255,255,255,0.10), rgba(10,16,26,0.55));
+  border: 2px solid rgba(255,255,255,0.22);
+  box-shadow: 0 8px 26px rgba(0,0,0,0.45), inset 0 0 26px rgba(0,0,0,0.35);
+}
+#joy-knob {
+  position: absolute; left: 50%; top: 50%; width: 58px; height: 58px;
+  margin: 0; transform: translate(-50%,-50%);
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(255,255,255,0.4), rgba(40,56,80,0.92));
+  border: 2px solid rgba(255,255,255,0.32);
+  box-shadow: 0 4px 14px rgba(0,0,0,0.5);
+  will-change: transform;
+}
+#joy-label {
+  position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%);
+  font-size: 10px; letter-spacing: 1.5px; color: rgba(255,255,255,0.45);
+  white-space: nowrap; pointer-events: none;
+}
+#btn-hb {
+  position: absolute; right: calc(18px + env(safe-area-inset-right)); bottom: calc(34px + env(safe-area-inset-bottom));
+  width: 62px; height: 62px; border-radius: 50%;
+  font-size: 22px; font-weight: 800;
+  background: rgba(20,28,40,0.85); border: 2px solid rgba(255,255,255,0.18);
+  color: #e8e8e8; pointer-events: auto; touch-action: none;
+  display: flex; align-items: center; justify-content: center;
+}
+#btn-hb:active { background: rgba(60,80,120,0.8); transform: scale(0.94); }
+
+/* ---------- Экраны-меню ---------- */
+.screen {
+  position: fixed; inset: 0; z-index: 20;
+  background: rgba(8, 12, 18, 0.82); backdrop-filter: blur(10px);
+  display: flex; align-items: center; justify-content: center;
+}
+.card {
+  background: rgba(16, 22, 32, 0.92);
+  border: 1px solid rgba(255,255,255,0.1);
+  border-radius: 20px; padding: 28px 34px;
+  display: flex; flex-direction: column; gap: 10px;
+  min-width: 300px; max-width: 92vw; max-height: 88vh; overflow-y: auto;
+  box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+}
+.card h1 {
+  font-size: 52px; text-align: center; letter-spacing: 2px;
+  background: linear-gradient(135deg, #f2c12e, #e06020);
+  -webkit-background-clip: text; background-clip: text; color: transparent;
+  text-shadow: none;
+}
+.card h1 span { color: #f2c12e; }
+.card h2 { font-size: 24px; text-align: center; }
+.subtitle { text-align: center; color: #8b949e; font-size: 14px; margin-bottom: 12px; }
+.card button {
+  width: 100%; padding: 13px 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.12);
+  background: rgba(255,255,255,0.06); color: #e8e8e8; font-size: 16px; font-weight: 600;
+  cursor: pointer; transition: all 0.15s;
+}
+.card button:hover { background: rgba(255,255,255,0.12); transform: translateY(-1px); }
+.card button:active { transform: scale(0.98); }
+#btn-newgame { background: linear-gradient(135deg, #f2c12e, #e8a020); color: #1a1a1a; border: none; font-size: 18px; }
+#menu-hint { font-size: 11.5px; color: #6e7681; text-align: center; margin-top: 8px; line-height: 1.5; }
+.card label { display: flex; align-items: center; gap: 10px; font-size: 15px; padding: 6px 0; }
+.card select { background: #1c2430; color: #e8e8e8; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 6px; }
+
+/* ---------- Гараж ---------- */
+#garage .card { width: 520px; max-width: 94vw; }
+.garage-layout { width: 100%; display: flex; justify-content: center; }
+#garage-car-name { font-size: 20px; }
+#garage-car-desc { color: #8b949e; font-size: 13px; text-align: center; }
+#garage-stats { font-size: 12.5px; color: #c9d1d9; background: rgba(255,255,255,0.05); border-radius: 10px; padding: 8px 12px; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 14px; }
+.garage-tabs { display: flex; gap: 6px; }
+.garage-tabs button { flex: 1; padding: 8px; font-size: 13px; border-radius: 10px; border: 1px solid rgba(255,255,255,0.12); background: rgba(255,255,255,0.05); color: #9aa4b0; cursor: pointer; }
+.garage-tabs button.active { background: #f2c12e; color: #1a1a1a; border-color: #f2c12e; font-weight: 700; }
+#garage-list { display: flex; flex-direction: column; gap: 8px; max-height: 34vh; overflow-y: auto; }
+.up-row {
+  display: flex; align-items: center; gap: 10px; background: rgba(255,255,255,0.05);
+  border-radius: 10px; padding: 8px 10px;
+}
+.up-row .icon { font-size: 20px; }
+.up-row .info { flex: 1; min-width: 0; }
+.up-row .name { font-weight: 600; font-size: 14px; }
+.up-row .desc { font-size: 11.5px; color: #8b949e; }
+.up-row .pips { color: #f2c12e; letter-spacing: 2px; font-size: 12px; }
+.up-row button { width: auto; padding: 8px 14px; font-size: 13px; background: #2e6fb5; border: none; border-radius: 10px; color: #fff; font-weight: 700; cursor: pointer; white-space: nowrap; }
+.up-row button:disabled { background: #3a4350; color: #6e7681; cursor: default; }
+#garage-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+#garage-actions button { padding: 10px; font-size: 14px; }
+.tune-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.swatch { width: 34px; height: 34px; border-radius: 50%; border: 2px solid rgba(255,255,255,0.2); cursor: pointer; }
+.swatch.active { border-color: #fff; transform: scale(1.12); }
+.car-card { background: rgba(255,255,255,0.05); border-radius: 12px; padding: 12px; }
+.car-card .name { font-weight: 700; }
+.car-card .desc { font-size: 12px; color: #8b949e; margin: 4px 0; }
+.car-card button { margin-top: 6px; padding: 9px; }
+
+/* ---------- Карта ---------- */
+#map-screen { z-index: 15; background: rgba(8,12,18,0.94); flex-direction: column; }
+#bigmap { max-width: 96vw; max-height: 86vh; border-radius: 12px; background: #10161f; }
+#btn-map-close { position: absolute; top: 14px; right: 14px; padding: 12px 20px; border-radius: 12px; background: #2e6fb5; color: #fff; border: none; font-size: 15px; font-weight: 700; cursor: pointer; }
+#map-legend { position: absolute; left: 14px; bottom: 14px; font-size: 12px; background: rgba(0,0,0,0.6); padding: 8px 12px; border-radius: 10px; color: #c9d1d9; line-height: 1.5; }
+
+/* ---------- Итоги смены ---------- */
+#se-stats { font-size: 15px; line-height: 1.8; background: rgba(255,255,255,0.05); border-radius: 12px; padding: 14px 18px; min-width: 260px; }
+#se-stats .big { font-size: 20px; font-weight: 800; color: #7ee787; }
+
+/* ---------- Тосты ---------- */
+#toasts { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
+.toast {
+  background: rgba(16,22,32,0.92); border: 1px solid rgba(255,255,255,0.14);
+  border-radius: 12px; padding: 10px 18px; font-size: 14px; max-width: 80vw;
+  animation: toastIn 0.25s ease; box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+@keyframes toastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
+
+/* ---------- Ошибки ---------- */
+#error-overlay {
+  position: fixed; inset: 0; z-index: 100; background: #1a0a0a;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 20px;
+}
+#err-text { max-width: 90vw; max-height: 60vh; overflow: auto; background: #000; color: #ff6b6b; padding: 16px; border-radius: 10px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+#error-overlay button { padding: 12px 24px; border-radius: 10px; border: none; font-size: 15px; cursor: pointer; background: #2e6fb5; color: #fff; }
+
+/* ---------- Мобильные ---------- */
+@media (max-width: 720px) {
+  #minimap { width: 116px; height: 116px; }
+  #hud-tl { font-size: 12px; padding: 6px 10px; }
+  #money { font-size: 15px; }
+  #hud-bl { min-width: 100px; padding: 6px 10px; bottom: 22%; }
+  #speed-val { font-size: 24px; }
+  #hud-tc { top: 118px; }
+  #order-card { min-width: 150px; max-width: 60vw; }
+  #nav-arrow-wrap { width: 52px; height: 52px; }
+  #hud-btns button { width: 40px; height: 40px; font-size: 17px; }
+  #hud-tl { top: auto; bottom: 10px; left: 10px; }
+  #hud-tr { top: 10px; right: 10px; }
+  .card { padding: 20px 18px; min-width: 0; width: 92vw; }
+  #btn-interact-wrap { bottom: 34%; }
+  #toasts { top: 12px; }
+}
