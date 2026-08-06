@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG, DISTRICTS, PALETTES, LANDMARKS, FUEL_STATIONS } from './config.js';
-import { mulberry32, dist2D, rand, clamp, choice, makeCanvas, canvasToTexture, lerp, mergeColored, makePlateTexture, makeWindowTexture, makeTaxiTexture } from './utils.js';
+import { mulberry32, dist2D, rand, clamp, choice, makeCanvas, canvasToTexture, lerp, mergeColored, makePlateTexture, makeTaxiTexture, getWindowMaterial, getRoofMaterial } from './utils.js';
 
 /**
  * Класс игрового мира: процедурная генерация города, дорожной сети, зданий и освещения.
@@ -28,7 +28,8 @@ export class World {
     this.landmarks = LANDMARKS.map((l) => ({ ...l }));
     this.lampHeadMesh = null;
     this.roadMats = [];        // материалы асфальта (для эффекта намокания)
-    this.windowMats = [];      // материалы стен с окнами (для ночной подсветки)
+    this.windowMats = new Set(); // уникальные материалы стен с окнами (для ночной подсветки)
+    this._bottomMat = null;    // общий материал днища зданий (создаётся один раз в build())
     this._strips = [];         // участки серпантина
     this.hill = { x: 0, z: -440, r: 170, h: 60 };
     this.time = 0;
@@ -127,6 +128,7 @@ export class World {
 
   /* ================= СТРОИТЕЛЬСТВО ================= */
   build() {
+    this._bottomMat = new THREE.MeshLambertMaterial({ color: 0x555550 });
     this._ground();
     this._roads();
     this._crosswalks();
@@ -490,18 +492,14 @@ export class World {
   _building(x, z, w, dep, h, dist) {
     const palette = dist.palette;
     const cols = clamp(Math.round(w / 4.2), 2, 9);
-    const rows = clamp(Math.round(h / 3.2), 1, 14);
+    const rows = clamp(Math.round(h / 3.2 / 2) * 2, 2, 14);
     const lit = dist.id === 'center' ? 0.22 : 0.12;
-    const winTex = makeWindowTexture(palette, cols, rows, lit);
-    const sideMat = new THREE.MeshLambertMaterial({ map: winTex });
-    // ночная подсветка окон: та же текстура как emissiveMap, интенсивность — по времени суток
-    sideMat.emissiveMap = winTex;
-    sideMat.emissive = new THREE.Color(0xffffff);
-    sideMat.emissiveIntensity = 0.04;
-    this.windowMats.push(sideMat);
-    const roofC = new THREE.Color(choice(PALETTES[palette])).multiplyScalar(0.62);
-    const roofMat = new THREE.MeshLambertMaterial({ color: roofC });
-    const bottomMat = new THREE.MeshLambertMaterial({ color: 0x555550 });
+    // sideMat/roofMat переиспользуются из кеша (utils.js) по составному ключу —
+    // не создаём новый материал на каждое здание
+    const sideMat = getWindowMaterial(palette, cols, rows, lit);
+    this.windowMats.add(sideMat);
+    const roofMat = getRoofMaterial(palette, choice(PALETTES[palette]));
+    const bottomMat = this._bottomMat;
     const mats = [sideMat, sideMat, roofMat, bottomMat, sideMat, sideMat];
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, dep), mats);
     mesh.position.set(x + w / 2, 0.15 + h / 2, z + dep / 2);

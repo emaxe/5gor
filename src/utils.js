@@ -87,6 +87,32 @@ export function makeWindowTexture(palette, wIn, hIn, lit) {
   return t;
 }
 
+/* Кеш материалов зданий (окна + крыши) — по ключу, аналогично _texCache */
+const _matCache = new Map();
+
+/* Материал стены с окнами, разделяемый между всеми зданиями с одинаковым (palette, cols, rows, lit) */
+export function getWindowMaterial(palette, cols, rows, lit) {
+  const key = `win_${palette}_${cols}_${rows}_${lit}`;
+  if (_matCache.has(key)) return _matCache.get(key);
+  const winTex = makeWindowTexture(palette, cols, rows, lit);
+  const mat = new THREE.MeshLambertMaterial({ map: winTex });
+  mat.emissiveMap = winTex;
+  mat.emissive = new THREE.Color(0xffffff);
+  mat.emissiveIntensity = 0.04;
+  _matCache.set(key, mat);
+  return mat;
+}
+
+/* Материал крыши, разделяемый между всеми зданиями с одинаковым (palette, baseColorHex) */
+export function getRoofMaterial(palette, baseColorHex) {
+  const key = `roof_${palette}_${baseColorHex}`;
+  if (_matCache.has(key)) return _matCache.get(key);
+  const roofC = new THREE.Color(baseColorHex).multiplyScalar(0.62);
+  const mat = new THREE.MeshLambertMaterial({ color: roofC });
+  _matCache.set(key, mat);
+  return mat;
+}
+
 /* Текстура «шашечек такси» + надпись */
 export function makeTaxiTexture(colorHex) {
   const key = 'taxi_' + colorHex;
