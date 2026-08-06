@@ -6392,6 +6392,7 @@ class Game {
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = CFG.quality === 'high';
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.autoUpdate = false;
     this.renderer.outputEncoding = THREE.sRGBEncoding;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     window.addEventListener('resize', () => {
@@ -6410,7 +6411,8 @@ class Game {
     this.sun = new THREE.DirectionalLight(0xfff0d8, 1.2);
     this.sun.position.set(60, 90, 40);
     this.sun.castShadow = CFG.quality === 'high';
-    this.sun.shadow.mapSize.set(1024, 1024);
+    const initShadowRes = CFG.quality === 'high' ? 1024 : 512;
+    this.sun.shadow.mapSize.set(initShadowRes, initShadowRes);
     this.sun.shadow.camera.left = -90; this.sun.shadow.camera.right = 90;
     this.sun.shadow.camera.top = 90; this.sun.shadow.camera.bottom = -90;
     this.sun.shadow.camera.far = 400;
@@ -6453,6 +6455,7 @@ class Game {
     this.world = new World(this.scene);
     const t0 = performance.now();
     this.world.build();
+    if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
     if (this._debugOverlay) console.log(`world.build(): ${(performance.now() - t0).toFixed(1)}ms`);
     WORLD_INTERSECTIONS = this.world.intersections;
   }
@@ -6635,6 +6638,7 @@ class Game {
     this.weather = pickWeighted([
       { v: 'clear', w: 55 }, { v: 'rain', w: 25 }, { v: 'fog', w: 20 },
     ]);
+    if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
     Events.emit('weather:changed', { weather: this.weather });
     this.orders.reset();
     this.player.applyUpgrades(this.upgrades.stats());
@@ -6698,6 +6702,11 @@ class Game {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q === 'high' ? 1.75 : 1.25));
     this.renderer.shadowMap.enabled = q === 'high';
     this.sun.castShadow = q === 'high';
+    const shadowRes = q === 'high' ? 1024 : 512;
+    this.sun.shadow.mapSize.set(shadowRes, shadowRes);
+    this.sun.shadow.map?.dispose();
+    this.sun.shadow.map = null;
+    if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
     this.ui.toast('Качество: ' + (q === 'high' ? 'высокое' : 'низкое'), '#7ee787');
   }
 
@@ -6871,6 +6880,11 @@ class Game {
     this.sun.intensity = (0.25 + dayF * 1.05) * weatherDim;
     const sunY = Math.max(6, 90 * dayF + 12);
     this.sun.position.set(60, sunY, 40 - 60 * (1 - dayF));
+    const sunMoved = Math.abs(dayF - (this._lastSunDayF ?? -1)) > 0.01;
+    if (sunMoved) {
+      this._lastSunDayF = dayF;
+      if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
+    }
 
     // Звёзды
     this.stars.material.opacity = nf * (1 - this._rainFactor * 0.8 - this._fogFactor * 0.8);
