@@ -7100,7 +7100,13 @@ class Game {
       this._hudAccum = 0;
       this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world);
     }
-    this.ui.renderMinimap(this.player, this.orders, this.world);
+
+    // миникарта (троттлинг до ~20 Гц)
+    this._minimapAccum = (this._minimapAccum || 0) + dt;
+    if (this._minimapAccum >= 1 / 20) {
+      this._minimapAccum = 0;
+      this.ui.renderMinimap(this.player, this.orders, this.world);
+    }
 
     // автосохранение
     this._saveTimer += dt;
