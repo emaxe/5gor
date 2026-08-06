@@ -41,6 +41,8 @@ const RAIN_FRAG = `
 uniform float uOpacity;
 void main() {
   gl_FragColor = vec4(0.58, 0.72, 0.88, uOpacity);
+  #include <tonemapping_fragment>
+  #include <encodings_fragment>
 }
 `;
 
@@ -134,7 +136,7 @@ export class Game {
     window.addEventListener('resize', () => {
       this.renderer.setSize(window.innerWidth, window.innerHeight);
       if (this.rainUniforms) {
-        this.rainUniforms.uScale.value = window.innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(62) / 2));
+        this.rainUniforms.uScale.value = window.innerHeight * 0.5;
       }
     });
   }
@@ -185,8 +187,8 @@ export class Game {
       uWindX:     { value: -4.0 },
       uWindZ:     { value: -2.0 },
       uHeight:    { value: 55.0 },
-      uSize:      { value: 0.3 },   // мировой размер, как у прежнего PointsMaterial({ size: 0.3 })
-      uScale:     { value: window.innerHeight / (2 * Math.tan(THREE.MathUtils.degToRad(62) / 2)) },
+      uSize:      { value: 0.3 * this.renderer.getPixelRatio() },   // как у PointsMaterial: size * pixelRatio
+      uScale:     { value: window.innerHeight * 0.5 },              // как у PointsMaterial: height * 0.5, без учёта FOV
       uOpacity:   { value: 0.65 },
     };
     const rainMat = new THREE.ShaderMaterial({
@@ -450,6 +452,10 @@ export class Game {
   setQuality(q) {
     CFG.quality = q;
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q === 'high' ? 1.75 : 1.25));
+    if (this.rainUniforms) {
+      this.rainUniforms.uSize.value = 0.3 * this.renderer.getPixelRatio();
+      this.rainUniforms.uScale.value = window.innerHeight * 0.5;
+    }
     this.renderer.shadowMap.enabled = q === 'high';
     this.sun.castShadow = q === 'high';
     const shadowRes = q === 'high' ? 1024 : 512;
@@ -696,6 +702,7 @@ export class Game {
     this.input.update(dt);
     const st = this.stateName;
     if (st === 'menu') {
+      this._renderThrottle = 0;
       this._menuT += dt;
       const a = this._menuT * 0.06;
       this.camera.position.set(Math.sin(a) * 120, 60, Math.cos(a) * 120);
@@ -705,6 +712,7 @@ export class Game {
       return;
     }
     if (st === 'garage') {
+      this._renderThrottle = 0;
       this._garageT += dt;
       const a = this._garageT * 0.4;
       const p = this.player;

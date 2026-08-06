@@ -21,7 +21,7 @@
 | Файл | Область | Приоритет | Сложность |
 |------|---------|-----------|-----------|
 | [OPT-00-instrumentation.md](./OPT-00-instrumentation.md) | FPS/draw calls/build() — измерительный оверлей | 🔴 Критично, делать первым | Низкая |
-| [OPT-09-building-materials.md](./OPT-09-building-materials.md) | Здания: дедуп материалов, ~1500 draw calls | 🔴 Критично, наибольший эффект | Средняя |
+| [OPT-09-building-materials.md](./OPT-09-building-materials.md) | Здания: дедупликация объектов материалов (~700→~50), draw calls per building не изменились (см. Шаг 3 брифа, не реализован) | 🔴 Критично, наибольший эффект | Средняя |
 | [OPT-01-render-loop.md](./OPT-01-render-loop.md) | Рендер-цикл: двойной render() | 🔴 Критично | Низкая |
 | [OPT-02-shadows.md](./OPT-02-shadows.md) | Тени и shadow map | 🔴 Критично при `quality=high` | Низкая |
 | [OPT-10-hud-dom.md](./OPT-10-hud-dom.md) | HUD: кеш DOM + троттлинг | 🟡 Умеренно | Низкая |
