@@ -2,6 +2,9 @@ import * as THREE from 'three';
 import { PALETTES } from './config.js';
 
 export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+/* Гладкий минимум/максимум (полиномиальный, C¹) — для сопряжения форм рельефа */
+export const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
+export const smax = (a, b, k) => -smin(-a, -b, k);
 export const lerp = (a, b, t) => a + (b - a) * t;
 export const rand = (a, b) => (b === undefined ? Math.random() * a : a + Math.random() * (b - a));
 export const randInt = (a, b) => Math.floor(rand(a, b + 1));

@@ -45,7 +45,7 @@ const MISSION_TEMPLATES = [
         pickup: Orders.pickPoint(world, 'center'),
         drops: [
           { x: -96, z: -160, name: 'Озеро Провал' },
-          { x: 10, z: -357, name: 'Эолова арфа' },
+          { x: 12, z: -350, name: 'Эолова арфа' },
           { x: 0, z: -448, name: 'Смотровая башня' },
         ],
       };

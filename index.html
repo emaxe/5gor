@@ -669,7 +669,7 @@ const LANDMARKS = [
   { id: 'rynok',     name: 'Рынок «Лира»',       x: 96,  z: -32,  desc: 'Главный рынок города' },
   { id: 'vokzal',    name: 'Ж/д вокзал',         x: 160, z: 96,   desc: 'Вокзал с часами на башне' },
   { id: 'cable',     name: 'Канатная дорога',    x: 20,  z: -288, desc: 'Подъёмник на Машук' },
-  { id: 'gazebo',    name: 'Эолова арфа',        x: 10,  z: -357, desc: 'Беседка на склоне Машука' },
+  { id: 'gazebo',    name: 'Эолова арфа',        x: 12,  z: -350, desc: 'Беседка на склоне Машука' },
   { id: 'tower',     name: 'Смотровая башня',    x: 0,   z: -448, desc: 'Вершина Машука' },
 ];
 
@@ -688,6 +688,9 @@ const WEATHER_DEFS = {
 
 /* ===== utils.js ===== */
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+/* Гладкий минимум/максимум (полиномиальный, C¹) — для сопряжения форм рельефа */
+const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
+const smax = (a, b, k) => -smin(-a, -b, k);
 const lerp = (a, b, t) => a + (b - a) * t;
 const rand = (a, b) => (b === undefined ? Math.random() * a : a + Math.random() * (b - a));
 const randInt = (a, b) => Math.floor(rand(a, b + 1));
@@ -1695,8 +1698,9 @@ class World {
     this.roadMats = [];        // материалы асфальта (для эффекта намокания)
     this.windowMats = new Set(); // уникальные материалы стен с окнами (для ночной подсветки)
     this._bottomMat = null;    // общий материал днища зданий (создаётся один раз в build())
-    this._strips = [];         // участки серпантина
-    this.hill = { x: 0, z: -440, r: 170, h: 60 };
+    this._serp = null;         // ось серпантина (точки, длина, spatial hash)
+    this.hill = { x: 0, z: -448, r: 155, hc: 66, top: 58 };   // Машук: центр под башней, плато на вершине
+    this.peak2 = { x: 55, z: -500, r: 70, hc: 46, top: 40 };  // вторая вершина
     this.time = 0;
   }
 
@@ -1727,22 +1731,28 @@ class World {
     return { x0, z0, x1: x0 + 44, z1: z0 + 44 };
   }
 
+  /* --- Базовый рельеф без дороги: Машук + вторая вершина, гладко сопряжённые --- */
+  _baseHeight(x, z) {
+    const H = this.hill, P = this.peak2;
+    let h = smin(H.hc * (1 - Math.hypot(x - H.x, z - H.z) / H.r), H.top, 6);
+    h = smax(h, smin(P.hc * (1 - Math.hypot(x - P.x, z - P.z) / P.r), P.top, 4), 8);
+    h = smax(h, 0, 3);                                          // мягкая подошва
+    return h * clamp((-z - 288) / 12, 0, 1);                    // фейд у торца проспекта (z = -292)
+  }
+
   /* --- Высота земли в точке (Машук + серпантин) --- */
   heightAt(x, z) {
-    if (Math.abs(x) > 200 || z > -230) return 0;
-    let h = 0;
-    const hx = x - this.hill.x, hz = z - this.hill.z;
-    const d = Math.hypot(hx, hz);
-    if (d < this.hill.r) h = Math.max(h, this.hill.h * Math.pow(1 - d / this.hill.r, 1.5));
-    const d2 = Math.hypot(x - 55, z + 500);
-    if (d2 < 70) h = Math.max(h, 26 * Math.pow(1 - d2 / 70, 1.5));
-    for (const s of this._strips) {
-      if (x >= s.x0 && x <= s.x1 && z >= s.z0 && z <= s.z1) {
-        if (s.axis === 'z') { const t = (z - s.z0) / (s.z1 - s.z0); h = Math.max(h, s.h0 + (s.h1 - s.h0) * t); }
-        else { const t = (x - s.x0) / (s.x1 - s.x0); h = Math.max(h, s.h0 + (s.h1 - s.h0) * t); }
-      }
-    }
-    return h;
+    // Машук (0,-448) R=155 + подошва ~7 м + вторая вершина (55,-500) R=70
+    // + подходной участок серпантина от проспекта x=128, z=-292
+    if (z > -260 || z < -640 || x < -190 || x > 190) return 0;
+    const hb = this._baseHeight(x, z);
+    const q = this._serpNear(x, z);
+    if (!q) return hb;
+    const W = 3.6, B = 8;                                       // полуширина полотна, ширина откоса
+    if (q.d <= W) return q.y;                                   // полка (bench)
+    if (q.d >= W + B) return hb;
+    const t = (q.d - W) / B;
+    return q.y + (hb - q.y) * t * t * (3 - 2 * t);              // smoothstep-откос
   }
 
   /* Расстояние до ближайшей дороги (для проверки «вне дороги») */
@@ -1757,6 +1767,12 @@ class World {
       best = Math.min(best, Math.hypot(z - r.c, dxOuter));
     }
     return best;
+  }
+
+  /* Находится ли точка на проезжей части (город или серпантин Машука) */
+  onRoad(x, z) {
+    if (this.distToRoad(x, z) < CFG.HALF + CFG.SIDE + 3) return true;
+    return this.distToSerp(x, z) < 4.4;
   }
 
   /* Добавляет AABB пропса в общий список и в spatial hash по ячейкам 10×10м */
@@ -1846,6 +1862,7 @@ class World {
       new THREE.MeshLambertMaterial({ color: 0x7fae6a })
     );
     g.rotation.x = -Math.PI / 2;
+    g.position.y = -0.05;   // чуть ниже сетки горы (_hillMesh) — без щелей и z-fighting на стыке
     this.scene.add(g);
   }
 
@@ -2005,118 +2022,244 @@ class World {
   }
 
   _hillAndSerpentine() {
-    // Гора Машук — естественный плавный горный конус
-    const hill = new THREE.Mesh(
-      new THREE.ConeGeometry(this.hill.r, this.hill.h, 24, 6),
-      new THREE.MeshLambertMaterial({ color: 0x5a885a })
-    );
-    hill.position.set(this.hill.x, this.hill.h / 2 - 1, this.hill.z);
-    this.scene.add(hill);
+    this._serpBuild();       // ось серпантина (нужна heightAt() и _hillMesh() ниже)
+    this._hillMesh();        // сетка рельефа Машука, совпадающая с heightAt() пиксель-в-пиксель
+    this._serpRoadMesh();    // полотно дороги лентой по оси
+    this._serpFurniture();   // отбойники, перила, подпорные стенки
 
-    // Вторая вершина
-    const peak = new THREE.Mesh(new THREE.ConeGeometry(75, 28, 12, 3), new THREE.MeshLambertMaterial({ color: 0x628e62 }));
-    peak.position.set(55, 28 / 2 - 1, -500);
-    this.scene.add(peak);
-
-    // Серпантин: [axis, x0,z0, x1,z1, h0,h1]
-    // Начинается прямо от городской проезжей части z = -256!
-    const segs = [
-      ['z', 6.5, -256, 13.5, -300, 0.1, 4],   // Въездной пандус с проспекта z=-256
-      ['z', 6.5, -300, 13.5, -330, 4, 16],    // 1-й подъём
-      ['x', 10, -333.5, 70, -326.5, 16, 16],  // 1-я площадка/поворот
-      ['z', 66.5, -330, 73.5, -360, 16, 28],  // 2-й подъём
-      ['x', 10, -363.5, 70, -356.5, 28, 28],  // 2-я площадка/поворот
-      ['z', 6.5, -360, 13.5, -390, 28, 40],   // 3-й подъём
-      ['x', 10, -393.5, 70, -386.5, 40, 40],  // 3-я площадка/поворот
-      ['z', 66.5, -390, 73.5, -415, 40, 52],  // 4-й подъём
-      ['x', 20, -418.5, 70, -411.5, 52, 52],  // 4-я площадка/поворот
-      ['z', 16.5, -415, 23.5, -440, 52, 58],  // Выезд к Смотровой башне на вершине (58м)
-    ];
-
-    const roadMat = new THREE.MeshStandardMaterial({ color: 0x3e434a, roughness: 0.82, metalness: 0.05 });
-    this.roadMats.push(roadMat);
-    const wallMat = new THREE.MeshLambertMaterial({ color: 0x787870 });
-    const fillMat = new THREE.MeshLambertMaterial({ color: 0x547d54 });
-    const guards = [];
-    const guardGeo = new THREE.CylinderGeometry(0.14, 0.18, 1.0, 5);
-
-    for (const [axis, x0, z0, x1, z1, h0, h1] of segs) {
-      let xc, zc, l, rotX = 0, rotZ = 0;
-      if (axis === 'z') {
-        xc = (x0 + x1) / 2; zc = (z0 + z1) / 2; l = z1 - z0;
-        rotX = Math.atan2(h1 - h0, Math.abs(l));
-      } else {
-        xc = (x0 + x1) / 2; zc = (z0 + z1) / 2; l = x1 - x0;
-        rotZ = -Math.atan2(h1 - h0, Math.abs(l));
-      }
-
-      const lenAbs = Math.abs(l);
-
-      // 1. Полотно серпантина
-      const m = new THREE.Mesh(new THREE.BoxGeometry(axis === 'z' ? 7.2 : lenAbs + 0.8, 0.35, axis === 'z' ? lenAbs + 0.8 : 7.2), roadMat);
-      m.position.set(xc, (h0 + h1) / 2 + 0.1, zc);
-      m.rotation.x = rotX;
-      m.rotation.z = rotZ;
-      this.scene.add(m);
-      this._strips.push({ axis, x0, x1, z0, z1, h0, h1 });
-
-      // 2. Аккуратная горная насыпь под полотном дороги (устраняет просветы без уродования горы)
-      const midH = (h0 + h1) / 2;
-      const fillGeo = new THREE.BoxGeometry(axis === 'z' ? 7.4 : lenAbs, Math.max(0.6, midH), axis === 'z' ? lenAbs : 7.4);
-      const fillMesh = new THREE.Mesh(fillGeo, fillMat);
-      fillMesh.position.set(xc, Math.max(0.3, midH / 2), zc);
-      fillMesh.rotation.x = rotX;
-      fillMesh.rotation.z = rotZ;
-      this.scene.add(fillMesh);
-
-      // 3. Подпорный каменный бордюр/стенка на обрыве
-      const sideWall = new THREE.Mesh(
-        new THREE.BoxGeometry(axis === 'z' ? 0.45 : lenAbs, 0.7, axis === 'z' ? lenAbs : 0.45),
-        wallMat
-      );
-      const offX = axis === 'z' ? (xc > 30 ? 3.6 : -3.6) : 0;
-      const offZ = axis === 'z' ? 0 : (zc < -370 ? -3.6 : 3.6);
-      sideWall.position.set(xc + offX, midH + 0.35, zc + offZ);
-      sideWall.rotation.x = rotX;
-      sideWall.rotation.z = rotZ;
-      this.scene.add(sideWall);
-
-      // Отбойники
-      const pad = 3.2;
-      for (let t = 3; t < lenAbs - 2; t += 8) {
-        if (axis === 'z') {
-          const zz = z0 + Math.sign(l) * t;
-          const hh = h0 + (h1 - h0) * (t / lenAbs);
-          guards.push(new THREE.Matrix4().makeTranslation(xc - pad, hh + 0.5, zz));
-          guards.push(new THREE.Matrix4().makeTranslation(xc + pad, hh + 0.5, zz));
-        } else {
-          const xx = x0 + Math.sign(l) * t;
-          const hh = h0 + (h1 - h0) * (t / lenAbs);
-          guards.push(new THREE.Matrix4().makeTranslation(xx, hh + 0.5, zc - pad));
-          guards.push(new THREE.Matrix4().makeTranslation(xx, hh + 0.5, zc + pad));
-        }
-      }
-    }
-    if (guards.length) {
-      const gm = new THREE.InstancedMesh(guardGeo, new THREE.MeshLambertMaterial({ color: 0x6a6a6a }), guards.length);
-      guards.forEach((m, i) => gm.setMatrixAt(i, m));
-      this.scene.add(gm);
-    }
-
-    // смотровая башня на вершине
+    // смотровая башня на вершине (высота берётся из heightAt — совпадает с плато)
+    const hy = this.heightAt(this.hill.x, this.hill.z);
     const tb = new THREE.Mesh(new THREE.CylinderGeometry(3, 3.6, 18, 8), new THREE.MeshLambertMaterial({ color: 0xd8d0c0 }));
-    tb.position.set(0, 58 + 9, -448);
+    tb.position.set(this.hill.x, hy + 9, this.hill.z);
     this.scene.add(tb);
     const troof = new THREE.Mesh(new THREE.ConeGeometry(4.6, 4, 8), new THREE.MeshLambertMaterial({ color: 0x8a4a2a }));
-    troof.position.set(0, 58 + 18 + 2, -448);
+    troof.position.set(this.hill.x, hy + 18 + 2, this.hill.z);
     this.scene.add(troof);
-    this.addPropAABB({ x0: -4, z0: -452, x1: 4, z1: -444 });
+    this.addPropAABB({ x0: this.hill.x - 4, z0: this.hill.z - 4, x1: this.hill.x + 4, z1: this.hill.z + 4 });
 
-    // беседка «Эолова арфа» на склоне
-    this._gazebo(10, -357, 28);
+    // беседка «Эолова арфа» на обочине (8 м по внешней нормали от полотна серпантина)
+    this._gazebo(15, -343, this.heightAt(15, -343));
 
     // каменный грот Лермонтова (в парке)
     this._grotto(-52, 8);
+  }
+
+  /* Марш-траектория «линия+дуга»: гарантирует точный радиус поворота на виражах
+     (в отличие от сплайна через опорные точки, где кривизна между узлами непредсказуема).
+     legs: {type:'line', len} | {type:'arc', radius, angle (рад, + = влево)} */
+  _serpMarch(x0, z0, h0, legs, step = 2) {
+    const pts = [{ x: x0, z: z0, s: 0 }];
+    let x = x0, z = z0, h = h0, s = 0;
+    for (const leg of legs) {
+      if (leg.type === 'line') {
+        const n = Math.max(1, Math.round(leg.len / step));
+        const dx = Math.cos(h), dz = Math.sin(h);
+        for (let i = 1; i <= n; i++) { const t = leg.len * i / n; pts.push({ x: x + dx * t, z: z + dz * t, s: s + t }); }
+        x += dx * leg.len; z += dz * leg.len; s += leg.len;
+      } else {
+        const R = leg.radius, dh = leg.angle, sgn = Math.sign(dh);
+        const cx = x - sgn * R * Math.sin(h), cz = z + sgn * R * Math.cos(h);
+        const theta0 = Math.atan2(z - cz, x - cx);
+        const arcLen = Math.abs(dh) * R, n = Math.max(1, Math.round(arcLen / step));
+        for (let i = 1; i <= n; i++) {
+          const frac = i / n, theta = theta0 + sgn * Math.abs(dh) * frac;
+          pts.push({ x: cx + R * Math.cos(theta), z: cz + R * Math.sin(theta), s: s + arcLen * frac });
+        }
+        x = cx + R * Math.cos(theta0 + dh); z = cz + R * Math.sin(theta0 + dh); h += dh; s += arcLen;
+      }
+    }
+    return pts;
+  }
+
+  /* --- Ось серпантина: от торца проспекта (128,-292) три шпильки Р=13м на склон Машука --- */
+  _serpBuild() {
+    const D2R = Math.PI / 180;
+    const pts = this._serpMarch(128, -292, -170 * D2R, [
+      { type: 'line', len: 140 },                     // траверс 1
+      { type: 'arc', radius: 13, angle: 150 * D2R },  // ШПИЛЬКА 1
+      { type: 'line', len: 80 },                      // траверс 2
+      { type: 'arc', radius: 13, angle: -150 * D2R }, // ШПИЛЬКА 2
+      { type: 'line', len: 100 },                     // траверс 3
+      { type: 'arc', radius: 13, angle: 150 * D2R },  // ШПИЛЬКА 3
+      { type: 'line', len: 41 },                      // выезд на площадку вершины
+    ], 2);
+    const S = pts[pts.length - 1].s;
+    for (const p of pts) p.y = this._serpProfile(p.s, S);
+    this._serp = { pts, len: S };
+    this._serpHash();
+  }
+
+  /* Продольный профиль: короткий горизонтальный подход, постоянный уклон, скругления переломов */
+  _serpProfile(s, S) {
+    const S0 = 20, VC = 24, TOP = this.hill.top;
+    const g = TOP / (S - S0 - VC / 2);
+    if (s <= S0 - VC / 2) return 0;
+    if (s < S0 + VC / 2) { const t = (s - S0 + VC / 2) / VC; return g * VC * t * t / 2; }
+    if (s > S - VC) { const t = (S - s) / VC; return TOP - g * VC * t * t / 2; }
+    return Math.min(g * (s - S0), TOP);
+  }
+
+  /* Spatial hash оси серпантина по ячейкам 8×8 м — для _serpNear() каждый кадр */
+  _serpHash() {
+    const CELL = 8, INFL = 14;                          // INFL > полуширина полки(3.6) + откос(8)
+    const map = new Map(), P = this._serp.pts;
+    for (let i = 0; i < P.length - 1; i++) {
+      const x0 = Math.min(P[i].x, P[i + 1].x) - INFL, x1 = Math.max(P[i].x, P[i + 1].x) + INFL;
+      const z0 = Math.min(P[i].z, P[i + 1].z) - INFL, z1 = Math.max(P[i].z, P[i + 1].z) + INFL;
+      for (let cx = Math.floor(x0 / CELL); cx <= Math.floor(x1 / CELL); cx++)
+        for (let cz = Math.floor(z0 / CELL); cz <= Math.floor(z1 / CELL); cz++) {
+          const k = cx + ',' + cz; let b = map.get(k); if (!b) map.set(k, b = []); b.push(i);
+        }
+    }
+    this._serp.hash = map; this._serp.cell = CELL;
+  }
+
+  /* Ближайшая точка оси серпантина (и площадки вершины): {d, y} либо null вне зоны влияния */
+  _serpNear(x, z) {
+    const S = this._serp;
+    if (!S) return null;
+    const b = S.hash.get(Math.floor(x / S.cell) + ',' + Math.floor(z / S.cell));
+    let bd = Infinity, by = 0;
+    if (b) for (let n = 0; n < b.length; n++) {
+      const a = S.pts[b[n]], c = S.pts[b[n] + 1];
+      const dx = c.x - a.x, dz = c.z - a.z;
+      let t = ((x - a.x) * dx + (z - a.z) * dz) / (dx * dx + dz * dz);
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const d = Math.hypot(x - (a.x + dx * t), z - (a.z + dz * t));
+      if (d < bd) { bd = d; by = a.y + (c.y - a.y) * t; }
+    }
+    const dt = Math.max(0, Math.hypot(x - this.hill.x, z - this.hill.z) - 20);  // плоская площадка вершины r=20
+    if (dt < bd) { bd = dt; by = this.hill.top; }
+    return bd < 14 ? { d: bd, y: by } : null;
+  }
+
+  /* Расстояние до оси серпантина (Infinity вне зоны влияния) — для деревьев и onRoad() */
+  distToSerp(x, z) { const q = this._serpNear(x, z); return q ? q.d : Infinity; }
+
+  /* --- Меш горы Машук: сетка по heightAt(), совпадает с физикой пиксель-в-пиксель --- */
+  _hillMesh() {
+    const X0 = -190, X1 = 190, Z0 = -640, Z1 = -260, STEP = 3;
+    const nx = Math.round((X1 - X0) / STEP), nz = Math.round((Z1 - Z0) / STEP);
+    const rowW = nx + 1;
+    const gridY = new Float32Array(rowW * (nz + 1));
+    for (let j = 0; j <= nz; j++) for (let i = 0; i <= nx; i++) {
+      const x = X0 + i * STEP, z = Z0 + j * STEP;
+      let y = this.heightAt(x, z);
+      const q = this._serpNear(x, z);
+      if (q && q.d < 3.6 + 1.5 * STEP) y = Math.min(y, q.y - 0.15);   // не пробивать полотно дороги
+      gridY[j * rowW + i] = y;
+    }
+    const pos = [], idx = [];
+    const vIdx = new Int32Array(rowW * (nz + 1)).fill(-1);
+    let vc = 0;
+    const addV = (i, j) => {
+      const k = j * rowW + i;
+      if (vIdx[k] === -1) { vIdx[k] = vc++; pos.push(X0 + i * STEP, gridY[k], Z0 + j * STEP); }
+      return vIdx[k];
+    };
+    for (let j = 0; j < nz; j++) for (let i = 0; i < nx; i++) {
+      // квады, целиком лежащие в плоском грунте (y≈0), пропускаем — их накрывает _ground()
+      const y00 = gridY[j * rowW + i], y10 = gridY[j * rowW + i + 1];
+      const y01 = gridY[(j + 1) * rowW + i], y11 = gridY[(j + 1) * rowW + i + 1];
+      if (y00 < 0.02 && y10 < 0.02 && y01 < 0.02 && y11 < 0.02) continue;
+      const a = addV(i, j), b = addV(i + 1, j), c = addV(i, j + 1), d = addV(i + 1, j + 1);
+      idx.push(a, c, b, b, c, d);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    this.scene.add(new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ color: 0x5a885a, flatShading: true })));
+  }
+
+  /* Текстура асфальта серпантина с пунктирной осевой линией (шаг 6.4м — как у городских дорог) */
+  _serpMarkingTexture() {
+    const key = 'serp_road';
+    if (_texCache.has(key)) return _texCache.get(key);
+    const c = makeCanvas(32, 64);
+    const g = c.getContext('2d');
+    g.fillStyle = '#3e434a'; g.fillRect(0, 0, 32, 64);
+    g.fillStyle = '#e8e8dc'; g.fillRect(14, 4, 4, 24);
+    const t = canvasToTexture(c, key);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  /* --- Полотно серпантина: лента по оси, точно на полке heightAt(), без щелей и z-fighting --- */
+  _serpRoadMesh() {
+    const P = this._serp.pts, W = 3.6, DROP = 0.5;
+    const roadMat = new THREE.MeshStandardMaterial({ map: this._serpMarkingTexture(), roughness: 0.82, metalness: 0.05 });
+    this.roadMats.push(roadMat);
+    const pos = [], uv = [], idx = [];
+    for (let i = 0; i < P.length; i++) {
+      const a = P[Math.max(i - 1, 0)], b = P[Math.min(i + 1, P.length - 1)];
+      let tx = b.x - a.x, tz = b.z - a.z;
+      const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
+      const nx = -tz, nz = tx;
+      const p = P[i], v = p.s / 6.4;
+      pos.push(p.x - nx * W, p.y + 0.08 - DROP, p.z - nz * W);
+      pos.push(p.x - nx * W, p.y + 0.08, p.z - nz * W);
+      pos.push(p.x + nx * W, p.y + 0.08, p.z + nz * W);
+      pos.push(p.x + nx * W, p.y + 0.08 - DROP, p.z + nz * W);
+      uv.push(0, v, 0, v, 1, v, 1, v);
+    }
+    for (let i = 0; i < P.length - 1; i++) {
+      const b0 = i * 4, b1 = (i + 1) * 4;
+      for (let k = 0; k < 3; k++) {
+        idx.push(b0 + k, b0 + k + 1, b1 + k);
+        idx.push(b1 + k, b0 + k + 1, b1 + k + 1);
+      }
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    geo.computeVertexNormals();
+    this.scene.add(new THREE.Mesh(geo, roadMat));
+  }
+
+  /* --- Обвязка серпантина: отбойники+перила с обрывистой стороны, подпорные стенки со стороны склона --- */
+  _serpFurniture() {
+    const P = this._serp.pts, W = 3.6, STEP = 4.5;
+    const guardMat = new THREE.MeshLambertMaterial({ color: 0x6a6a6a });
+    const railMat = new THREE.MeshLambertMaterial({ color: 0xd8d8d0 });
+    const wallMat = new THREE.MeshLambertMaterial({ color: 0x787870 });
+    const guardGeo = new THREE.CylinderGeometry(0.14, 0.18, 1.0, 5);
+    const railGeo = new THREE.BoxGeometry(0.1, 0.22, STEP + 0.2);
+    const guards = [], rails = [], walls = [];
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), up = new THREE.Vector3(0, 0, 1);
+
+    let acc = 0;
+    for (let i = 1; i < P.length; i++) {
+      const a = P[i - 1], b = P[i];
+      const segLen = Math.hypot(b.x - a.x, b.z - a.z);
+      acc += segLen;
+      if (acc < STEP) continue;
+      acc = 0;
+      let tx = b.x - a.x, tz = b.z - a.z; const L = Math.hypot(tx, tz) || 1; tx /= L; tz /= L;
+      const nx = -tz, nz = tx;
+      // сторона склона: наружу от центра горы — там обрыв, туда ставим отбойник
+      const rx = b.x - this.hill.x, rz = b.z - this.hill.z;
+      const outward = (nx * rx + nz * rz) > 0 ? 1 : -1;
+      const ex = b.x + nx * outward * (W + 0.5), ez = b.z + nz * outward * (W + 0.5);
+      if (this.heightAt(ex, ez) < b.y - 0.4) {
+        guards.push(new THREE.Matrix4().makeTranslation(ex, b.y + 0.5, ez));
+        m4.compose(new THREE.Vector3(ex, b.y + 0.6, ez), q.setFromUnitVectors(up, new THREE.Vector3(tx, 0, tz)), new THREE.Vector3(1, 1, 1));
+        rails.push(m4.clone());
+      }
+      // сторона склона (внутрь, к горе) — если рельеф выше полотна, там срез, ставим подпорную стенку
+      const ix = b.x - nx * outward * (W + 0.2), iz = b.z - nz * outward * (W + 0.2);
+      const wallH = this.heightAt(ix, iz) - b.y;
+      if (wallH > 1.0) {
+        const wm = new THREE.Matrix4();
+        const s = new THREE.Vector3(0.4, Math.min(wallH + 0.4, 12), STEP + 0.4);
+        wm.compose(new THREE.Vector3(ix, b.y + s.y / 2 - 0.2, iz), q.setFromUnitVectors(up, new THREE.Vector3(tx, 0, tz)), s);
+        walls.push(wm);
+      }
+    }
+    if (guards.length) { const gm = new THREE.InstancedMesh(guardGeo, guardMat, guards.length); guards.forEach((m, i) => gm.setMatrixAt(i, m)); this.scene.add(gm); }
+    if (rails.length) { const rm = new THREE.InstancedMesh(railGeo, railMat, rails.length); rails.forEach((m, i) => rm.setMatrixAt(i, m)); this.scene.add(rm); }
+    if (walls.length) { const wm2 = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), wallMat, walls.length); walls.forEach((m, i) => wm2.setMatrixAt(i, m)); this.scene.add(wm2); }
   }
 
   _gazebo(x, z, y) {
@@ -2470,7 +2613,7 @@ class World {
 
   /* Пятигорская Телевышка на вершине Машука (красно-белая вышка с маяком) */
   _tvTower() {
-    const cx = 0, cz = -448, baseY = 58;
+    const cx = this.hill.x, cz = this.hill.z, baseY = this.heightAt(cx, cz);
     const g = new THREE.Group();
     const redMat = new THREE.MeshBasicMaterial({ color: 0xee2222 });
     const whiteMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -2764,11 +2907,7 @@ class World {
 
     const tryAddTree = (x, z, type) => {
       if (!this.isPositionValid(x, z, 1.8)) return;
-      // не на серпантине
-      for (const s of this._strips) {
-        if (s.axis === 'z') { if (x > s.x0 - 6 && x < s.x1 + 6 && z > s.z0 && z < s.z1) return; }
-        else { if (x > s.x0 && x < s.x1 && z > s.z0 - 6 && z < s.z1 + 6) return; }
-      }
+      if (this.distToSerp(x, z) < 12) return;   // не на серпантине (полка+откос)
       spots.push({ x, z, type });
       this.addPropAABB({ x0: x - 1.6, z0: z - 1.6, x1: x + 1.6, z1: z + 1.6 });
     };
@@ -2813,7 +2952,7 @@ class World {
       q.setFromEuler(e);
       const sc = 0.75 + rng() * 0.6;
       s.set(sc, sc * (0.85 + rng() * 0.4), sc);
-      m4.compose(new THREE.Vector3(sp.x, 0.1, sp.z), q, s);
+      m4.compose(new THREE.Vector3(sp.x, this.heightAt(sp.x, sp.z) + 0.1, sp.z), q, s);
       target.setMatrixAt(idx, m4);
       target.setColorAt(idx, new THREE.Color(choice(isD ? dCols : cCols)));
     }
@@ -3027,8 +3166,9 @@ class World {
 
   /* --- Канатная дорога на Машук --- */
   _cableCar() {
-    const base = new THREE.Vector3(20, 1.5, -288);
-    const top = new THREE.Vector3(0, 62, -448);
+    // +8 (не +4) — прямая линия троса иначе слегка задевает 1-й траверс серпантина у подошвы горы
+    const base = new THREE.Vector3(20, this.heightAt(20, -288) + 8, -288);
+    const top = new THREE.Vector3(this.hill.x, this.heightAt(this.hill.x, this.hill.z) + 12, this.hill.z);
     const dir = new THREE.Vector3().subVectors(top, base);
     const len = dir.length();
     const cableMat = new THREE.MeshLambertMaterial({ color: 0x3a3a3a });
@@ -3040,10 +3180,10 @@ class World {
       cable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
       this.scene.add(cable);
     }
-    // опоры
-    for (const t of [0.3, 0.55, 0.8]) {
+    // опоры — точки подобраны в стороне от коридора серпантина (dist > 15м)
+    for (const t of [0.28, 0.6, 0.85]) {
       const p = new THREE.Vector3().lerpVectors(base, top, t);
-      const h = p.y - this.heightAt(p.x, p.z) + 4;
+      const h = Math.max(4, p.y - this.heightAt(p.x, p.z) + 4);
       const tower = new THREE.Mesh(new THREE.BoxGeometry(1, h, 1), new THREE.MeshLambertMaterial({ color: 0x8a6a44 }));
       tower.position.set(p.x, this.heightAt(p.x, p.z) + h / 2, p.z);
       this.scene.add(tower);
@@ -3057,7 +3197,7 @@ class World {
     }
     // нижняя станция
     const st = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 7), new THREE.MeshLambertMaterial({ color: 0xc8b898 }));
-    st.position.set(20, 2.6, -288);
+    st.position.set(20, this.heightAt(20, -288) + 2.6, -288);
     this.scene.add(st);
     this.addPropAABB({ x0: 14, z0: -292, x1: 26, z1: -284 });
   }
@@ -3489,7 +3629,7 @@ class PlayerCar {
    */
   update(dt, input, world, traffic) {
     const st = this.stats;
-    const onRoad = world.distToRoad(this.x, this.z) < CFG.HALF + CFG.SIDE + 3;
+    const onRoad = world.onRoad(this.x, this.z);
     const slope = world.heightAt(this.x, this.z) > 0.5;
     const gripMul = (onRoad ? 1 : 0.55) * (slope ? 0.85 : 1);
     const weatherGrip = this._weatherGrip || 1;
@@ -5127,7 +5267,7 @@ const MISSION_TEMPLATES = [
         pickup: Orders.pickPoint(world, 'center'),
         drops: [
           { x: -96, z: -160, name: 'Озеро Провал' },
-          { x: 10, z: -357, name: 'Эолова арфа' },
+          { x: 12, z: -350, name: 'Эолова арфа' },
           { x: 0, z: -448, name: 'Смотровая башня' },
         ],
       };
