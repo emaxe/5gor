@@ -1,8 +1,6 @@
-/* ============================================================
- * upgrades.js — апгрейды, автомобили, тюнинг, сохранения
- * ============================================================ */
+import { UPGRADES, CARS, TUNING } from './config.js';
 
-class UpgradeSystem {
+export class UpgradeSystem {
   constructor() {
     this.levels = { engine: 0, suspension: 0, brakes: 0, armor: 0, tank: 0, capacity: 0 };
     this.tuning = { color: '#f2c12e', rims: 0, spoiler: false };
@@ -26,8 +24,9 @@ class UpgradeSystem {
 
   /* Итоговые характеристики автомобиля */
   stats() {
-    const base = CARS[this.carId].base;
-    const s = { ...base, isTaxi: this.carId === 'taxi' };
+    const carDef = CARS[this.carId] || CARS.taxi;
+    const base = carDef.base;
+    const s = { ...base, isTaxi: this.carId === 'taxi', carId: this.carId };
     s.maxSpeed += this.levels.engine * 3.2;
     s.accel += this.levels.engine * 1.6;
     s.grip += this.levels.suspension * 0.05;

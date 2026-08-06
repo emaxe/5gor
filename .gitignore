@@ -2,3 +2,11 @@
 __pycache__/
 *.pyc
 .DS_Store
+.skill-hub.local.json
+
+# AI agent directories (skill-hub)
+.claude/
+.cursor/
+.github/skills/
+.codex/
+.agents/

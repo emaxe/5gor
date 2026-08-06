@@ -1,0 +1,18 @@
+{
+  "registryUrl": "https://github.com/emaxe/skill-hub-catalog.git",
+  "extensions": [
+    {
+      "type": "skill",
+      "name": "awa",
+      "version": "1.0.0",
+      "scope": "project"
+    },
+    {
+      "type": "skill",
+      "name": "bro",
+      "version": "1.0.0",
+      "scope": "project"
+    }
+  ],
+  "gitignoreAgentDirs": true
+}

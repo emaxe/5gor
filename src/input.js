@@ -2,7 +2,7 @@
  * input.js — клавиатура, мышь (камера), сенсорное управление
  * ============================================================ */
 
-class InputManager {
+export class InputManager {
   constructor(canvas) {
     this.canvas = canvas;
     this.keys = new Set();

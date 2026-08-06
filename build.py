@@ -2,8 +2,10 @@
 """build.py — собирает самодостаточный index.html из src/*.
 
 Порядок модулей важен: конфиг -> утилиты -> системы -> игра -> main.
+Поддерживает сборку ES-модулей в бандл для работы без зависимости от локального веб-сервера.
 """
 import pathlib
+import re
 
 ROOT = pathlib.Path(__file__).parent
 SRC = ROOT / "src"
@@ -11,6 +13,7 @@ SRC = ROOT / "src"
 MODULES = [
     "config.js",
     "utils.js",
+    "eventbus.js",
     "audio.js",
     "input.js",
     "citygen.js",
@@ -18,6 +21,7 @@ MODULES = [
     "traffic.js",
     "peds.js",
     "camera.js",
+    "dialogues.js",
     "orders.js",
     "upgrades.js",
     "ui.js",
@@ -25,13 +29,25 @@ MODULES = [
     "main.js",
 ]
 
+def bundle_es_module(code: str) -> str:
+    """Транспилирует ES-модуль для объединения в монолитный скрипт."""
+    # Удаляем операторы импорта (import ... from '...'; import '...';)
+    code = re.sub(r'^\s*import\s+.*?;?\s*$', '', code, flags=re.MULTILINE)
+    # Удаляем ключевое слово export перед объявлениями (export class X -> class X, export const X -> const X)
+    code = re.sub(r'^\s*export\s+default\s+', '', code, flags=re.MULTILINE)
+    code = re.sub(r'^\s*export\s+(class|const|function|let|var|async)\s+', r'\1 ', code, flags=re.MULTILINE)
+    # Удаляем инструкции экспортных списков (export { A, B };)
+    code = re.sub(r'^\s*export\s*\{[^}]*?\};?\s*$', '', code, flags=re.MULTILINE)
+    return code
+
 CSS = (SRC / "style.css").read_text(encoding="utf-8")
 BODY = (SRC / "body.html").read_text(encoding="utf-8")
 
 js_parts = []
 for m in MODULES:
     code = (SRC / m).read_text(encoding="utf-8")
-    js_parts.append(f"/* ===== {m} ===== */\n{code}")
+    bundled_code = bundle_es_module(code)
+    js_parts.append(f"/* ===== {m} ===== */\n{bundled_code}")
 
 html = f"""<!DOCTYPE html>
 <html lang="ru">

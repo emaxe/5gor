@@ -1,9 +1,6 @@
-/* ============================================================
- * audio.js — синтез всех звуков через Web Audio API
- * мотор, сигнал, скрип, авария, касса, эмбиент, музыка-секвенсор
- * ============================================================ */
+import { Events } from './eventbus.js';
 
-class AudioManager {
+export class AudioManager {
   constructor() {
     this.ctx = null;
     this.master = null;
@@ -42,12 +39,26 @@ class AudioManager {
       this._buildAmbient();
       this._ready = true;
       this.startMusic();
-      Events.on('crash', (d) => this.crash(d.impact));
-      Events.on('money', (d) => this.cash(d.amount));
+      Events.on('crash', (d) => this.crash(d ? d.impact || 20 : 20));
+      Events.on('money', (d) => this.cash(d ? d.amount || 100 : 100));
       Events.on('pickup', () => this.pickup());
+      Events.on('order:accepted', () => this.pickup());
+      Events.on('order:completed', (r) => this.cash(r ? r.tips > 40 : true));
       Events.on('fail', () => this.fail());
-      Events.on('hitPed', () => this.pedHit());
+      Events.on('order:failed', () => this.fail());
+      Events.on('hitPed', (d) => {
+        if (d && d.byPlayer === false) return;
+        this.pedHit();
+      });
+      Events.on('ped:kick', () => this.thud());
       Events.on('horn', () => this.horn());
+      Events.on('passenger:speak', () => this.speak());
+      Events.on('game:state_changed', ({ state }) => {
+        if (state === 'pause' || state === 'menu' || state === 'shiftend') {
+          this.updateEngine(0, 0, false);
+          this.updateSkid(0);
+        }
+      });
     } catch (e) { console.warn('audio error', e); }
   }
 
@@ -173,8 +184,10 @@ class AudioManager {
     for (let i = 0; i < n; i++) this._tone(880 + i * 220, 0.12, 'triangle', 0.12, i * 0.09);
   }
   pickup() { if (!this.enabled) return; this._tone(660, 0.1, 'triangle', 0.15); this._tone(880, 0.14, 'triangle', 0.15, 0.1); }
+  speak() { if (!this.enabled) return; this._tone(580, 0.08, 'sine', 0.1); this._tone(740, 0.12, 'sine', 0.08, 0.06); }
   fail() { if (!this.enabled) return; this._tone(320, 0.2, 'sawtooth', 0.1); this._tone(220, 0.3, 'sawtooth', 0.1, 0.18); }
   pedHit() { if (!this.enabled) return; this._noiseBurst(0.4, 0.35, 500); this._tone(140, 0.4, 'sine', 0.2, 0, 70); }
+  thud() { if (!this.enabled) return; this._noiseBurst(0.22, 0.45, 350); this._tone(100, 0.2, 'sine', 0.3, 0, 45); }
   stall() { if (!this.enabled) return; this._tone(120, 0.6, 'sawtooth', 0.12, 0, 40); }
   click() { if (!this.enabled) return; this._tone(520, 0.06, 'triangle', 0.08); }
   refuel() { if (!this.enabled) return; this._tone(300, 0.5, 'sawtooth', 0.08, 0, 900); }
@@ -183,6 +196,98 @@ class AudioManager {
     this._tone(f, 0.09, 'sine', 0.03); this._tone(f * 0.85, 0.08, 'sine', 0.025, 0.1);
   }
   raceGo() { if (!this.enabled) return; this._tone(523, 0.15, 'square', 0.12); this._tone(659, 0.15, 'square', 0.12, 0.2); this._tone(784, 0.3, 'square', 0.12, 0.4); }
+
+  /**
+   * Пространственное воспроизведение речевых звуков / выкриков.
+   * Дистанционное затухание: чем дальше источник, тем тише воспроизводится звук.
+   */
+  spatialSpeak(sourceX, sourceZ, playerX, playerZ, type = 'shout', playerHeading = 0) {
+    if (!this.enabled || !this.ctx || !this.sfxGain) return;
+
+    let vol = 1.0;
+    let panVal = 0;
+
+    if (sourceX !== null && sourceX !== undefined && sourceZ !== null && sourceZ !== undefined && playerX !== undefined && playerZ !== undefined) {
+      const dx = sourceX - playerX;
+      const dz = sourceZ - playerZ;
+      const dist = Math.hypot(dx, dz);
+      const maxDist = 55; // Максимальная слышимость голосов — 55 м
+      if (dist > maxDist) return;
+
+      // Квадратичное затухание по расстоянию (1.0 вблизи, 0.0 на 55м)
+      const att = Math.pow(1 - dist / maxDist, 1.6);
+      vol = Math.min(1.0, Math.max(0.01, att * 0.85));
+
+      // Стерео-панорамирование относительно направления камеры игрока
+      const angleToSource = Math.atan2(dx, dz);
+      const relAngle = angleToSource - (playerHeading || 0);
+      panVal = Math.min(0.85, Math.max(-0.85, Math.sin(relAngle)));
+    }
+
+    const c = this.ctx;
+    const t = c.currentTime;
+
+    let destNode = this.sfxGain;
+    if (c.createStereoPanner) {
+      const panner = c.createStereoPanner();
+      panner.pan.setValueAtTime(panVal, t);
+      panner.connect(this.sfxGain);
+      destNode = panner;
+    }
+
+    if (type === 'angry' || type === 'driver') {
+      // Возмущённый выкрик водителя (грубый низкий синтез)
+      const o = c.createOscillator(); o.type = 'sawtooth';
+      o.frequency.setValueAtTime(160, t);
+      o.frequency.exponentialRampToValueAtTime(280, t + 0.1);
+      o.frequency.exponentialRampToValueAtTime(190, t + 0.22);
+      const g = c.createGain(); g.gain.setValueAtTime(vol * 0.18, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.25);
+      o.connect(g); g.connect(destNode);
+      o.start(t); o.stop(t + 0.26);
+    } else if (type === 'scream' || type === 'hit') {
+      // Испуганный вскрик пешехода (высокий тон)
+      const o = c.createOscillator(); o.type = 'triangle';
+      o.frequency.setValueAtTime(480, t);
+      o.frequency.exponentialRampToValueAtTime(820, t + 0.12);
+      o.frequency.exponentialRampToValueAtTime(350, t + 0.28);
+      const g = c.createGain(); g.gain.setValueAtTime(vol * 0.22, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.3);
+      o.connect(g); g.connect(destNode);
+      o.start(t); o.stop(t + 0.31);
+    } else if (type === 'greeting' || type === 'passenger_happy') {
+      // Приветливый голос пассажира
+      const freqs = [440, 554, 659];
+      freqs.forEach((f, idx) => {
+        const o = c.createOscillator(); o.type = 'sine';
+        o.frequency.setValueAtTime(f, t + idx * 0.06);
+        const g = c.createGain(); g.gain.setValueAtTime(vol * 0.12, t + idx * 0.06);
+        g.gain.exponentialRampToValueAtTime(0.0001, t + idx * 0.06 + 0.12);
+        o.connect(g); g.connect(destNode);
+        o.start(t + idx * 0.06); o.stop(t + idx * 0.06 + 0.13);
+      });
+    } else if (type === 'shock' || type === 'drift') {
+      // Вскрик от дрифта / испуга
+      const o = c.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(620, t);
+      o.frequency.exponentialRampToValueAtTime(320, t + 0.2);
+      o.frequency.exponentialRampToValueAtTime(540, t + 0.38);
+      const g = c.createGain(); g.gain.setValueAtTime(vol * 0.15, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+      o.connect(g); g.connect(destNode);
+      o.start(t); o.stop(t + 0.41);
+    } else {
+      // Стандартный речевой сигнал
+      const o = c.createOscillator(); o.type = 'sine';
+      o.frequency.setValueAtTime(340, t);
+      o.frequency.exponentialRampToValueAtTime(540, t + 0.09);
+      o.frequency.exponentialRampToValueAtTime(420, t + 0.18);
+      const g = c.createGain(); g.gain.setValueAtTime(vol * 0.14, t);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.2);
+      o.connect(g); g.connect(destNode);
+      o.start(t); o.stop(t + 0.21);
+    }
+  }
 
   /* --- Музыка: простой секвенсор (Am F C G, лоу-фай) --- */
   startMusic() {

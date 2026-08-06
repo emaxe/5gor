@@ -1,23 +1,30 @@
-/* ============================================================
- * utils.js — математика, Event Bus, merge геометрий, Canvas-текстуры
- * ============================================================ */
+import * as THREE from 'three';
+import { PALETTES } from './config.js';
 
-const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
-const lerp = (a, b, t) => a + (b - a) * t;
-const rand = (a, b) => (b === undefined ? Math.random() * a : a + Math.random() * (b - a));
-const randInt = (a, b) => Math.floor(rand(a, b + 1));
-const choice = (arr) => arr[(Math.random() * arr.length) | 0];
-const dist2D = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
-const fmtMoney = (n) => Math.round(n).toLocaleString('ru-RU') + ' ₽';
-const fmtTime = (min) => `${Math.floor(min / 60)}:${String(Math.floor(min % 60)).padStart(2, '0')}`;
+export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+export const lerp = (a, b, t) => a + (b - a) * t;
+export const rand = (a, b) => (b === undefined ? Math.random() * a : a + Math.random() * (b - a));
+export const randInt = (a, b) => Math.floor(rand(a, b + 1));
+export const choice = (arr) => arr[(Math.random() * arr.length) | 0];
+export const dist2D = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
+export const fmtMoney = (n) => Math.round(n).toLocaleString('ru-RU') + ' ₽';
+export const fmtTime = (min) => `${Math.floor(min / 60)}:${String(Math.floor(min % 60)).padStart(2, '0')}`;
 /* Часы из float-часа: 9.5 -> "09:30" */
-const fmtClock = (hour) => {
+export const fmtClock = (hour) => {
   const h = Math.floor(hour), m = Math.floor((hour - h) * 60);
   return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
 };
 
+/* Отображение ошибок */
+export function showError(err) {
+  const el = document.getElementById('err-msg');
+  if (el) el.textContent = String(err && err.stack ? err.stack : err);
+  const box = document.getElementById('error-screen');
+  if (box) box.style.display = 'flex';
+}
+
 /* Выбор с весами из массива [{v, w}] */
-function pickWeighted(items) {
+export function pickWeighted(items) {
   let total = 0;
   for (const it of items) total += it.w;
   let r = Math.random() * total;
@@ -26,7 +33,7 @@ function pickWeighted(items) {
 }
 
 /* Плавный поворот угла: возвращает a, повёрнутый к b на max(delta) */
-function turnToward(a, b, maxDelta) {
+export function turnToward(a, b, maxDelta) {
   let d = b - a;
   while (d > Math.PI) d -= Math.PI * 2;
   while (d < -Math.PI) d += Math.PI * 2;
@@ -35,26 +42,21 @@ function turnToward(a, b, maxDelta) {
 }
 
 /* Линейная интерполяция углов по кратчайшей дуге */
-function lerpAngle(a, b, t) {
+export function lerpAngle(a, b, t) {
   let d = b - a;
   while (d > Math.PI) d -= Math.PI * 2;
   while (d < -Math.PI) d += Math.PI * 2;
   return a + d * t;
 }
 
-/* --- Event Bus (Observer) --- */
-const Events = {
-  _m: new Map(),
-  on(e, fn) { if (!this._m.has(e)) this._m.set(e, []); this._m.get(e).push(fn); return () => this.off(e, fn); },
-  off(e, fn) { const a = this._m.get(e); if (a) { const i = a.indexOf(fn); if (i >= 0) a.splice(i, 1); } },
-  emit(e, data) { const a = this._m.get(e); if (a) for (const fn of a.slice()) { try { fn(data); } catch (err) { console.error('[event]', e, err); } } },
-};
+/* --- Event Bus moved to src/eventbus.js --- */
+
 
 /* --- Canvas хелперы --- */
 const _texCache = new Map();
-function makeCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
+export function makeCanvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; }
 
-function canvasToTexture(canvas, key, repeatX = 1, repeatY = 1) {
+export function canvasToTexture(canvas, key, repeatX = 1, repeatY = 1) {
   if (key && _texCache.has(key)) return _texCache.get(key);
   const t = new THREE.CanvasTexture(canvas);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
@@ -65,7 +67,7 @@ function canvasToTexture(canvas, key, repeatX = 1, repeatY = 1) {
 }
 
 /* Текстура окон для здания. wIn,hIn — окна по ширине/высоте, lit — часть светящихся окон */
-function makeWindowTexture(palette, wIn, hIn, lit) {
+export function makeWindowTexture(palette, wIn, hIn, lit) {
   const key = `win_${palette}_${wIn}_${hIn}_${lit}`;
   if (_texCache.has(key)) return _texCache.get(key);
   const c = makeCanvas(256, 256);
@@ -86,7 +88,7 @@ function makeWindowTexture(palette, wIn, hIn, lit) {
 }
 
 /* Текстура «шашечек такси» + надпись */
-function makeTaxiTexture(colorHex) {
+export function makeTaxiTexture(colorHex) {
   const key = 'taxi_' + colorHex;
   if (_texCache.has(key)) return _texCache.get(key);
   const c = makeCanvas(512, 256);
@@ -109,7 +111,7 @@ function makeTaxiTexture(colorHex) {
   return t;
 }
 
-function makePlateTexture() {
+export function makePlateTexture() {
   const key = 'plate';
   if (_texCache.has(key)) return _texCache.get(key);
   const c = makeCanvas(128, 64);
@@ -124,7 +126,7 @@ function makePlateTexture() {
 }
 
 /* Значок-маркер на спрайте (кружок + буква) */
-function makeMarkerTexture(bg, letter) {
+export function makeMarkerTexture(bg, letter) {
   const key = 'mk_' + bg + '_' + letter;
   if (_texCache.has(key)) return _texCache.get(key);
   const c = makeCanvas(128, 128);
@@ -141,7 +143,7 @@ function makeMarkerTexture(bg, letter) {
 
 /* --- Слияние геометрий в одну (с цветами вершин для окрашенных частей) --- */
 /* parts: [{g: BufferGeometry, c: color(string|number)}] */
-function mergeColored(parts) {
+export function mergeColored(parts) {
   const pos = [], nor = [], uv = [], col = [], idx = [];
   let off = 0;
   for (const p of parts) {
@@ -170,12 +172,12 @@ function mergeColored(parts) {
   return g;
 }
 
-function mergeGeoms(geoms) {
+export function mergeGeoms(geoms) {
   return mergeColored(geoms.map((g) => ({ g, c: '#ffffff' })));
 }
 
 /* Генератор псевдослучайных чисел (для повторяемости города) */
-function mulberry32(seed) {
+export function mulberry32(seed) {
   let a = seed >>> 0;
   return function () {
     a |= 0; a = (a + 0x6D2B79F5) | 0;
@@ -186,7 +188,7 @@ function mulberry32(seed) {
 }
 
 /* Спрайт-молния под маркером (световой столб) */
-function makeBeamSprite(color, height) {
+export function makeBeamSprite(color, height) {
   const c = makeCanvas(64, 256);
   const g = c.getContext('2d');
   const grad = g.createLinearGradient(0, 0, 0, 256);
@@ -202,29 +204,164 @@ function makeBeamSprite(color, height) {
   return s;
 }
 
-/* Гуманоид-пешеход из примитивов (торс, голова, ноги, руки с пивотами) —
-   используется пешеходами и пассажирами такси */
-function buildPedMesh() {
-  const skin = choice([0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30]);
-  const cloth = choice([0x4060a0, 0xa04040, 0x409060, 0xa08040, 0x604080, 0x888888, 0xc07830, 0x3090a0]);
-  const pants = choice([0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x5a5a5a]);
-  const hairC = choice([0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0xd8c8a8, 0x8a2a2a, 0x2a2a4a]);
+/* Создание 3D-облака речи над головой пешехода (Canvas Texture Sprite) */
+export function makeSpeechSprite(text) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  
+  const texture = new THREE.CanvasTexture(canvas);
+  const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+  const sprite = new THREE.Sprite(mat);
+  sprite.scale.set(4.2, 1.05, 1.0);
+  sprite.position.y = 2.4;
+  sprite.visible = false;
+  sprite.userData = { texture, canvas, ctx };
+
+  if (text) updateSpeechSprite(sprite, text);
+  return sprite;
+}
+
+export function updateSpeechSprite(sprite, text) {
+  if (!sprite || !sprite.userData || !sprite.userData.canvas) return;
+  const { canvas, ctx, texture } = sprite.userData;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (!text) {
+    sprite.visible = false;
+    return;
+  }
+
+  // Облако речи (скруглённый прямоугольник с рамкой)
+  ctx.fillStyle = 'rgba(15, 20, 28, 0.92)';
+  ctx.strokeStyle = '#f2c12e';
+  ctx.lineWidth = 3;
+  ctx.beginPath();
+  if (ctx.roundRect) ctx.roundRect(4, 4, 248, 50, 10);
+  else ctx.rect(4, 4, 248, 50);
+  ctx.fill();
+  ctx.stroke();
+
+  // Указатель у низа плашки
+  ctx.fillStyle = '#f2c12e';
+  ctx.beginPath();
+  ctx.moveTo(120, 54);
+  ctx.lineTo(136, 54);
+  ctx.lineTo(128, 62);
+  ctx.closePath();
+  ctx.fill();
+
+  // Текст реплики
+  ctx.fillStyle = '#ffffff';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const displayText = text.length > 29 ? text.slice(0, 28) + '…' : text;
+  ctx.fillText(displayText, 128, 28);
+
+  texture.needsUpdate = true;
+  sprite.visible = true;
+}
+
+/* Гуманоид-пешеход из примитивов с поддержкой 5 архетипов (гопник, бабушка, бегун, студент, бизнесмен, обычный) */
+export function buildPedMesh(archetype) {
+  const types = ['gopnik', 'grandma', 'runner', 'student', 'businessman', 'regular'];
+  const arch = archetype || choice(types);
+
+  let skin = choice([0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30]);
+  let cloth = choice([0x4060a0, 0xa04040, 0x409060, 0xa08040, 0x604080, 0x888888, 0xc07830, 0x3090a0]);
+  let pants = choice([0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x5a5a5a]);
+  let hairC = choice([0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0xd8c8a8, 0x8a2a2a, 0x2a2a4a]);
+  
+  let scaleY = rand(0.92, 1.08);
+  let scaleXZ = rand(0.92, 1.08);
+
+  if (arch === 'gopnik') {
+    cloth = choice([0x1e222a, 0x1a2e40, 0x2b382b]);
+    pants = cloth;
+    scaleY = rand(0.95, 1.05);
+  } else if (arch === 'grandma') {
+    cloth = choice([0x604050, 0x4a5a40, 0x5a4a3a]);
+    pants = choice([0x3a2a3a, 0x2a2a2a]);
+    scaleY = rand(0.86, 0.94);
+    scaleXZ = rand(1.0, 1.12);
+  } else if (arch === 'runner') {
+    cloth = choice([0xee3322, 0x22ee44, 0xeecc00, 0x00ccee]);
+    pants = choice([0x111111, 0x222233]);
+    scaleY = rand(1.0, 1.12);
+    scaleXZ = rand(0.88, 0.96);
+  } else if (arch === 'businessman') {
+    cloth = choice([0x1c2430, 0x2a2e36, 0x383430]);
+    pants = cloth;
+    scaleY = rand(1.0, 1.08);
+  } else if (arch === 'student') {
+    cloth = choice([0xd86030, 0x3090d8, 0x9040d8]);
+    pants = choice([0x3a4a5a, 0x2a2a3a]);
+  }
+
   const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
   const g = new THREE.Group();
+
   // торс
   const torso = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.68, 0.34), mat(cloth));
   torso.position.y = 1.05;
   g.add(torso);
-  // голова + волосы (у большинства)
+
+  // голова + волосы
   const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 8, 6), mat(skin));
   head.position.y = 1.62;
   g.add(head);
-  if (Math.random() < 0.75) {
-    const hair = new THREE.Mesh(new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(hairC));
-    hair.position.y = 1.63;
-    g.add(hair);
+
+  if (arch !== 'grandma' && arch !== 'gopnik') {
+    if (Math.random() < 0.8) {
+      const hair = new THREE.Mesh(new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(hairC));
+      hair.position.y = 1.63;
+      g.add(hair);
+    }
   }
-  // ноги: пивоты в бёдрах (геометрия смещена вниз), со ступнями
+
+  // Детали архетипов (аксессуары)
+  if (arch === 'gopnik') {
+    // Кепка-восьмиклинка
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.08, 8), mat(0x1a1a1c));
+    cap.position.set(0, 1.76, 0.02);
+    g.add(cap);
+    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.02, 0.16), mat(0x1a1a1c));
+    visor.position.set(0, 1.74, 0.24);
+    g.add(visor);
+  } else if (arch === 'grandma') {
+    // Платок на голову
+    const scarf = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.7), mat(0xd8a8a8));
+    scarf.position.y = 1.63;
+    g.add(scarf);
+    // Сумка в руке
+    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.25, 0.12), mat(0x4a3a2a));
+    bag.position.set(0.35, 0.9, 0.1);
+    g.add(bag);
+  } else if (arch === 'runner') {
+    // Повязка на лоб
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.27, 0.06, 8), mat(0xffffff));
+    band.position.y = 1.68;
+    g.add(band);
+  } else if (arch === 'student') {
+    // Наушники на ушах
+    const hp = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.04, 4, 12, Math.PI), mat(0x222222));
+    hp.rotation.x = Math.PI / 2;
+    hp.position.set(0, 1.65, 0);
+    g.add(hp);
+    // Рюкзак на спине
+    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.45, 0.22), mat(0x205080));
+    pack.position.set(0, 1.1, -0.25);
+    g.add(pack);
+  } else if (arch === 'businessman') {
+    // Портфель в руке
+    const caseMesh = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.28, 0.36), mat(0x1a1410));
+    caseMesh.position.set(0.38, 0.85, 0.05);
+    g.add(caseMesh);
+  }
+
+  // ноги
   const legGeo = new THREE.BoxGeometry(0.18, 0.75, 0.2);
   legGeo.translate(0, -0.375, 0);
   const shoeGeo = new THREE.BoxGeometry(0.2, 0.12, 0.32);
@@ -238,7 +375,8 @@ function buildPedMesh() {
     g.add(leg);
     legs.push(leg);
   }
-  // руки: пивоты в плечах
+
+  // руки
   const armGeo = new THREE.BoxGeometry(0.15, 0.62, 0.15);
   armGeo.translate(0, -0.31, 0);
   const arms = [];
@@ -249,12 +387,14 @@ function buildPedMesh() {
     g.add(arm);
     arms.push(arm);
   }
-  g.userData = { legs, arms };
+
+  g.scale.set(scaleXZ, scaleY, scaleXZ);
+  g.userData = { legs, arms, archetype: arch };
   return g;
 }
 
 /* Коллизия круга с AABB. Возвращает {nx,nz,depth} или null */
-function circleAABB(px, pz, r, box) {
+export function circleAABB(px, pz, r, box) {
   const cx = clamp(px, box.x0, box.x1);
   const cz = clamp(pz, box.z0, box.z1);
   let dx = px - cx, dz = pz - cz;
@@ -269,4 +409,30 @@ function circleAABB(px, pz, r, box) {
   if (m === rgt) return { nx: 1, nz: 0, depth: r + rgt };
   if (m === t) return { nx: 0, nz: -1, depth: r + t };
   return { nx: 0, nz: 1, depth: r + b };
+}
+
+/**
+ * Проверяет, находится ли точка (x, z) в зоне видимости камеры игрока.
+ * @param {number} x - Координата X
+ * @param {number} z - Координата Z
+ * @param {number} px - Координата X игрока
+ * @param {number} pz - Координата Z игрока
+ * @param {number} heading - Направление игрока в радианах (0 = +Z)
+ * @param {number} maxDist - Максимальная дальность сектора видимости
+ * @returns {boolean} true, если точка видна спереди в поле зрения
+ */
+export function isInPlayerView(x, z, px, pz, heading, maxDist = 135) {
+  const dx = x - px;
+  const dz = z - pz;
+  const dist = Math.hypot(dx, dz);
+  if (dist > maxDist) return false;
+
+  const angleToPoint = Math.atan2(dx, dz);
+  let angleDiff = angleToPoint - heading;
+
+  while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+  while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+
+  // Вектор спереди ±75 градусов — перед глазами игрока
+  return Math.abs(angleDiff) < (75 * Math.PI / 180);
 }

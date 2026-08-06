@@ -1,8 +1,10 @@
-/* ============================================================
- * camera.js — преследующая камера с вращением и зумом
- * ============================================================ */
+import * as THREE from 'three';
+import { clamp, turnToward } from './utils.js';
 
-class ChaseCamera {
+const _tempCamDesired = new THREE.Vector3();
+const _tempCamLookTarget = new THREE.Vector3();
+
+export class ChaseCamera {
   constructor(camera) {
     this.camera = camera;
     this.yaw = 0;          // абсолютный угол вокруг машины
@@ -52,13 +54,14 @@ class ChaseCamera {
     }
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
-    const desired = new THREE.Vector3(
+    _tempCamDesired.set(
       car.x - sy * cp * this.dist,
       car.groundY + 1.2 + sp * this.dist,
       car.z - cy * cp * this.dist
     );
-    this.position.lerp(desired, 1 - Math.pow(0.001, dt));
-    this.look.lerp(new THREE.Vector3(car.x, car.groundY + 0.8, car.z), 1 - Math.pow(0.002, dt));
+    this.position.lerp(_tempCamDesired, 1 - Math.pow(0.001, dt));
+    _tempCamLookTarget.set(car.x, car.groundY + 0.8, car.z);
+    this.look.lerp(_tempCamLookTarget, 1 - Math.pow(0.002, dt));
     this.camera.position.copy(this.position);
     this.camera.lookAt(this.look);
   }

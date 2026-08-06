@@ -1,8 +1,10 @@
-/* ============================================================
- * orders.js — заказы и миссии: генерация, маркеры, оплата
- * ============================================================ */
+import * as THREE from 'three';
+import { CFG, LANDMARKS, DISTRICTS } from './config.js';
+import { dist2D, rand, choice, pickWeighted, fmtMoney, makeMarkerTexture, makeBeamSprite, buildPedMesh } from './utils.js';
+import { Events } from './eventbus.js';
+import { getPassengerDialogue, PASSENGER_NAMES, CLIENT_AVATARS } from './dialogues.js';
 
-const ORDER_META = {
+export const ORDER_META = {
   normal:  { name: 'Обычная поездка',  icon: 'P', color: '#3e8ede', mult: 1.0,  time: 0,   desc: 'Обычная поездка по городу' },
   urgent:  { name: 'Срочный заказ',    icon: '!', color: '#e03a3a', mult: 1.6,  time: 75,  desc: 'Срочно! Пассажир торопится' },
   vip:     { name: 'VIP-клиент',       icon: 'V', color: '#d4af37', mult: 1.5,  time: 0,   desc: 'Аккуратная езда, без аварий' },
@@ -58,14 +60,63 @@ const MISSION_TEMPLATES = [
   },
 ];
 
+/**
+ * @typedef {Object} OrderPickup
+ * @property {number} x - Координата X подачи
+ * @property {number} z - Координата Z подачи
+ * @property {string} [name] - Название точки
+ * @property {string} [district] - ID района
+ */
+
+/**
+ * @typedef {Object} OrderDrop
+ * @property {number} x - Координата X высадки
+ * @property {number} z - Координата Z высадки
+ * @property {string} name - Название точки высадки
+ */
+
+/**
+ * @typedef {Object} Order
+ * @property {number} id - Уникальный ID заказа
+ * @property {string} type - Тип заказа
+ * @property {string} title - Название заказа
+ * @property {string} desc - Описание заказа
+ * @property {string} icon - Иконка заказа
+ * @property {string} color - Цвет маркера
+ * @property {string|null} missionId - ID сюжетной миссии (если есть)
+ * @property {OrderPickup} pickup - Точка подачи
+ * @property {OrderDrop[]} drops - Список точек назначения
+ * @property {number} dropIdx - Текущий индекс точки высадки
+ * @property {string} state - Статус заказа ('open'|'active'|'done'|'failed')
+ * @property {number} estPay - Расчетная оплата
+ * @property {number} pay - Итоговая оплата
+ * @property {number} timeLimit - Лимит времени в секундах
+ * @property {number} timer - Оставшееся время
+ * @property {number} dist - Общая дистанция в метрах
+ * @property {Object|null} marker - Ссылка на трехмерный маркер заказа
+ * @property {boolean} drunkChanged - Поменял ли пьяный пассажир маршрут
+ * @property {boolean} fragileBroken - Разбит ли хрупкий груз
+ * @property {number} startTime - Время принятия заказа
+ * @property {Object|null} [passenger] - Данные визуального пассажира
+ */
+
+/**
+ * Менеджер заказов и пассажиров в игре.
+ */
 class PassengerManager {
+  /**
+   * @param {import('./citygen.js').World} world - Игровой мир
+   */
   constructor(world) {
     this.world = world;
-    this.open = [];      // доступные заказы
-    this.active = null;  // текущий заказ
+    /** @type {Order[]} доступные заказы */
+    this.open = [];
+    /** @type {Order|null} текущий активный заказ */
+    this.active = null;
     this._id = 1;
     this._spawnT = 0.4;  // первый заказ почти сразу
-    this.completed = []; // id выполненных миссий за смену
+    /** @type {string[]} id выполненных миссий за смену */
+    this.completed = [];
     this._dropBeam = null;   // световой столб финальной точки высадки
     this._dropT = 0;
     this._cabPassenger = null; // пассажир в салоне (виден сквозь стекло)
@@ -90,6 +141,29 @@ class PassengerManager {
       if (near.length) return choice(near);
     }
     return choice(pts);
+  }
+
+  /* Точка высадки, гарантированно расположенная НЕ МЕНЕЕ minDistance м от начальной */
+  _randFarPoint(fromPt, districts, minDistance = 150, player) {
+    const allPts = this.world.pickupPoints;
+    const candidates = allPts.filter((p) => {
+      if (districts && !districts.some((d) => d.id === p.district)) return false;
+      const d = dist2D(p.x, p.z, fromPt.x, fromPt.z);
+      return d >= minDistance;
+    });
+
+    if (candidates.length) return choice(candidates);
+
+    const fallback = allPts.filter((p) => dist2D(p.x, p.z, fromPt.x, fromPt.z) >= minDistance);
+    if (fallback.length) return choice(fallback);
+
+    let maxD = 0;
+    let best = allPts[0];
+    for (const p of allPts) {
+      const d = dist2D(p.x, p.z, fromPt.x, fromPt.z);
+      if (d > maxD) { maxD = d; best = p; }
+    }
+    return best;
   }
 
   unlockedDistricts(rating) {
@@ -123,24 +197,31 @@ class PassengerManager {
     else if (typeRoll < 0.70 && rating >= 15) type = 'tour';
 
     const pickD = choice(unDistricts);
-    const dropD = choice(unDistricts.filter((d) => d.id !== pickD.id || Math.random() < 0.3));
     let pickup = this._randPoint(pickD.id, player);
     // не спавнить у игрока
     for (let i = 0; i < 5 && dist2D(pickup.x, pickup.z, player.x, player.z) < 18; i++) pickup = this._randPoint(pickD.id, player);
 
+    // Гарантируем полноценную поездку через город: дистанция между точками НЕ МЕНЕЕ 150 метров
+    const MIN_TRIP_DIST = 150;
     let drops;
     if (type === 'group') {
-      drops = [this._randPoint(dropD.id, player), this._randPoint(choice(unDistricts).id, player)];
-      drops = drops.map((p) => ({ x: p.x, z: p.z, name: this._districtName(p.district) }));
+      const p1 = this._randFarPoint(pickup, unDistricts, MIN_TRIP_DIST, player);
+      const p2 = this._randFarPoint(p1, unDistricts, 130, player);
+      drops = [
+        { x: p1.x, z: p1.z, name: this._districtName(p1.district) },
+        { x: p2.x, z: p2.z, name: this._districtName(p2.district) }
+      ];
     } else if (type === 'tour') {
       const lm = this._randomLandmark(rating);
       drops = [{ x: lm.x, z: lm.z, name: lm.name }];
       if (Math.random() < 0.5) {
         const lm2 = this._randomLandmark(rating, lm.id);
-        drops.push({ x: lm2.x, z: lm2.z, name: lm2.name });
+        if (dist2D(lm.x, lm.z, lm2.x, lm2.z) >= 120) {
+          drops.push({ x: lm2.x, z: lm2.z, name: lm2.name });
+        }
       }
     } else {
-      const dp = this._randPoint(dropD.id, player);
+      const dp = this._randFarPoint(pickup, unDistricts, MIN_TRIP_DIST, player);
       drops = [{ x: dp.x, z: dp.z, name: this._districtName(dp.district) }];
     }
 
@@ -169,9 +250,12 @@ class PassengerManager {
     let dist = 0;
     let prev = pickup;
     for (const d of drops) { dist += Math.abs(d.x - prev.x) + Math.abs(d.z - prev.z); prev = d; }
-    const estPay = payOverride || Math.round((CFG.baseFare + dist * CFG.farePerUnit) * ORDER_META[type].mult);
+    const estPay = payOverride || Math.round((CFG.baseFare + dist * CFG.farePerUnit) * (ORDER_META[type]?.mult || 1.0));
+    const clientName = missionId === 'grandma' ? 'Бабушка Зинаида' : missionId === 'doctor' ? 'Доктор Соколова' : choice(PASSENGER_NAMES);
+    const clientAvatar = CLIENT_AVATARS[type] || '👨‍💼';
     return {
       id: this._id++, type, title, desc, icon, color, missionId,
+      clientName, clientAvatar,
       pickup, drops, dropIdx: 0,
       state: 'open',          // open | active | done | failed
       estPay, pay: estPay,
@@ -266,6 +350,12 @@ class PassengerManager {
   }
 
   /* --- Взять заказ --- */
+  /**
+   * Принять заказ игроком.
+   * @param {Order} order - Заказ для принятия
+   * @param {import('./player.js').PlayerCar} player - Машина игрока
+   * @returns {boolean} Успешно ли принят заказ
+   */
   accept(order, player) {
     if (order.state !== 'open') return false;
     order.state = 'active';
@@ -282,7 +372,10 @@ class PassengerManager {
     player.passengerCount = 1;
     player.style = 0.7;
     player.styleTimer = 0;
+    Events.emit('order:accepted', { order, player });
     Events.emit('pickup', {});
+    const dlg = getPassengerDialogue('pickup', order);
+    Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: dlg.color });
     return true;
   }
 
@@ -347,6 +440,8 @@ class PassengerManager {
           a.drops[a.dropIdx] = { x: nd.x, z: nd.z, name: '…передумал, едем: ' + this._districtName(nd.district) };
           a.estPay = Math.round(a.estPay * 1.3);
           Events.emit('toast', { text: 'Пассажир передумал! Новый адрес: ' + a.drops[a.dropIdx].name, color: '#c070e0' });
+          const dlg = getPassengerDialogue('detour', a);
+          Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#c070e0' });
         }
       }
       // у VIP клиент выходит при аварии
@@ -438,26 +533,44 @@ class PassengerManager {
       title: a.title, pay: pay, tips, total, type: a.type, missionId: a.missionId,
       est: a.estPay, dist: a.dist, partial: false,
     };
+    const dlg = getPassengerDialogue('dropoff', a);
+    Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#7ee787' });
+    Events.emit('order:completed', res);
     Events.emit('orderDone', res);
     return res;
   }
 
   /* --- Провал заказа --- */
+  /**
+   * Считать заказ проваленным.
+   * @param {Order} a - Заказ
+   * @param {string} reason - Причина провала ('time'|'vip'|'crash')
+   */
   fail(a, reason) {
     if (!this.active || this.active.id !== a.id) return;
     this.active = null;
     this._hideDropMarker();
     this._cabOut();
     this._removePassenger(a);
+    Events.emit('order:failed', { reason, order: a });
     Events.emit('fail', { reason });
     Events.emit('toast', { text: reason === 'time' ? 'Заказ провален: время вышло!' : 'Пассажир ушёл!', color: '#e05050' });
   }
 
   /* Авария во время поездки (вызывается из game при crash) */
+  /**
+   * Обработка столкновения во время поездки.
+   * @param {number} impact - Сила удара
+   * @returns {number} Штраф (если есть)
+   */
   onCrash(impact) {
     const a = this.active;
     if (!a) return;
     if (a.type === 'package') a.fragileBroken = true;
+    if (impact > 8) {
+      const dlg = getPassengerDialogue('crash', a);
+      Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: '😱', color: '#ff6b6b' });
+    }
     if (a.type === 'vip' && impact > 12) {
       this.fail(a, 'vip');
       Events.emit('toast', { text: 'VIP-клиент в шоке и ушёл. -100 ₽', color: '#e05050' });
@@ -486,4 +599,6 @@ class PassengerManager {
   }
 }
 
-const Orders = PassengerManager;
+export const Orders = PassengerManager;
+export const OrdersManager = PassengerManager;
+export { PassengerManager, MISSION_TEMPLATES };

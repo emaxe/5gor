@@ -1,8 +1,46 @@
-/* ============================================================
- * traffic.js — NPC-трафик: Object Pool, ИИ на сетке дорог
- * ============================================================ */
+import * as THREE from 'three';
+import { CFG } from './config.js';
+import { rand, clamp, choice, lerpAngle, makeTaxiTexture, makePlateTexture, mergeColored, makeSpeechSprite, updateSpeechSprite, isInPlayerView } from './utils.js';
+import { Events } from './eventbus.js';
 
-const TRAFFIC_TYPES = [
+const _tempTrafficWp = { x: 0, z: 0 };
+const _tempTrafficFrom = { x: 0, z: 0 };
+const _tempTrafficTo = { x: 0, z: 0 };
+const _tempLightRet = { dist: 0, state: 0 };
+
+const DRIVER_RAM_QUOTES = [
+  "Куда прёшь, дрова везёшь?!",
+  "Смотри куда рулишь, шумахер!",
+  "Права за салом купил?!",
+  "Эй! Машину помнёшь!",
+  "Ты у меня щас за ремонт заплатишь!",
+  "Тормоза проверь, ведро!",
+  "Ослеп что ли, осел?!"
+];
+
+const DRIVER_PED_QUOTES = [
+  "Куда под колёса лезешь?!",
+  "Шевелись на зебре!",
+  "Зелёный не вечный!",
+  "Давай быстрей, сайгак!",
+  "Смотри по сторонам, пешеход!"
+];
+
+const DRIVER_HIT_PED_QUOTES = [
+  "Ослеп что ли под колёса прыгать?!",
+  "Куда выскочил, осел?!",
+  "Сумасшедший! Чуть насмерть не сбил!"
+];
+
+const PED_REPLY_QUOTES = [
+  "На зебре я главный!",
+  "Подождёшь, не трамвай!",
+  "Красный горит, куда сигналишь?!",
+  "Не дрова везёшь, подождёшь!",
+  "Сам пешком иди!"
+];
+
+export const TRAFFIC_TYPES = [
   { name: 'sedan', r: 2.0, len: 4.4, w: 1.9, colors: [0xe8e8e8, 0x9aa0a8, 0x5060a0, 0xb03030, 0x2a2a2a, 0xc0a070] },
   { name: 'suv', r: 2.2, len: 4.8, w: 2.0, colors: [0x3a4a3a, 0x505860, 0x8a7050, 0x2a2a2a] },
   { name: 'van', r: 2.3, len: 5.2, w: 2.1, colors: [0xd8d8d0, 0xa8b8a0, 0xc8a060, 0xe8e0d0] },
@@ -10,14 +48,41 @@ const TRAFFIC_TYPES = [
   { name: 'taxi', r: 2.0, len: 4.4, w: 1.9, colors: [0xf2c12e] },
 ];
 
-class TrafficManager {
+/**
+ * Менеджер городского трафика (управление автомобилями NPC, перекрестками и светофорами).
+ */
+export class TrafficManager {
+  /**
+   * @param {THREE.Scene} scene - Трёхмерная сцена Three.js
+   */
   constructor(scene) {
     this.scene = scene;
+    /** @type {Array<Object>} список активных автомобилей трафика */
     this.cars = [];
     this._geo = new Map();        // тип -> merged-геометрия кузова
     this.matColored = new THREE.MeshLambertMaterial({ vertexColors: true });
     this.matBodyTex = new THREE.MeshLambertMaterial({ map: makeTaxiTexture('#f2c12e') });
     this.lightsRef = [];          // [{isec:{x,z}, state}] — от мира
+
+    // Водители сигналят и ругаются при таране игроком
+    Events.on('crash', (d) => {
+      if (d && d.victim === 'car' && d.car && d.impact > 3) {
+        Events.emit('horn');
+        this.say(d.car, choice(DRIVER_RAM_QUOTES), 3.0);
+      }
+    });
+  }
+
+  /* Реплика водителя машины трафика в 3D-облаке речи */
+  say(car, text, duration = 3.0) {
+    if (!car.speechSprite) {
+      car.speechSprite = makeSpeechSprite(text);
+      car.speechSprite.position.y = 2.6;
+      car.mesh.add(car.speechSprite);
+    } else {
+      updateSpeechSprite(car.speechSprite, text);
+    }
+    car.speechT = duration;
   }
 
   /* --- Сборка модели типа (каждый вызов — новая машина) --- */
@@ -136,22 +201,23 @@ class TrafficManager {
   }
 
   /* --- Заполнить пул --- */
-  spawn(count, playerX, playerZ) {
+  spawn(count, player) {
     while (this.cars.length < count) {
       const type = Math.random() < 0.14 ? 4 : (Math.random() < 0.35 ? Math.floor(Math.random() * 4) : Math.floor(Math.random() * 3));
       const mesh = this._buildCar(type);
       const car = {
         type, mesh, alive: true, radius: TRAFFIC_TYPES[type].r,
         axis: 'z', coord: 0, dir: 1, pos: 0, speed: 0, target: 10, lane: 1, turnT: 0,
+        speechSprite: null, speechT: 0, yellCd: 0
       };
       this.cars.push(car);
       this.scene.add(mesh);
     }
-    for (const car of this.cars) this.placeNear(car, playerX, playerZ);
+    for (const car of this.cars) this.placeNear(car, player);
   }
 
-  placeNear(car, px, pz) {
-    const r = this._randRoad(px, pz);
+  placeNear(car, player) {
+    const r = this._randRoad(player);
     car.axis = r.axis;
     car.coord = r.coord;
     car.dir = r.dir;
@@ -160,6 +226,9 @@ class TrafficManager {
     car.turnT = 0;
     car.speed = rand(6, 13);
     car.target = car.speed;
+    car.speechT = 0;
+    car.yellCd = 0;
+    if (car.speechSprite) updateSpeechSprite(car.speechSprite, '');
     this._sync(car);
   }
 
@@ -187,9 +256,15 @@ class TrafficManager {
 
   /* Мир. координаты: правая полоса движения (ПДД, правостороннее).
      Движение в +Z: правая сторона — −X; в −Z: +X; в +X: +Z; в −X: −Z. */
-  _worldPos(car) {
-    if (car.axis === 'z') return { x: car.coord - car.dir * 2.5, z: car.pos };
-    return { x: car.pos, z: car.coord + car.dir * 2.5 };
+  _worldPos(car, out = _tempTrafficWp) {
+    if (car.axis === 'z') {
+      out.x = car.coord - car.dir * 2.5;
+      out.z = car.pos;
+    } else {
+      out.x = car.pos;
+      out.z = car.coord + car.dir * 2.5;
+    }
+    return out;
   }
 
   _heading(car) {
@@ -200,11 +275,18 @@ class TrafficManager {
     const px = player.x, pz = player.z;
     for (const car of this.cars) {
       if (!car.alive) continue;
-      const wp = this._worldPos(car);
+      const wp = this._worldPos(car, _tempTrafficWp);
       car.x = wp.x; car.z = wp.z;
 
-      if (Math.abs(car.x - px) > 430 || Math.abs(car.z - pz) > 430) {
-        this.placeNear(car, px, pz);
+      // Облака речи водителя
+      if (car.speechT > 0) {
+        car.speechT -= dt;
+        if (car.speechT <= 0 && car.speechSprite) updateSpeechSprite(car.speechSprite, '');
+      }
+      if (car.yellCd > 0) car.yellCd -= dt;
+
+      if (Math.hypot(car.x - px, car.z - pz) > 260) {
+        this.placeNear(car, player);
         continue;
       }
       if (Math.abs(car.pos) > 268) { car.dir = -car.dir; car.pos = clamp(car.pos, -268, 268); }
@@ -220,15 +302,46 @@ class TrafficManager {
         if (d > 0 && d < 16) { car.target = Math.min(car.target, other.speed - 2); break; }
       }
 
-      // пешеход переходит дорогу впереди — пропускаем
+      // взаимодействия с пешеходами (пропуск, переругивание, случайное сбитие)
       if (peds) {
         for (const p of peds.cars) {
-          if (!p.alive || p.mode !== 'cross' || !p.cross) continue;
-          if (p.axis !== car.axis || p.coord !== car.coord) continue;
-          const off = Math.abs((p.axis === 'z' ? p.x - p.coord : p.z - p.coord));
-          if (off > 7.5) continue; // ещё на тротуаре
-          const dp = (p.pos - car.pos) * car.dir;
-          if (dp > 0 && dp < 24) { car.target = Math.min(car.target, 0); break; }
+          if (!p.alive) continue;
+          const isSameRoad = p.axis === car.axis && p.coord === car.coord;
+          const dP = (p.pos - car.pos) * car.dir;
+
+          // 1. Ругань водителя и пешехода на зебре
+          if (isSameRoad && p.mode === 'cross' && p.cross) {
+            const off = Math.abs((p.axis === 'z' ? p.x - p.coord : p.z - p.coord));
+            if (off <= 7.5 && dP > 0 && dP < 24) {
+              car.target = Math.min(car.target, 0); // пропускаем
+              if (car.yellCd <= 0 && dP < 16 && Math.random() < 0.12) {
+                car.yellCd = 7.0;
+                Events.emit('horn');
+                this.say(car, choice(DRIVER_PED_QUOTES), 2.5);
+                peds.say(p, choice(PED_REPLY_QUOTES), 2.5);
+              }
+            }
+          }
+
+          // 2. Наезд машиной трафика на пешехода
+          const distFull = Math.hypot(car.x - p.x, car.z - p.z);
+          if (distFull < car.radius + 0.65 && p.knockT <= 0 && p.hitCd <= 0) {
+            p.hitCd = 1.2;
+            const nx = (p.x - car.x) / (distFull || 1);
+            const nz = (p.z - car.z) / (distFull || 1);
+            if (car.speed > 2.5) {
+              // Машина трафика сбивает пешехода!
+              peds._knockDown(p, nx, nz, car.speed);
+              Events.emit('trafficHitPed');
+              Events.emit('horn');
+              this.say(car, choice(DRIVER_HIT_PED_QUOTES), 3.0);
+              car.speed = Math.max(1, car.speed - 3.5);
+            } else {
+              // Толкает / пешеход уворачивается
+              peds._dodge(p, nx, nz, car.speed);
+              peds.say(p, "Совсем ослеп, водила?!", 2.5);
+            }
+          }
         }
       }
 
@@ -318,8 +431,8 @@ class TrafficManager {
       newDir = right ? car.dir : -car.dir;
     }
     // мировая точка старта и финиша
-    const from = this._worldPos(car);
-    const to = this._worldPos({ axis: newAxis, coord: newCoord, pos: (car.axis === 'z' ? isec.x : isec.z), dir: newDir });
+    const from = this._worldPos(car, _tempTrafficFrom);
+    const to = this._worldPos({ axis: newAxis, coord: newCoord, pos: (car.axis === 'z' ? isec.x : isec.z), dir: newDir }, _tempTrafficTo);
     // длительность поворота зависит от скорости (дуга ~3.5 м)
     const arcLen = Math.hypot(to.x - from.x, to.z - from.z);
     const dur = clamp(arcLen / Math.max(car.speed, 4) * 1.15, 0.5, 1.4);
@@ -344,7 +457,7 @@ class TrafficManager {
 
   /* Ближайший светофор впереди для полосы машины (свой светофор своей оси) */
   _lightAhead(car) {
-    const wp = this._worldPos(car);
+    const wp = this._worldPos(car, _tempTrafficWp);
     for (const l of this.lightsRef) {
       if (l.axis !== car.axis) continue; // светофор поперечной дороги не наш
       // поперечное смещение: машина на своей полосе (2.5), светофор у угла (9)
@@ -360,17 +473,30 @@ class TrafficManager {
         ? (car.dir > 0 ? l.z - wp.z : wp.z - l.z)
         : (car.dir > 0 ? l.x - wp.x : wp.x - l.x);
       if (ahead <= 0) continue;
-      return { dist, state: l.state };
+      _tempLightRet.dist = dist;
+      _tempLightRet.state = l.state;
+      return _tempLightRet;
     }
     return null;
   }
 
+  say(car, text, duration = 3.0) {
+    if (!car.speechSprite) {
+      car.speechSprite = makeSpeechSprite(text);
+      car.mesh.add(car.speechSprite);
+    } else {
+      updateSpeechSprite(car.speechSprite, text);
+    }
+    car.speechT = duration;
+    Events.emit('spatial:shout', { x: car.x, z: car.z, text, type: 'driver', avatar: '🚘' });
+  }
+
   _sync(car) {
-    const wp = this._worldPos(car);
+    const wp = this._worldPos(car, _tempTrafficWp);
     car.mesh.position.set(wp.x, 0, wp.z);
     car.mesh.rotation.y = this._heading(car);
   }
 }
 
 /* Перекрёстки мира (заполняется после World.build в game.js) */
-let WORLD_INTERSECTIONS = [];
+export let WORLD_INTERSECTIONS = [];

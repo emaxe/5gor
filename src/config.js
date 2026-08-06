@@ -3,7 +3,83 @@
  * config.js — константы баланса, районы, апгрейды, автомобили
  * ============================================================ */
 
-const CFG = {
+/**
+ * @typedef {Object} District
+ * @property {string} id - Уникальный идентификатор района
+ * @property {string} name - Название района
+ * @property {number} unlock - Требуемый рейтинг для разблокировки
+ * @property {number} weight - Вес генерации заказов/зданий
+ * @property {string} palette - Название цветовой палитры
+ * @property {[number, number]} height - Диапазон высоты зданий [min, max]
+ * @property {number} dens - Плотность застройки
+ * @property {number} color - Цвет района на карте в формате HEX (number)
+ */
+
+/**
+ * @typedef {Object} CarStats
+ * @property {number} maxSpeed - Максимальная скорость
+ * @property {number} accel - Скорость разгона
+ * @property {number} brake - Сила торможения
+ * @property {number} grip - Сцепление с дорогой
+ * @property {number} armor - Прочность кузова
+ * @property {number} tank - Емкость топливного бака
+ * @property {number} capacity - Вместимость пассажиров
+ * @property {number} steer - Манёвренность / Скорость поворота
+ */
+
+/**
+ * @typedef {Object} CarDef
+ * @property {string} id - Уникальный ID автомобиля
+ * @property {string} name - Название модели автомобиля
+ * @property {number} price - Стоимость покупки автомобиля в ₽
+ * @property {number} unlockRating - Требуемый рейтинг для покупки
+ * @property {CarStats} base - Базовые характеристики автомобиля
+ * @property {string} bodyColor - Основной цвет кузова в HEX
+ * @property {string} desc - Краткое описание автомобиля
+ */
+
+/**
+ * @typedef {Object} TuningColor
+ * @property {string} name - Название цвета
+ * @property {string} c - HEX-код цвета
+ */
+
+/**
+ * @typedef {Object} TuningRim
+ * @property {string} name - Название дисков
+ * @property {string} c - HEX-код цвета дисков
+ */
+
+/**
+ * @typedef {Object} Tuning
+ * @property {TuningColor[]} colors - Доступные цвета кузова
+ * @property {TuningRim[]} rims - Доступные варианты дисков
+ * @property {boolean} spoiler - Установлен ли спойлер
+ */
+
+/**
+ * @typedef {Object} WeatherDef
+ * @property {string} name - Название погодных условий
+ * @property {number} rain - Флаг/интенсивность дождя (0 или 1)
+ * @property {number} fogNear - Ближняя граница тумана
+ * @property {number} fogFar - Дальняя граница тумана
+ * @property {number} grip - Коэффициент сцепления с дорогой
+ * @property {number} traffic - Коэффициент скорости/плотности трафика
+ */
+
+/**
+ * @typedef {Object} ShiftStats
+ * @property {number} earned - Заработанные деньги за смену
+ * @property {number} orders - Выполнено обычных заказов
+ * @property {number} tips - Сумма полученных чаевых
+ * @property {number} crashes - Количество столкновений
+ * @property {number} peds - Количество сбитых пешеходов
+ * @property {number} km - Пройдено километров
+ * @property {number} failed - Проваленные заказы
+ * @property {number} missions - Выполнено уникальных миссий
+ */
+
+export const CFG = {
   // Базовые параметры мира
   CELL: 64,          // размер квартала
   ROAD_W: 12,        // ширина дороги (4 полосы)
@@ -54,7 +130,7 @@ const CFG = {
 };
 
 /* Районы города. unlock — рейтинг для появления заказов */
-const DISTRICTS = [
+export const DISTRICTS = [
   { id: 'center',   name: 'Центр',          unlock: 0,   weight: 22, palette: 'center',   height: [20, 55], dens: 4,  color: 0x7a4a2b },
   { id: 'kurort',   name: 'Курортный',      unlock: 0,   weight: 18, palette: 'kurort',   height: [9, 22],  dens: 3,  color: 0x6d8f5f },
   { id: 'prigorod', name: 'Привокзальный',  unlock: 0,   weight: 16, palette: 'prigorod', height: [8, 18],  dens: 3,  color: 0x7d8a99 },
@@ -66,7 +142,7 @@ const DISTRICTS = [
 ];
 
 /* Палитры фасадов (цвета стен) */
-const PALETTES = {
+export const PALETTES = {
   center:    ['#e8c98a', '#e0b060', '#d8a050', '#f0d8a0', '#d09060'],
   kurort:    ['#c8d8b0', '#a8c090', '#e0d8b8', '#b8c8a0', '#d0c8a8'],
   prigorod:  ['#b0b8c0', '#989ea8', '#c0c0c8', '#a8b0b8', '#d0d0d8'],
@@ -78,7 +154,7 @@ const PALETTES = {
 };
 
 /* Апгрейды. base — цена 1 уровня, mult — рост цены */
-const UPGRADES = {
+export const UPGRADES = {
   engine:      { name: 'Двигатель',   max: 4, base: 600, mult: 1.7, icon: '⚙️', desc: 'Макс. скорость и разгон' },
   suspension:  { name: 'Подвеска',    max: 4, base: 500, mult: 1.7, icon: '🛞', desc: 'Управляемость на серпантине' },
   brakes:      { name: 'Тормоза',     max: 4, base: 400, mult: 1.7, icon: '🛑', desc: 'Тормозной путь' },
@@ -88,21 +164,36 @@ const UPGRADES = {
 };
 
 /* Автомобили */
-const CARS = {
+export const CARS = {
   taxi: {
     id: 'taxi', name: '«Пятёрочка»', price: 0, unlockRating: 0,
-    base: { maxSpeed: 34, accel: 13, brake: 26, grip: 1.0, armor: 1.0, tank: 100, capacity: 1, steer: 2.1 },
-    bodyColor: '#f2c12e', desc: 'Легендарный жёлтый трудяга',
+    base: { maxSpeed: 34, accel: 13, brake: 26, grip: 1.0, armor: 1.0, tank: 100, capacity: 1, steer: 2.1, carType: 'taxi' },
+    bodyColor: '#f2c12e', desc: 'Надежный жёлтый седан для повседневных поездок',
+  },
+  classic: {
+    id: 'classic', name: '«Классика» (2107)', price: 3500, unlockRating: 10,
+    base: { maxSpeed: 32, accel: 11, brake: 22, grip: 0.9, armor: 0.85, tank: 85, capacity: 1, steer: 2.0, carType: 'classic' },
+    bodyColor: '#c0392b', desc: 'Отечественная классика с душой Пятигорска. Проста и душевна!',
+  },
+  comfort: {
+    id: 'comfort', name: '«Комфорт»', price: 12000, unlockRating: 25,
+    base: { maxSpeed: 38, accel: 15, brake: 28, grip: 1.08, armor: 1.1, tank: 115, capacity: 2, steer: 2.3, carType: 'comfort' },
+    bodyColor: '#2e6fb5', desc: 'Удобный и резвый седан повышенной комфортности',
+  },
+  minivan: {
+    id: 'minivan', name: '«Микроавтобус»', price: 18000, unlockRating: 35,
+    base: { maxSpeed: 35, accel: 12, brake: 25, grip: 1.02, armor: 1.4, tank: 140, capacity: 3, steer: 1.9, carType: 'minivan' },
+    bodyColor: '#f0f0ee', desc: 'Вместительный бусик для групп, экскурсий и семейных вылазок',
   },
   business: {
-    id: 'business', name: '«Бизнес»', price: 25000, unlockRating: 40,
-    base: { maxSpeed: 41, accel: 16, brake: 30, grip: 1.12, armor: 1.25, tank: 130, capacity: 1, steer: 2.4 },
-    bodyColor: '#20242c', desc: 'Чёрный седан для VIP-клиентов',
+    id: 'business', name: '«Бизнес»', price: 25000, unlockRating: 50,
+    base: { maxSpeed: 43, accel: 17, brake: 32, grip: 1.15, armor: 1.3, tank: 130, capacity: 2, steer: 2.5, carType: 'business' },
+    bodyColor: '#20242c', desc: 'Чёрный премиум-седан для VIP-клиентов и быстрой езды',
   },
 };
 
 /* Тюнинг: цвета кузова, диски, спойлер */
-const TUNING = {
+export const TUNING = {
   colors: [
     { name: 'Такси жёлтый', c: '#f2c12e' },
     { name: 'Красный',      c: '#c0392b' },
@@ -121,7 +212,7 @@ const TUNING = {
 };
 
 /* Достопримечательности (экскурсионные заказы) */
-const LANDMARKS = [
+export const LANDMARKS = [
   { id: 'proval',    name: 'Озеро Провал',       x: -96, z: -160, desc: 'Голубое озеро в кратере' },
   { id: 'cvetnik',   name: 'Цветник',            x: -32, z: 32,   desc: 'Парк с фонтаном и гротом' },
   { id: 'grot',      name: 'Грот Лермонтова',    x: -52, z: 8,    desc: 'Каменный грот в парке' },
@@ -134,13 +225,13 @@ const LANDMARKS = [
 ];
 
 /* Заправки */
-const FUEL_STATIONS = [
+export const FUEL_STATIONS = [
   { x: 0,   z: 128 }, { x: -192, z: -64 },
   { x: 128, z: -192 }, { x: 64, z: 192 },
 ];
 
 /* Погода */
-const WEATHER_DEFS = {
+export const WEATHER_DEFS = {
   clear: { name: 'Ясно',   rain: 0,  fogNear: 500, fogFar: 1600, grip: 1.0, traffic: 1.0 },
   rain:  { name: 'Дождь',  rain: 1,  fogNear: 120, fogFar: 420,  grip: 0.78, traffic: 0.7 },
   fog:   { name: 'Туман',  rain: 0,  fogNear: 60,  fogFar: 220,  grip: 0.95, traffic: 0.9 },

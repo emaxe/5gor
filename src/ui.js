@@ -1,8 +1,14 @@
-/* ============================================================
- * ui.js — HUD, мини-карта, меню, гараж, тосты, тач-управление
- * ============================================================ */
+import { CFG, DISTRICTS, UPGRADES, CARS, TUNING } from './config.js';
+import { fmtMoney, fmtTime, fmtClock, choice } from './utils.js';
+import { Events } from './eventbus.js';
 
-class UIManager {
+/**
+ * Менеджер пользовательского интерфейса (экраны, HUD, карта, гараж, уведомления).
+ */
+export class UIManager {
+  /**
+   * @param {import('./game.js').Game} game - Главный экземпляр игры
+   */
   constructor(game) {
     this.game = game;
     this.$ = (id) => document.getElementById(id);
@@ -17,6 +23,9 @@ class UIManager {
     this._baseMap = null;
     this._garageTab = 'upgrades';
     this.toastCount = 0;
+    this._dialogueTimer = null;
+
+    Events.on('passenger:speak', (d) => this.showDialogue(d.speaker, d.text, d.avatar, d.color));
   }
 
   /* ---------- Кнопки ---------- */
@@ -358,6 +367,37 @@ class UIManager {
     }
   }
 
+  /* ---------- Диалоги пассажиров ---------- */
+  /**
+   * Показать всплывающее речевое облако диалога пассажира.
+   * @param {string} speaker - Имя или роль говорящего
+   * @param {string} text - Текст реплики
+   * @param {string} [avatar='💬'] - Эмодзи-аватар
+   * @param {string} [color='#f2c12e'] - Цвет акцента
+   */
+  showDialogue(speaker, text, avatar = '💬', color = '#f2c12e') {
+    const bubble = this.$('dialogue-bubble');
+    if (!bubble) return;
+    const spk = this.$('dialogue-speaker');
+    const txt = this.$('dialogue-text');
+    const avt = this.$('dialogue-avatar');
+
+    if (spk) spk.textContent = speaker || 'Пассажир';
+    if (txt) txt.textContent = text || '';
+    if (avt) avt.textContent = avatar || '💬';
+    if (color) bubble.style.borderColor = color;
+
+    bubble.classList.remove('hidden');
+    bubble.style.animation = 'none';
+    void bubble.offsetWidth;
+    bubble.style.animation = 'bubblePop 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+
+    if (this._dialogueTimer) clearTimeout(this._dialogueTimer);
+    this._dialogueTimer = setTimeout(() => {
+      bubble.classList.add('hidden');
+    }, 4800);
+  }
+
   /* ---------- Тосты ---------- */
   toast(text, color) {
     const box = this.$('toasts');
@@ -438,15 +478,22 @@ class UIManager {
       for (const key in CARS) {
         const cc = CARS[key];
         const owned = upgrades.ownedCars.includes(key);
+        const isSelected = upgrades.carId === key;
+        const lockedByRating = !owned && (this.game.rating < cc.unlockRating);
         const div = document.createElement('div');
         div.className = 'car-card';
         div.innerHTML =
-          '<div class="name">' + cc.name + (upgrades.carId === key ? ' ✅' : '') + '</div>' +
-          '<div class="desc">' + cc.desc + '<br>Макс: ' + Math.round(cc.base.maxSpeed * 3.6) + ' км/ч · Бак: ' + cc.base.tank + '</div>' +
+          '<div class="name">' + cc.name + (isSelected ? ' <span style="color:#7ee787">✔ Выбрано</span>' : '') + '</div>' +
+          '<div class="desc">' + cc.desc + '</div>' +
+          '<div style="font-size:11.5px; color:#c9d1d9; margin-top:4px">' +
+          '⚡ ' + Math.round(cc.base.maxSpeed * 3.6) + ' км/ч · 👥 ' + cc.base.capacity + ' мест · ⛽ ' + cc.base.tank + ' л · 🛡️ ' + cc.base.armor +
+          '</div>' +
           (owned
-            ? (upgrades.carId === key ? '' : '<button data-a="select">Выбрать</button>')
-            : '<button data-a="buy">' + fmtMoney(cc.price) + '</button>');
-        const btn = div.querySelector('button');
+            ? (isSelected ? '<div style="font-size:12px; color:#7ee787; margin-top:6px; font-weight:700">Активный автомобиль</div>' : '<button data-a="select">Выбрать</button>')
+            : (lockedByRating
+                ? '<button disabled style="background:#3a4350; color:#8b949e">Требуется рейтинг ' + cc.unlockRating + ' ⭐</button>'
+                : '<button data-a="buy">' + fmtMoney(cc.price) + '</button>'));
+        const btn = div.querySelector('button[data-a]');
         if (btn) {
           btn.addEventListener('click', () => {
             if (btn.dataset.a === 'buy') this.game.buyCar(key);

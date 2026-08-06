@@ -1,17 +1,39 @@
-/* ============================================================
- * game.js — главный класс: цикл, состояния, время, экономика
- * ============================================================ */
+import * as THREE from 'three';
+import { CFG, WEATHER_DEFS } from './config.js';
+import { clamp, lerp, pickWeighted, showError } from './utils.js';
+import { Events } from './eventbus.js';
+import { World } from './citygen.js';
+import { PlayerCar } from './player.js';
+import { TRAFFIC_TYPES, TrafficManager, WORLD_INTERSECTIONS } from './traffic.js';
+import { PedestrianManager } from './peds.js';
+import { ChaseCamera } from './camera.js';
+import { OrdersManager } from './orders.js';
+import { UpgradeSystem } from './upgrades.js';
+import { UIManager } from './ui.js';
+import { AudioManager } from './audio.js';
+import { InputManager } from './input.js';
 
-class Game {
+/**
+ * Главный класс игры, управляющий игровым циклом, состояниями, рендерером и подсистемами.
+ */
+export class Game {
   constructor() {
+    /** @type {string} текущее состояние игры ('boot'|'menu'|'driving'|'pause'|'garage'|'settings'|'map'|'shiftend') */
     this.stateName = 'boot';
+    /** @type {number} количество денег у игрока */
     this.money = CFG.startMoney;
+    /** @type {number} текущий рейтинг */
     this.rating = 0;
+    /** @type {number} текущий день смены */
     this.day = 1;
-    this.stats = null;          // статистика за всё время
-    this.shiftStats = null;     // статистика текущей смены
+    /** @type {Object|null} статистика за всё время */
+    this.stats = null;
+    /** @type {import('./config.js').ShiftStats|null} статистика текущей смены */
+    this.shiftStats = null;
     this.shiftElapsed = 0;
+    /** @type {number} текущий час суток (0..24) */
     this.hour = CFG.shiftStartHour;
+    /** @type {string} погодные условия ('clear'|'rain'|'fog') */
     this.weather = 'clear';
     this.interact = null;
     this.shakeT = 0; this.shakeAmp = 0;
@@ -108,16 +130,23 @@ class Game {
     this.stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, sizeAttenuation: false, transparent: true, opacity: 0 }));
     this.scene.add(this.stars);
 
-    // дождь
+    // дождь (1200 частиц)
+    const RAIN_COUNT = 1200;
     const rainGeo = new THREE.BufferGeometry();
-    const rainPos = new Float32Array(350 * 3);
-    for (let i = 0; i < 350; i++) {
-      rainPos[i * 3] = (Math.random() - 0.5) * 200;
-      rainPos[i * 3 + 1] = Math.random() * 50;
-      rainPos[i * 3 + 2] = (Math.random() - 0.5) * 200;
+    const rainPos = new Float32Array(RAIN_COUNT * 3);
+    for (let i = 0; i < RAIN_COUNT; i++) {
+      rainPos[i * 3] = (Math.random() - 0.5) * 220;
+      rainPos[i * 3 + 1] = Math.random() * 55;
+      rainPos[i * 3 + 2] = (Math.random() - 0.5) * 220;
     }
     rainGeo.setAttribute('position', new THREE.BufferAttribute(rainPos, 3));
-    this.rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({ color: 0x9ab8d8, size: 0.22, transparent: true, opacity: 0.55 }));
+    this.rain = new THREE.Points(rainGeo, new THREE.PointsMaterial({
+      color: 0x94b8e0,
+      size: 0.3,
+      transparent: true,
+      opacity: 0.65,
+      depthWrite: false,
+    }));
     this.rain.frustumCulled = false;
     this.scene.add(this.rain);
   }
@@ -129,67 +158,114 @@ class Game {
   }
 
   _initManagers() {
+    this.player = new PlayerCar(this.scene, this.upgrades.stats());
+    this.player.setTuning(this.upgrades.tuningForCar());
+    this.player.setPos(0, 20, 0);
+
     this.traffic = new TrafficManager(this.scene);
-    this.traffic.spawn(CFG.trafficCount, 0, 0);
+    this.traffic.spawn(CFG.trafficCount, this.player);
     this.traffic.lightsRef = this.world.lights;
 
     this.peds = new PedestrianManager(this.scene);
-    this.peds.spawn(CFG.pedCount, 0, 20);
+    this.peds.spawn(CFG.pedCount, this.player);
+    this.peds.lightsRef = this.world.lights;
+    this.peds.world = this.world;
     this.world.peds = this.peds;
 
     this.orders = new PassengerManager(this.world);
 
-    this.player = new PlayerCar(this.scene, this.upgrades.stats());
-    this.player.setTuning(this.upgrades.tuningForCar());
-    this.player.setPos(0, 20, 0);
     this.player.fuel = CFG.startFuel;
     this.chaseCam = new ChaseCamera(this.camera);
     this.chaseCam.reset(this.player);
   }
 
+  setMoney(amount) {
+    const oldMoney = this.money;
+    this.money = amount;
+    events.emit('money:changed', { money: this.money, oldMoney, delta: this.money - oldMoney });
+  }
+
+  addMoney(amount) {
+    this.setMoney(this.money + amount);
+  }
+
+  setRating(val) {
+    const oldRating = this.rating;
+    this.rating = clamp(val, 0, 100);
+    events.emit('rating:changed', { rating: this.rating, oldRating, delta: this.rating - oldRating });
+  }
+
+  addRating(amount) {
+    this.setRating(this.rating + amount);
+  }
+
   /* ---------- События ---------- */
   _initEvents() {
-    Events.on('crash', (d) => {
+    events.on('crash', (d) => {
       this.shiftStats.crashes++;
       this.audio.crash(Math.min(1, d.impact / 30));
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
       this.orders.onCrash(d.impact);
     });
-    Events.on('hitPed', () => {
+    events.on('hitPed', (d) => {
+      if (d && d.byPlayer === false) return;
       this.shiftStats.peds++;
-      this.rating = clamp(this.rating - CFG.ratingFail.hitPed, 0, 100);
-      this.money = Math.max(0, this.money - 300);
+      this.setRating(this.rating - CFG.ratingFail.hitPed);
+      this.addMoney(-300);
       this.audio.crash(0.5);
       this.shakeT = 0.3; this.shakeAmp = 0.4;
       if (this.orders.active) this.orders.fail(this.orders.active, 'ped');
       this.ui.toast('Вы сбили пешехода! -300 ₽, рейтинг -15', '#ff6b6b');
       // сам пешеход (отлёт/лежание) обрабатывается в peds._knockDown
     });
-    Events.on('stall', () => {
+    events.on('ped:kick', () => {
+      this.shakeT = 0.22; this.shakeAmp = 0.32;
+    });
+    events.on('stall', () => {
       this.audio.error();
       this.ui.toast('Двигатель заглох!', '#ffb030');
     });
-    Events.on('noFuel', () => {
+    events.on('noFuel', () => {
       this.ui.toast('Кончилось топливо! До заправки пешком…', '#ffb030');
       this.audio.error();
     });
-    Events.on('edge', () => {
+    events.on('edge', () => {
       this.ui.toast('Край карты — дальше не проехать!', '#ffb030');
     });
-    Events.on('pickup', () => {
+    events.on('order:accepted', () => {
       this.audio.chime();
       this.ui.toast('Пассажир сел. Поехали!', '#7ee787');
     });
-    Events.on('toast', (d) => this.ui.toast(d.text, d.color));
-    Events.on('money', (d) => { /* деньги уже начислены */ });
+    events.on('toast', (d) => this.ui.toast(d.text, d.color));
 
-    Events.on('orderDone', (r) => {
-      this.money += r.total;
+    events.on('spatial:shout', (d) => {
+      if (this.player && this.audio) {
+        this.audio.spatialSpeak(d.x, d.z, this.player.x, this.player.z, d.type || 'shout', this.player.heading);
+      }
+      if (d.text && this.player) {
+        const dist = Math.hypot(d.x - this.player.x, d.z - this.player.z);
+        if (dist < 45) {
+          this.ui.toast((d.avatar || '🗣️') + ' ' + d.text, d.color || '#ffab70');
+        }
+      }
+    });
+
+    events.on('passenger:speak', (d) => {
+      if (this.audio) {
+        this.audio.spatialSpeak(null, null, 0, 0, d.type || 'greeting');
+      }
+      if (d.text) {
+        this.ui.showDialogue(d.speaker, d.text, d.avatar, d.color);
+      }
+    });
+
+    events.on('order:completed', (r) => {
+      this.addMoney(r.total);
       this.shiftStats.earned += r.pay;
       this.shiftStats.tips += r.tips;
       this.shiftStats.orders++;
       const rp = CFG.ratingPerOrder[r.type] || 8;
-      this.rating = clamp(this.rating + rp, 0, 100);
+      this.addRating(rp);
       if (r.missionId) {
         this.shiftStats.missions++;
         if (!this.orders.completed.includes(r.missionId)) this.orders.completed.push(r.missionId);
@@ -199,16 +275,22 @@ class Game {
       this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay) + bonus, '#7ee787');
       if (this.rating >= 100) this.ui.toast('Максимальный рейтинг! Пятигорск ваш! ⭐', '#ffd75e');
     });
-    Events.on('fail', (d) => {
+    events.on('order:failed', (d) => {
       this.shiftStats.failed++;
-      this.rating = clamp(this.rating - CFG.ratingFail.failOrder, 0, 100);
+      this.setRating(this.rating - CFG.ratingFail.failOrder);
       this.audio.error();
     });
   }
 
   /* ---------- Состояния ---------- */
+  /**
+   * Сменить текущее состояние игры.
+   * @param {string} name - Название нового состояния ('menu'|'driving'|'pause'|'garage'|'settings'|'map'|'shiftend')
+   */
   setState(name) {
+    const oldState = this.stateName;
     this.stateName = name;
+    Events.emit('game:state_changed', { state: name, oldState });
     if (name === 'menu') {
       this.ui.showScreen('menu', true);
       this.ui.showHud(false);
@@ -253,6 +335,7 @@ class Game {
     this.weather = pickWeighted([
       { v: 'clear', w: 55 }, { v: 'rain', w: 25 }, { v: 'fog', w: 20 },
     ]);
+    Events.emit('weather:changed', { weather: this.weather });
     this.orders.reset();
     this.player.applyUpgrades(this.upgrades.stats());
     this.player.setTuning(this.upgrades.tuningForCar());
@@ -381,19 +464,24 @@ class Game {
 
   buyCar(key) {
     const c = CARS[key];
-    if (this.rating < c.unlockRating) { this.ui.toast('Нужен рейтинг ' + c.unlockRating, '#ffd75e'); return; }
+    if (!c) return;
+    if (this.rating < c.unlockRating) { this.ui.toast('Нужен рейтинг ' + c.unlockRating + ' ⭐', '#ffd75e'); return; }
     if (this.money < c.price) { this.ui.toast('Не хватает денег', '#ff6b6b'); return; }
     this.money -= c.price;
-    this.upgrades.ownedCars.push(key);
+    if (!this.upgrades.ownedCars.includes(key)) this.upgrades.ownedCars.push(key);
     this.upgrades.carId = key;
     this._applyCar();
     this.audio.cash(true);
+    this.ui.toast('Поздравляем с покупкой ' + c.name + '! 🎉', '#7ee787');
   }
 
   selectCar(key) {
+    const c = CARS[key];
+    if (!c) return;
     this.upgrades.carId = key;
     this._applyCar();
     this.audio.chime();
+    this.ui.toast('Выбран автомобиль: ' + c.name, '#58a6ff');
   }
 
   _applyCar() {
@@ -457,31 +545,61 @@ class Game {
     if (this.hour < 6) nf = Math.max(nf, clamp((6 - this.hour) / 1.5, 0, 1));
     nf = clamp(nf, 0, 1);
     const dayF = clamp(Math.sin(Math.PI * (this.hour - 6) / 12), 0, 1);
+
+    // Плавная динамика погодных факторов
+    this._rainFactor = lerp(this._rainFactor || 0, this.weather === 'rain' ? 1.0 : 0.0, dt * 1.5);
+    this._fogFactor = lerp(this._fogFactor || 0, this.weather === 'fog' ? 1.0 : 0.0, dt * 1.5);
+
+    // Цвет неба с учетом пасмурности и тумана
     const sky = this._skyColor(this.hour);
+    if (this._rainFactor > 0.001) sky.lerp(new THREE.Color(0x3a4856), this._rainFactor * 0.72);
+    if (this._fogFactor > 0.001) sky.lerp(new THREE.Color(0x8a95a2), this._fogFactor * 0.78);
     this.scene.background = sky;
+
+    // Цвет и дистанция тумана
     const fogC = sky.clone().multiplyScalar(1 - nf * 0.35);
     this.scene.fog.color.copy(fogC);
     const w = WEATHER_DEFS[this.weather];
-    this.scene.fog.near = w.fogNear * (this.weather === 'fog' ? 1 : 1 - nf * 0.25);
-    this.scene.fog.far = w.fogFar * (this.weather === 'fog' ? 1 : 1 - nf * 0.25);
-    this.hemi.intensity = 0.35 + dayF * 0.6 - nf * 0.15;
-    this.sun.intensity = 0.25 + dayF * 1.05;
+    const targetNear = w.fogNear * (this.weather === 'fog' ? 1 : 1 - nf * 0.25);
+    const targetFar = w.fogFar * (this.weather === 'fog' ? 1 : 1 - nf * 0.25);
+    this.scene.fog.near = lerp(this.scene.fog.near, targetNear, dt * 2.5);
+    this.scene.fog.far = lerp(this.scene.fog.far, targetFar, dt * 2.5);
+
+    // Интенсивность освещения в зависимости от облачности/тумана
+    const weatherDim = 1 - (this._rainFactor * 0.35 + this._fogFactor * 0.45);
+    this.hemi.intensity = (0.35 + dayF * 0.6 - nf * 0.15) * weatherDim;
+    this.sun.intensity = (0.25 + dayF * 1.05) * weatherDim;
     const sunY = Math.max(6, 90 * dayF + 12);
     this.sun.position.set(60, sunY, 40 - 60 * (1 - dayF));
-    this.stars.material.opacity = nf * (this.weather === 'clear' ? 1 : 0.4);
-    this.stars.visible = nf > 0.05;
-    // дождь
-    this.rain.visible = this.weather === 'rain';
-    if (this.weather === 'rain') {
+
+    // Звёзды
+    this.stars.material.opacity = nf * (1 - this._rainFactor * 0.8 - this._fogFactor * 0.8);
+    this.stars.visible = nf > 0.05 && this._rainFactor < 0.9 && this._fogFactor < 0.9;
+
+    // Система частиц дождя с ветром
+    this.rain.visible = this._rainFactor > 0.02;
+    if (this.rain.visible) {
+      this.rain.material.opacity = 0.65 * this._rainFactor;
       const arr = this.rain.geometry.attributes.position.array;
-      for (let i = 0; i < 350; i++) {
-        arr[i * 3 + 1] -= 26 * dt;
-        if (arr[i * 3 + 1] < 0) arr[i * 3 + 1] = 44;
+      const fallSpeed = 38 * dt;
+      const windX = -4 * dt;
+      const windZ = -2 * dt;
+      for (let i = 0; i < 1200; i++) {
+        arr[i * 3] += windX;
+        arr[i * 3 + 1] -= fallSpeed;
+        arr[i * 3 + 2] += windZ;
+        if (arr[i * 3 + 1] < 0) {
+          arr[i * 3] = (Math.random() - 0.5) * 220;
+          arr[i * 3 + 1] = 50 + Math.random() * 5;
+          arr[i * 3 + 2] = (Math.random() - 0.5) * 220;
+        }
       }
       this.rain.geometry.attributes.position.needsUpdate = true;
       this.rain.position.set(this.chaseCam.position.x, 0, this.chaseCam.position.z);
     }
-    this.player._weatherGrip = w.grip;
+
+    // Сцепление плавно меняется в зависимости от намокания дороги
+    this.player._weatherGrip = lerp(1.0, w.grip, this._rainFactor);
     return { nf, dayF, w };
   }
 
@@ -545,7 +663,7 @@ class Game {
     // трафик и пешеходы
     const density = w.traffic * (this.hour >= 22 || this.hour < 6 ? 0.55 : 1);
     this.traffic.update(dt, this.player, this.world, density, this.peds);
-    this.peds.update(dt, this.player, this.traffic);
+    this.peds.update(dt, this.player, this.traffic, this.world);
 
     // камера
     this.chaseCam.applyInput(this.input, dt);
