@@ -4,6 +4,10 @@ __pycache__/
 .DS_Store
 .skill-hub.local.json
 
+# сервер
+.server.log
+.server.pid
+
 # AI agent directories (skill-hub)
 .claude/
 .cursor/
