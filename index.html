@@ -1678,6 +1678,9 @@ class World {
     this.buildings = [];
     /** @type {Array<{x0: number, z0: number, x1: number, z1: number}>} пропсы с AABB */
     this.propsAABB = [];
+    /** @type {Map<string, Array<object>>} spatial hash propsAABB по ячейкам 10×10м */
+    this._propHash = new Map();
+    this._propHashCell = 10;
     /** @type {Array<{x: number, z: number, r: number}>} круглые коллайдеры */
     this.circleColliders = [];
     this.roadsV = [];
@@ -1744,15 +1747,47 @@ class World {
   /* Расстояние до ближайшей дороги (для проверки «вне дороги») */
   distToRoad(x, z) {
     let best = 1e9;
+    const dzOuter = Math.max(0, Math.abs(z) - (256 + CFG.GRID_EXT)); // инвариант цикла — не зависит от r
     for (const r of this.roadsV) {
-      const dz = Math.max(0, Math.abs(z) - (256 + CFG.GRID_EXT));
-      best = Math.min(best, Math.hypot(x - r.c, dz));
+      best = Math.min(best, Math.hypot(x - r.c, dzOuter));
     }
+    const dxOuter = Math.max(0, Math.abs(x) - (256 + CFG.GRID_EXT)); // инвариант цикла — не зависит от r
     for (const r of this.roadsH) {
-      const dx = Math.max(0, Math.abs(x) - (256 + CFG.GRID_EXT));
-      best = Math.min(best, Math.hypot(z - r.c, dx));
+      best = Math.min(best, Math.hypot(z - r.c, dxOuter));
     }
     return best;
+  }
+
+  /* Добавляет AABB пропса в общий список и в spatial hash по ячейкам 10×10м */
+  addPropAABB(aabb) {
+    this.propsAABB.push(aabb);
+    const cx0 = Math.floor(aabb.x0 / this._propHashCell);
+    const cx1 = Math.floor(aabb.x1 / this._propHashCell);
+    const cz0 = Math.floor(aabb.z0 / this._propHashCell);
+    const cz1 = Math.floor(aabb.z1 / this._propHashCell);
+    for (let cx = cx0; cx <= cx1; cx++) {
+      for (let cz = cz0; cz <= cz1; cz++) {
+        const key = cx + ',' + cz;
+        if (!this._propHash.has(key)) this._propHash.set(key, []);
+        this._propHash.get(key).push(aabb);
+      }
+    }
+  }
+
+  /* Проверяет коллизию (x, z, radius) с пропсами из 9 соседних ячеек spatial hash */
+  _checkPropCollision(x, z, radius) {
+    const cx = Math.floor(x / this._propHashCell);
+    const cz = Math.floor(z / this._propHashCell);
+    for (let dx = -1; dx <= 1; dx++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const bucket = this._propHash.get((cx + dx) + ',' + (cz + dz));
+        if (!bucket) continue;
+        for (const p of bucket) {
+          if (x > p.x0 - radius && x < p.x1 + radius && z > p.z0 - radius && z < p.z1 + radius) return true;
+        }
+      }
+    }
+    return false;
   }
 
   /**
@@ -1779,11 +1814,7 @@ class World {
     }
 
     // 4. Запрет наложения предметов друг на друга
-    for (const p of this.propsAABB) {
-      if (x > p.x0 - radius && x < p.x1 + radius && z > p.z0 - radius && z < p.z1 + radius) {
-        return false;
-      }
-    }
+    if (this._checkPropCollision(x, z, radius)) return false;
 
     return true;
   }
@@ -2078,7 +2109,7 @@ class World {
     const troof = new THREE.Mesh(new THREE.ConeGeometry(4.6, 4, 8), new THREE.MeshLambertMaterial({ color: 0x8a4a2a }));
     troof.position.set(0, 58 + 18 + 2, -448);
     this.scene.add(troof);
-    this.propsAABB.push({ x0: -4, z0: -452, x1: 4, z1: -444 });
+    this.addPropAABB({ x0: -4, z0: -452, x1: 4, z1: -444 });
 
     // беседка «Эолова арфа» на склоне
     this._gazebo(10, -357, 28);
@@ -2104,7 +2135,7 @@ class World {
     g.add(roof);
     g.position.set(x, 0, z);
     this.scene.add(g);
-    this.propsAABB.push({ x0: x - 2.4, z0: z - 2.4, x1: x + 2.4, z1: z + 2.4 });
+    this.addPropAABB({ x0: x - 2.4, z0: z - 2.4, x1: x + 2.4, z1: z + 2.4 });
   }
 
   _grotto(x, z) {
@@ -2120,7 +2151,7 @@ class World {
     dark.position.set(0, 1.9, 0.8); g.add(dark);
     g.position.set(x, 0.16, z);
     this.scene.add(g);
-    this.propsAABB.push({ x0: x - 3, z0: z - 2, x1: x + 3, z1: z + 2 });
+    this.addPropAABB({ x0: x - 3, z0: z - 2, x1: x + 3, z1: z + 2 });
   }
 
   /* --- Здания --- */
@@ -2241,7 +2272,7 @@ class World {
 
     g.position.set(cx, 0, cz);
     this.scene.add(g);
-    this.propsAABB.push({ x0: cx - 3.2, z0: cz - 3.2, x1: cx + 3.2, z1: cz + 3.2 });
+    this.addPropAABB({ x0: cx - 3.2, z0: cz - 3.2, x1: cx + 3.2, z1: cz + 3.2 });
   }
 
   /* Пятигорский узкоколейный Трамвай (реалистичные рельсы со шпалами, вагон КТМ-1) */
@@ -2378,7 +2409,7 @@ class World {
 
     tram.position.set(-32, 0, 0);
     this.scene.add(tram);
-    this.propsAABB.push({ x0: -38, z0: -1.5, x1: -26, z1: 1.5 });
+    this.addPropAABB({ x0: -38, z0: -1.5, x1: -26, z1: 1.5 });
 
     // Остановки трамвая («Парк Цветник», «Вокзал», «Лира»)
     this._tramStop(-36, -7.5);
@@ -2403,7 +2434,7 @@ class World {
 
     g.position.set(x, 0, z);
     this.scene.add(g);
-    this.propsAABB.push({ x0: x - 2.2, z0: z - 1.2, x1: x + 2.2, z1: z + 1.2 });
+    this.addPropAABB({ x0: x - 2.2, z0: z - 1.2, x1: x + 2.2, z1: z + 1.2 });
   }
 
   /* Памятник Остапу Бендеру у входа в Провал */
@@ -2433,7 +2464,7 @@ class World {
 
     g.position.set(cx, 0, cz);
     this.scene.add(g);
-    this.propsAABB.push({ x0: cx - 1.2, z0: cz - 1.2, x1: cx + 1.2, z1: cz + 1.2 });
+    this.addPropAABB({ x0: cx - 1.2, z0: cz - 1.2, x1: cx + 1.2, z1: cz + 1.2 });
   }
 
   /* Пятигорская Телевышка на вершине Машука (красно-белая вышка с маяком) */
@@ -2477,7 +2508,7 @@ class World {
 
     g.position.set(cx, 0, cz);
     this.scene.add(g);
-    this.propsAABB.push({ x0: cx - 4, z0: cz - 1, x1: cx + 4, z1: cz + 1 });
+    this.addPropAABB({ x0: cx - 4, z0: cz - 1, x1: cx + 4, z1: cz + 1 });
   }
 
   /* Цветник: фонтан, клумбы, скамейки */
@@ -2497,7 +2528,7 @@ class World {
     const topDisc = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 0.8, 0.35, 8), mat);
     topDisc.position.set(cx, 3.4, cz);
     this.scene.add(topDisc);
-    this.propsAABB.push({ x0: cx - 6.6, z0: cz - 6.6, x1: cx + 6.6, z1: cz + 6.6 });
+    this.addPropAABB({ x0: cx - 6.6, z0: cz - 6.6, x1: cx + 6.6, z1: cz + 6.6 });
     // клумбы
     const bedColors = [0xd94f4f, 0xe8b84a, 0xb06ad9, 0x5aa85a, 0xe87a3a, 0x4a7fd9];
     for (let i = 0; i < 6; i++) {
@@ -2505,7 +2536,7 @@ class World {
       const b = new THREE.Mesh(new THREE.BoxGeometry(5, 0.45, 1.6), new THREE.MeshLambertMaterial({ color: bedColors[i] }));
       b.position.set(cx + Math.cos(a) * 11, 0.32, cz + Math.sin(a) * 11);
       this.scene.add(b);
-      this.propsAABB.push({ x0: b.position.x - 2.5, z0: b.position.z - 0.8, x1: b.position.x + 2.5, z1: b.position.z + 0.8 });
+      this.addPropAABB({ x0: b.position.x - 2.5, z0: b.position.z - 0.8, x1: b.position.x + 2.5, z1: b.position.z + 0.8 });
     }
     this._bench(cx + 13, cz - 4, Math.PI / 2);
     this._bench(cx + 13, cz + 4, Math.PI / 2);
@@ -2529,7 +2560,7 @@ class World {
     group.rotation.y = rotY;
     this.scene.add(group);
     const bx = this._rotRect(x, z, rotY, 1.9, 0.7);
-    this.propsAABB.push(bx);
+    this.addPropAABB(bx);
   }
 
   _rotRect(x, z, rot, w, d) {
@@ -2586,12 +2617,12 @@ class World {
       for (const sx of [-3, 3]) {
         legM.push(new THREE.Matrix4().makeTranslation(x + sx, 1.5, z));
       }
-      this.propsAABB.push({ x0: x - 4.4, z0: z - 2.6, x1: x + 4.4, z1: z + 2.6 });
+      this.addPropAABB({ x0: x - 4.4, z0: z - 2.6, x1: x + 4.4, z1: z + 2.6 });
     }
     for (let i = 0; i < 8; i++) {
       const cx = 79 + this.rng() * 34, cz = -10 + this.rng() * 8;
       crateM.push(new THREE.Matrix4().makeTranslation(cx, 0.5, cz));
-      this.propsAABB.push({ x0: cx - 0.6, z0: cz - 0.6, x1: cx + 0.6, z1: cz + 0.6 });
+      this.addPropAABB({ x0: cx - 0.6, z0: cz - 0.6, x1: cx + 0.6, z1: cz + 0.6 });
     }
 
     const postsMesh = new THREE.InstancedMesh(postsGeo, new THREE.MeshLambertMaterial({ color: 0x6a6a60 }), postsM.length);
@@ -2683,7 +2714,7 @@ class World {
     const tm = new THREE.Mesh(train, new THREE.MeshLambertMaterial({ vertexColors: true }));
     tm.position.set(140, 0.4 + 1.7, 106);
     this.scene.add(tm);
-    this.propsAABB.push({ x0: 137, z0: 102.5, x1: 159, z1: 109.5 });
+    this.addPropAABB({ x0: 137, z0: 102.5, x1: 159, z1: 109.5 });
   }
 
   /* Нарзанные ванны — купол */
@@ -2710,7 +2741,7 @@ class World {
     const sgn = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 0.35, 1.4, 6), new THREE.MeshLambertMaterial({ color: 0x666666 }));
     sgn.position.set(cx, 0.15 + 12 + 13 + 0.7, cz);
     this.scene.add(sgn);
-    this.propsAABB.push({ x0: cx - 14, z0: cz - 14, x1: cx + 14, z1: cz + 14 });
+    this.addPropAABB({ x0: cx - 14, z0: cz - 14, x1: cx + 14, z1: cz + 14 });
   }
 
   /* --- Деревья (InstancedMesh) --- */
@@ -2738,7 +2769,7 @@ class World {
         else { if (x > s.x0 && x < s.x1 && z > s.z0 - 6 && z < s.z1 + 6) return; }
       }
       spots.push({ x, z, type });
-      this.propsAABB.push({ x0: x - 1.6, z0: z - 1.6, x1: x + 1.6, z1: z + 1.6 });
+      this.addPropAABB({ x0: x - 1.6, z0: z - 1.6, x1: x + 1.6, z1: z + 1.6 });
     };
 
     for (let bi = 0; bi < 8; bi++) for (let bj = 0; bj < 8; bj++) {
@@ -2808,7 +2839,7 @@ class World {
         const lx = r.c - LAMP_OFF * side;
         if (this.isPositionValid(lx, z, 0.5)) {
           pos.push({ x: lx, z, rot: side === 1 ? 0 : Math.PI, side });
-          this.propsAABB.push({ x0: lx - 0.4, z0: z - 0.4, x1: lx + 0.4, z1: z + 0.4 });
+          this.addPropAABB({ x0: lx - 0.4, z0: z - 0.4, x1: lx + 0.4, z1: z + 0.4 });
         }
         side = -side;
       }
@@ -2819,7 +2850,7 @@ class World {
         const lz = r.c - LAMP_OFF * side;
         if (this.isPositionValid(x, lz, 0.5)) {
           pos.push({ x, z: lz, rot: -side * Math.PI / 2, side });
-          this.propsAABB.push({ x0: x - 0.4, z0: lz - 0.4, x1: x + 0.4, z1: lz + 0.4 });
+          this.addPropAABB({ x0: x - 0.4, z0: lz - 0.4, x1: x + 0.4, z1: lz + 0.4 });
         }
         side = -side;
       }
@@ -2860,7 +2891,7 @@ class World {
       else { z = Math.round(c / CFG.CELL) * CFG.CELL + 8.5 * side; x = (this.rng() - 0.5) * 440; }
       if (!this.isPositionValid(x, z, 0.6)) continue;
       bins.push(new THREE.Matrix4().makeTranslation(x, 0.1, z));
-      this.propsAABB.push({ x0: x - 0.5, z0: z - 0.5, x1: x + 0.5, z1: z + 0.5 });
+      this.addPropAABB({ x0: x - 0.5, z0: z - 0.5, x1: x + 0.5, z1: z + 0.5 });
     }
     const binMesh = new THREE.InstancedMesh(binGeo, new THREE.MeshLambertMaterial({ color: 0x7a7a72 }), bins.length);
     bins.forEach((m, i) => binMesh.setMatrixAt(i, m));
@@ -2877,7 +2908,7 @@ class World {
       const q2 = new THREE.Quaternion().setFromEuler(e2);
       m4.compose(new THREE.Vector3(x, 0.12, z), q2, new THREE.Vector3(1, 0.7, 1));
       bushes.push(m4);
-      this.propsAABB.push({ x0: x - 1.0, z0: z - 1.0, x1: x + 1.0, z1: z + 1.0 });
+      this.addPropAABB({ x0: x - 1.0, z0: z - 1.0, x1: x + 1.0, z1: z + 1.0 });
     }
     const bushMesh = new THREE.InstancedMesh(bushGeo, new THREE.MeshLambertMaterial({ color: 0x4a8a42 }), bushes.length);
     bushes.forEach((m, i) => bushMesh.setMatrixAt(i, m));
@@ -2938,8 +2969,8 @@ class World {
       pump.position.set(x, 0.75, z + 1.8);
       this.scene.add(pump);
       // коллайдеры: ноги навеса и колонка
-      this.propsAABB.push({ x0: x - 4.2, z0: z - 0.6, x1: x + 4.2, z1: z + 0.6 });
-      this.propsAABB.push({ x0: x - 0.8, z0: z + 1.2, x1: x + 0.8, z1: z + 2.4 });
+      this.addPropAABB({ x0: x - 4.2, z0: z - 0.6, x1: x + 4.2, z1: z + 0.6 });
+      this.addPropAABB({ x0: x - 0.8, z0: z + 1.2, x1: x + 0.8, z1: z + 2.4 });
       const spr = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true }));
       spr.scale.set(4, 2, 1);
       spr.position.set(x, 5.6, z);
@@ -3027,7 +3058,7 @@ class World {
     const st = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 7), new THREE.MeshLambertMaterial({ color: 0xc8b898 }));
     st.position.set(20, 2.6, -288);
     this.scene.add(st);
-    this.propsAABB.push({ x0: 14, z0: -292, x1: 26, z1: -284 });
+    this.addPropAABB({ x0: 14, z0: -292, x1: 26, z1: -284 });
   }
 
   /* --- Дорожные знаки на перекрёстках --- */
@@ -3051,7 +3082,7 @@ class World {
         if (used.has(key)) continue;
         used.add(key);
         items.push({ x: sx, z: sz, rot, c: choice(colors) });
-        this.propsAABB.push({ x0: sx - 0.4, z0: sz - 0.4, x1: sx + 0.4, z1: sz + 0.4 });
+        this.addPropAABB({ x0: sx - 0.4, z0: sz - 0.4, x1: sx + 0.4, z1: sz + 0.4 });
       }
     }
     const mesh = new THREE.InstancedMesh(signGeo, new THREE.MeshLambertMaterial({ color: 0xffffff }), items.length);
@@ -3088,7 +3119,7 @@ class World {
       for (const sp of rawCorners) {
         if (!this.isPositionValid(sp.x, sp.z, 0.4)) continue;
         corners.push(sp);
-        this.propsAABB.push({ x0: sp.x - 0.4, z0: sp.z - 0.4, x1: sp.x + 0.4, z1: sp.z + 0.4 });
+        this.addPropAABB({ x0: sp.x - 0.4, z0: sp.z - 0.4, x1: sp.x + 0.4, z1: sp.z + 0.4 });
       }
     }
 
