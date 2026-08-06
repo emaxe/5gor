@@ -6447,8 +6447,8 @@ class Game {
 
   _initScene() {
     this.scene = new THREE.Scene();
-    this.scene.fog = new THREE.Fog(0x9cc8e8, 500, 1600);
-    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.1, 3000);
+    this.scene.fog = new THREE.Fog(0x9cc8e8, 350, 1400);
+    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 1800);
     this.camera.position.set(0, 40, 90);
 
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x6f8f5f, 0.9);
