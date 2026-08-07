@@ -7,6 +7,7 @@ import { PedGraph } from './pedgraph.js';
 const _tempPedWp = { x: 0, z: 0 };
 const _tempPedWpSync = { x: 0, z: 0 };
 const _tempPedWpTurn = { x: 0, z: 0 };
+const _tempPedProbe = { x: 0, z: 0 };
 
 const PED_COLORS = [0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30];
 const PED_SIDE = CFG.HALF + CFG.SIDE / 2; // 8 — центр тротуара от оси дороги
@@ -204,6 +205,7 @@ export class PedestrianManager {
       const wz = axis === 'z' ? pos : coord + side * PED_SIDE;
       const d = Math.hypot(wx - px, wz - pz);
 
+      if (this._spotBlocked(wx, wz)) continue;
       if (d < 50) continue;
 
       const viewDist = Math.min(145, 115 + pSpeed * 1.6);
@@ -285,7 +287,7 @@ export class PedestrianManager {
       out.z = lerp(p.turn.z0, p.turn.z1, k);
       return out;
     }
-    const off = p.side * PED_SIDE;
+    const off = p.side * PED_SIDE + (p.laneOff || 0);
     if (p.axis === 'z') { out.x = p.coord + off; out.z = p.pos; }
     else { out.x = p.pos; out.z = p.coord + off; }
     return out;
@@ -294,6 +296,7 @@ export class PedestrianManager {
   /* Поиск светофора */
   _getLightForPed(p) {
     if (p.isAnimal) return null; // Животные игнорируют светофоры!
+    if (p.cross && p.cross.jwalk) return null; // незаконный переход светофором не управляется
     if (!this.lightsRef || !this.lightsRef.length) return null;
     const isecVal = Math.round(p.pos / CFG.CELL) * CFG.CELL;
     const targetIsecX = p.axis === 'z' ? p.coord : isecVal;
@@ -604,6 +607,10 @@ export class PedestrianManager {
 
   /* Осознанное движение по тротуару */
   _updateWalk(p, dt) {
+    if (p.nearZone && !p.active) {
+      p.speed = p.baseSpeed; // восстановление после предыдущей блокировки — см. _avoidStatic
+      this._avoidStatic(p, dt);
+    }
     p.pos += p.speed * dt * p.dir;
     if (p.turnT > 0) { p.turnT -= dt; return; }
     if (Math.abs(p.pos) > 232) {
@@ -657,8 +664,8 @@ export class PedestrianManager {
   }
 
   /* Начать переход */
-  _startCross(p) {
-    p.pos = Math.round(p.pos / CFG.CELL) * CFG.CELL;
+  _startCross(p, jwalk = false) {
+    if (!jwalk) p.pos = Math.round(p.pos / CFG.CELL) * CFG.CELL;
     p.mode = p.isAnimal ? 'cross' : 'wait'; // Животные сразу идут на переход
     p.waitT = 0;
     const crossSpeed = p.isAnimal ? p.speed * 1.5 : p.speed * 1.3;
@@ -667,6 +674,7 @@ export class PedestrianManager {
       to: -p.side * PED_SIDE,
       t: 0,
       dur: (PED_SIDE * 2) / crossSpeed,
+      jwalk,
     };
   }
 
@@ -676,7 +684,7 @@ export class PedestrianManager {
 
     const light = this._getLightForPed(p);
     if (light) {
-      if (light.state !== 2) {
+      if (light.state !== 2 && !p.violator) {
         if (p.waitT > 22.0) this._cancelCross(p);
         return;
       }
@@ -755,6 +763,134 @@ export class PedestrianManager {
       p.turn = null;
       p.turnT = 1.0;
     }
+  }
+
+  /* Точка на ленте с заданным боковым смещением (для проверки препятствий) */
+  _lanePoint(p, off, out = _tempPedProbe) {
+    const o = p.side * PED_SIDE + off;
+    if (p.axis === 'z') { out.x = p.coord + o; out.z = p.pos; }
+    else { out.x = p.pos; out.z = p.coord + o; }
+    return out;
+  }
+
+  /* Есть ли статическое препятствие (пропс/здание/круглый коллайдер) в точке.
+     Здания — через одноразовый spatial hash (initGraph, Task 4), не линейным
+     перебором ~250 AABB на каждого активного пешехода каждый кадр. */
+  _obstacleAt(x, z) {
+    const w = this.world;
+    if (!w) return false;
+    if (w._checkPropCollision(x, z, 0.4)) return true;
+    if (this._buildingHash) {
+      const cell = 16;
+      const cx = Math.floor(x / cell), cz = Math.floor(z / cell);
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+        const bucket = this._buildingHash.get((cx + dx) + ',' + (cz + dz));
+        if (!bucket) continue;
+        for (const b of bucket) {
+          if (x > b.x0 - 0.3 && x < b.x1 + 0.3 && z > b.z0 - 0.3 && z < b.z1 + 0.3) return true;
+        }
+      }
+    }
+    for (const c of w.circleColliders) {
+      if (Math.hypot(x - c.x, z - c.z) < c.r + 0.3) return true;
+    }
+    return false;
+  }
+
+  /* Свободно ли место для спавна (нет статики, машин, игрока) */
+  _spotBlocked(x, z) {
+    if (this._obstacleAt(x, z)) return true;
+    const tr = this.trafficRef;
+    if (tr) {
+      for (const c of tr.cars) {
+        if (c.alive && Math.hypot(c.x - x, c.z - z) < c.radius + 1.1) return true;
+      }
+    }
+    const pl = this._playerRef;
+    if (pl && Math.hypot(pl.x - x, pl.z - z) < 3.0) return true;
+    return false;
+  }
+
+  /* Боковое смещение вокруг статики (активная и ближняя зоны). laneOff
+     ограничен ±1.5 (полуширина тротуара 2 м минус запас на корпус пешехода —
+     значение согласовано со спекой, было ±1.9 у пешехода при ширине тротуара
+     2 м, что вылезало на проезжую часть). Полная блокировка дольше 1.5 с —
+     явная реакция (не бесконечная заморозка speed=0): активный пересчитывает
+     маршрут, пассивный разворачивается — см. спеку, «Обход препятствий». */
+  _avoidStatic(p, dt) {
+    if (!this.world || (!p.nearZone && !p.active)) return;
+    const look = 2.2;
+    const dirX = p.axis === 'z' ? 0 : p.dir;
+    const dirZ = p.axis === 'z' ? p.dir : 0;
+    const probe = this._lanePoint(p, p.laneOff || 0);
+    probe.x += dirX * look;
+    probe.z += dirZ * look;
+    if (!this._obstacleAt(probe.x, probe.z)) {
+      p.laneOff *= Math.max(0, 1 - 4 * dt);
+      if (Math.abs(p.laneOff) < 0.02) p.laneOff = 0;
+      p._stuckT = 0;
+      return;
+    }
+    for (const o of [1.4, -1.4, 2.4, -2.4]) {
+      const cand = clamp((p.laneOff || 0) + o, -1.5, 1.5);
+      const pr = this._lanePoint(p, cand);
+      pr.x += dirX * look;
+      pr.z += dirZ * look;
+      if (!this._obstacleAt(pr.x, pr.z)) { p.laneOff = cand; p._stuckT = 0; return; }
+    }
+    // заблокировано с обеих сторон
+    p.speed = 0;
+    p._stuckT += dt;
+    if (p._stuckT > 1.5) {
+      p._stuckT = 0;
+      if (p.active) {
+        // не держим протухший маршрут — деактивация с коротким кулдауном
+        // даёт _classify пере-активировать пешехода на следующем тике с
+        // новой целью, минуя препятствие
+        p.route = null; p.routeIdx = 0; p.active = false; p._reroute = 0.3;
+      } else {
+        p.dir = -p.dir; p.turnT = 0.5;
+      }
+    }
+  }
+
+  /* Разъезд активных пешеходов на одной ленте (кар-фолловинг + обгон).
+     Лидер с сильно отличающимся laneOff (>0.9 м) пропускается — иначе
+     пешеход, ушедший вбок для обгона, продолжает считаться «впереди» и
+     обгон никогда не завершается (dt — не 1/60, чтобы таймер не зависел от
+     частоты кадров). */
+  _avoidPeds(p, dt) {
+    for (const o of this.cars) {
+      if (o === p || !o.alive || !o.active) continue;
+      if (o.mode !== 'walk' && o.mode !== 'run' && o.mode !== 'idle' && o.mode !== 'wait') continue;
+      if (o.axis !== p.axis || o.coord !== p.coord || o.side !== p.side) continue;
+      if (Math.abs((o.laneOff || 0) - (p.laneOff || 0)) > 0.9) continue;
+      const d = (o.pos - p.pos) * p.dir;
+      if (d <= 0 || d > 2.2) continue;
+      const leaderSpeed = (o.mode === 'idle' || o.mode === 'wait') ? 0 : o.speed;
+      if (p.speed > leaderSpeed) p.speed = Math.max(0.3, leaderSpeed);
+      if (leaderSpeed < p.baseSpeed * 0.6) {
+        p._blockedT += dt;
+        if (p._blockedT > 1.0 && p.laneOff === 0) {
+          // Встречные (o.dir !== p.dir) видят друг друга "впереди"
+          // ОДНОВРЕМЕННО: формула ниже для обгона ((o.laneOff||0)>=0?-1.4:1.4)
+          // при laneOff=0 с обеих сторон даёт ОДИНАКОВЫЙ знак для обоих — оба
+          // уходят в одну и ту же сторону и продолжают блокировать друг
+          // друга. Для встречных используем правило, зависящее только от
+          // собственного p.dir — у встречных dir противоположны, значит и
+          // знак гарантированно разный, они расходятся. Для обгона (тот же
+          // dir, лидер медленнее) сторона по-прежнему выбирается от лидера.
+          const headOn = o.dir !== p.dir;
+          p.laneOff = headOn
+            ? (p.dir > 0 ? 1.4 : -1.4)
+            : ((o.laneOff || 0) >= 0 ? -1.4 : 1.4);
+          p.speed = Math.min(p.baseSpeed * 1.25, p.speed + 0.5);
+        }
+      } else {
+        p._blockedT = 0;
+      }
+    }
+    if (p._blockedT > 2.0) p._blockedT = 0; // не копим вечно
   }
 
   /* Активное движение по маршруту (активная зона) */
