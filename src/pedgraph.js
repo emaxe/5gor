@@ -1,6 +1,6 @@
 import { CFG } from './config.js';
 
-const PED_SIDE = CFG.HALF + CFG.SIDE / 2; // 8 — центр тротуара от оси дороги
+const PG_PED_SIDE = CFG.HALF + CFG.SIDE / 2; // 8 — центр тротуара от оси дороги
 const EDGE = CFG.CELL;
 const POI_MAX_DIST = 40; // POI дальше этого от ближайшего узла — вне сетки (напр. Машук), отбрасываем
 
@@ -72,7 +72,7 @@ export class PedGraph {
       for (let i = 0; i + 1 < roadsZ.length; i++) {
         const za = roadsZ[i], zb = roadsZ[i + 1], zm = (za + zb) / 2;
         for (const side of [-1, 1]) {
-          const x = r + side * PED_SIDE;
+          const x = r + side * PG_PED_SIDE;
           const na = this._addNode(x, za, 'lane', { axis: 'z', road: r, side });
           const nm = this._addNode(x, zm, 'mid', { axis: 'z', road: r, side });
           const nb = this._addNode(x, zb, 'lane', { axis: 'z', road: r, side });
@@ -85,7 +85,7 @@ export class PedGraph {
       for (let i = 0; i + 1 < roadsX.length; i++) {
         const xa = roadsX[i], xb = roadsX[i + 1], xm = (xa + xb) / 2;
         for (const side of [-1, 1]) {
-          const z = r + side * PED_SIDE;
+          const z = r + side * PG_PED_SIDE;
           const na = this._addNode(xa, z, 'lane', { axis: 'x', road: r, side });
           const nm = this._addNode(xm, z, 'mid', { axis: 'x', road: r, side });
           const nb = this._addNode(xb, z, 'lane', { axis: 'x', road: r, side });
@@ -98,10 +98,10 @@ export class PedGraph {
     // --- перекрёстки: центр + зебры (cross) + повороты (turn) ---
     for (const isec of intersections) {
       const center = this._addNode(isec.x, isec.z, 'center');
-      const nW = this._byKey.get((isec.x - PED_SIDE) + ',' + isec.z);
-      const nE = this._byKey.get((isec.x + PED_SIDE) + ',' + isec.z);
-      const nN = this._byKey.get(isec.x + ',' + (isec.z - PED_SIDE));
-      const nS = this._byKey.get(isec.x + ',' + (isec.z + PED_SIDE));
+      const nW = this._byKey.get((isec.x - PG_PED_SIDE) + ',' + isec.z);
+      const nE = this._byKey.get((isec.x + PG_PED_SIDE) + ',' + isec.z);
+      const nN = this._byKey.get(isec.x + ',' + (isec.z - PG_PED_SIDE));
+      const nS = this._byKey.get(isec.x + ',' + (isec.z + PG_PED_SIDE));
       if (nW && nE) { this._addEdge(nW, center, 'cross', 1); this._addEdge(center, nE, 'cross', 1); }
       if (nN && nS) { this._addEdge(nN, center, 'cross', 1); this._addEdge(center, nS, 'cross', 1); }
       for (const [a, b] of [[nW, nN], [nW, nS], [nE, nN], [nE, nS]]) {
@@ -114,8 +114,8 @@ export class PedGraph {
       for (let i = 0; i + 1 < roadsZ.length; i++) {
         if (rng() >= 0.3) continue;
         const zm = (roadsZ[i] + roadsZ[i + 1]) / 2;
-        const a = this._byKey.get((r - PED_SIDE) + ',' + zm);
-        const b = this._byKey.get((r + PED_SIDE) + ',' + zm);
+        const a = this._byKey.get((r - PG_PED_SIDE) + ',' + zm);
+        const b = this._byKey.get((r + PG_PED_SIDE) + ',' + zm);
         if (a && b) this._addEdge(a, b, 'jwalk', 3);
       }
     }
@@ -123,8 +123,8 @@ export class PedGraph {
       for (let i = 0; i + 1 < roadsX.length; i++) {
         if (rng() >= 0.3) continue;
         const xm = (roadsX[i] + roadsX[i + 1]) / 2;
-        const a = this._byKey.get(xm + ',' + (r - PED_SIDE));
-        const b = this._byKey.get(xm + ',' + (r + PED_SIDE));
+        const a = this._byKey.get(xm + ',' + (r - PG_PED_SIDE));
+        const b = this._byKey.get(xm + ',' + (r + PG_PED_SIDE));
         if (a && b) this._addEdge(a, b, 'jwalk', 3);
       }
     }
