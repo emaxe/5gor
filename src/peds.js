@@ -692,8 +692,13 @@ export class PedestrianManager {
   }
 
   _cancelCross(p) {
-    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
     p.cross = null;
+    if (p.active && (p._edgeKind === 'cross' || p._edgeKind === 'jwalk')) {
+      // маршрут через эту зебру отменён (слишком долгий красный / машины) —
+      // не выдаём это за завершённый переход; пересчитаем маршрут заново
+      p.route = null; p.routeIdx = 0; p.active = false; p._reroute = 0.5;
+    }
+    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
     p.turnT = 1.5;
   }
 
@@ -750,6 +755,54 @@ export class PedestrianManager {
       p.turn = null;
       p.turnT = 1.0;
     }
+  }
+
+  /* Активное движение по маршруту (активная зона) */
+  _updateActive(p, dt) {
+    if (p.mode === 'kick') return;
+    if (p.mode === 'idle') {
+      p.idleT -= dt;
+      if (p.idleT <= 0) this._activate(p);
+      return;
+    }
+    if (p.mode === 'wait') {
+      this._updateWait(p, dt);
+      return;
+    }
+    if (p.mode === 'cross') {
+      this._updateCross(p, dt);
+      if (p.cross === null && (p._edgeKind === 'cross' || p._edgeKind === 'jwalk')) {
+        this._finishEdge(p);
+      }
+      return;
+    }
+    if (p.mode === 'turn') {
+      this._updateTurn(p, dt);
+      if (p.turn === null && p._edgeKind === 'turn') {
+        const t = p._turnTo;
+        p.axis = t.newAxis; p.coord = t.newCoord; p.side = t.newSide; p.pos = t.newPos;
+        this._finishEdge(p);
+      }
+      return;
+    }
+    // walk/run по ленте: скорость восстанавливаем КАЖДЫЙ кадр, иначе пешеход,
+    // один раз упёршийся в препятствие/лидера (_avoidStatic/_avoidPeds ставят
+    // speed=0 или снижают его), остаётся замороженным навсегда — ничто больше
+    // не поднимает speed обратно к baseSpeed.
+    p.speed = p.baseSpeed;
+    this._avoidStatic(p, dt);
+    this._avoidPeds(p, dt);
+    p.pos += p.speed * dt * p.dir;
+    if (p._edgeKind === 'walk' && Math.abs(p.pos - p.edgeEnd) < 0.7) {
+      this._finishEdge(p);
+      return;
+    }
+    // ВАЖНО: здесь НЕТ проверки `p._edgeKind === 'cross' || 'jwalk'` — если
+    // она сюда попала, значит переход был прерван через _cancelCross (см.
+    // ниже), а не завершён по-настоящему; притворяться, что дорога перейдена,
+    // и продвигать routeIdx — баг (пешеход остаётся на своей стороне, а
+    // маршрут думает, что он уже на другой). Настоящее завершение перехода
+    // обрабатывается веткой `p.mode === 'cross'` выше.
   }
 
   /* Реакция на близкий проезд игрока (Near-Miss) и пинание авто */
@@ -840,7 +893,8 @@ export class PedestrianManager {
         p.fz += p.fvz * dt;
         p.fleeT -= dt;
         if (p.fleeT <= 0) this._snapToSidewalk(p);
-      } else if (p.mode === 'cross') this._updateCross(p, dt);
+      } else if (p.active) this._updateActive(p, dt);
+      else if (p.mode === 'cross') this._updateCross(p, dt);
       else if (p.mode === 'turn') this._updateTurn(p, dt);
       else if (p.mode === 'wait') this._updateWait(p, dt);
       else if (p.mode !== 'kick') this._updateWalk(p, dt);
@@ -934,6 +988,7 @@ export class PedestrianManager {
     p.turnT = 0.8;
     p.speed = p.baseSpeed;
     this._assignNewTarget(p);
+    if (this.graph && p.active) this._activate(p);
   }
 
   _sync(p) {
