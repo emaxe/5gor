@@ -10,6 +10,56 @@
 
 **Спека:** `docs/superpowers/specs/2026-08-07-intelligent-peds-design.md`
 
+**Ревизия плана (2026-08-07):** план сверен с кодом (`src/peds.js`,
+`src/citygen.js`, `src/traffic.js`, `src/game.js`, `build.py`) и содержал
+несколько блокирующих дефектов (телепорт пешехода при активации, пропуск
+ребра маршрута после каждой зебры, необратимая заморозка скорости, до 13
+полных проходов Dijkstra на одну активацию, недоступность `node --test` из-за
+отсутствия `package.json`) и дизайновых пробелов (POI выбираются почти
+случайно среди ~300 точек подачи, идентификатор точки прибытия зацикливает
+пешехода в вечном `idle`, животные не должны участвовать в полном ИИ, переход
+идёт через центр перекрёстка мимо разметки). Все правки внесены ниже по
+задачам; выполняй план в текущей редакции, не в исходной.
+
+---
+
+### Task 0: Корневой `package.json` — чтобы работал `node --test`
+
+**Files:**
+- Create: `package.json`
+
+`tests/pedgraph.test.mjs` — ES-модуль (`import`), который сам импортирует
+`../src/pedgraph.js` → `./config.js`. Без `package.json` с `"type": "module"`
+Node трактует `.js`/`.mjs` в проекте по CommonJS-правилам для `.js`, и хотя
+`.mjs` всегда ESM независимо от `package.json`, разрешение `import` внутри
+`src/*.js` (у них нет расширения `.mjs`) в отсутствие `"type": "module"`
+трактуется как CommonJS и падает на `import { CFG } from './config.js'`.
+`build.py`/`run.sh` npm не используют — на сборку файл не влияет.
+
+- [ ] **Step 1: Создать `package.json`**
+
+```json
+{
+  "name": "5gor",
+  "private": true,
+  "type": "module"
+}
+```
+
+- [ ] **Step 2: Проверить, что базовый `node --test` не падает на импортах**
+
+Run: `node --test --test-name-pattern nonexistent tests/` (без файлов ещё
+ничего не найдёт, но не должно быть `SyntaxError: Cannot use import statement
+outside a module` — пока и `tests/` пуст, эта проверка станет содержательной
+после Task 2).
+
+- [ ] **Step 3: Коммит**
+
+```bash
+git add package.json
+git commit -m "chore: package.json для ESM-тестов node --test"
+```
+
 ---
 
 ### Task 1: Константы зон и регистрация модуля в сборке
@@ -128,6 +178,21 @@ test('lane nodes carry axis/road/side', () => {
   assert.equal(node.road, -192);
   assert.equal(node.side, -1);
 });
+
+test('nodeOnLane находит узел строго на своей ленте, а не геометрически ближайший', () => {
+  const g = new PedGraph();
+  g.build(makeIntersections());
+  // пешеход на ленте x=-192-8, где-то между перекрёстками (z=-220), а не в -256
+  const id = g.nodeOnLane('z', -192, -1, -220);
+  assert.ok(id != null);
+  const node = g.nodes[id];
+  assert.equal(node.axis, 'z');
+  assert.equal(node.road, -192);
+  assert.equal(node.side, -1);
+  // ближайший ГЕОМЕТРИЧЕСКИ узел к (-200,-220) может лежать на другой оси —
+  // nodeOnLane обязан игнорировать его и остаться на заданной ленте
+  assert.ok(['lane', 'mid'].includes(node.kind));
+});
 ```
 
 - [ ] **Step 2: Запустить тесты — убедиться, что падают**
@@ -144,6 +209,7 @@ import { CFG } from './config.js';
 
 const PED_SIDE = CFG.HALF + CFG.SIDE / 2; // 8 — центр тротуара от оси дороги
 const EDGE = CFG.CELL;
+const POI_MAX_DIST = 40; // POI дальше этого от ближайшего узла — вне сетки (напр. Машук), отбрасываем
 
 function mulberry32(seed) {
   let a = seed >>> 0;
@@ -155,12 +221,23 @@ function mulberry32(seed) {
   };
 }
 
+/** Координата узла вдоль его собственной оси ходьбы (для lane/mid узлов). */
+function posOf(node) {
+  return node.axis === 'z' ? node.z : node.x;
+}
+
 /**
  * Статический граф ходьбы города.
  * Узлы: 4 «тротуарных» (+ серединные) на лентах дорог и 1 центр перехода на
  * перекрёстке. Рёбра: walk (тротуар), cross (зебра через дорогу, пара через
  * центр), turn (срез угла на перекрёстке), jwalk (середина квартала, только
  * для нарушителей). Без зависимостей (no THREE/DOM) — тестируется в node.
+ *
+ * Единицы стоимости — не рёбра: walk-сегмент 0.5, поворот 1.5, cross-ребро 1
+ * (переход через дорогу = 2 таких ребра подряд через центр), jwalk 3. Когда в
+ * коде/тестах говорится «дистанция N рёбер» — это длина итогового `path` из
+ * `pathTo()`/`route()` минус 1, а не значение `dist[]` (см. `_pickRandomNode`
+ * в `peds.js`, где `dist[]` используется лишь как дешёвая аппроксимация).
  */
 export class PedGraph {
   constructor() {
@@ -271,16 +348,49 @@ export class PedGraph {
     return best ? best.id : null;
   }
 
-  /** Маппинг POI-точек на ближайшие тротуарные узлы. list: [{x, z, tag?}] */
+  /**
+   * Ближайший узел (lane/mid) СТРОГО на заданной ленте (axis, road-координата,
+   * сторона). В отличие от nearestNode — не притянет к геометрически близкому
+   * узлу на другой (например перпендикулярной) дороге. Используется при
+   * активации пешехода: узел входа должен лежать на его текущей ленте, иначе
+   * пешеход телепортируется при первом же шаге маршрута.
+   */
+  nodeOnLane(axis, coord, side, pos) {
+    let best = null, bd = Infinity;
+    for (const n of this.nodes) {
+      if ((n.kind !== 'lane' && n.kind !== 'mid')) continue;
+      if (n.axis !== axis || n.road !== coord || n.side !== side) continue;
+      const d = Math.abs(posOf(n) - pos);
+      if (d < bd) { bd = d; best = n; }
+    }
+    return best ? best.id : null;
+  }
+
+  /**
+   * Маппинг POI-точек на ближайшие тротуарные узлы. list: [{x, z, tag?}].
+   * Точки дальше POI_MAX_DIST от найденного узла отбрасываются — иначе
+   * ориентиры вне сетки (Машук: канатка/беседка/башня, z < -256) намертво
+   * притягиваются к южному краю города и искажают выбор цели.
+   */
   setPOIs(list) {
     this.poiList = list
-      .map(p => ({ node: this.nearestNode(p.x, p.z), tag: p.tag || null }))
-      .filter(p => p.node != null);
+      .map(p => ({ node: this.nearestNode(p.x, p.z), tag: p.tag || null, x: p.x, z: p.z }))
+      .filter(p => p.node != null)
+      .filter(p => {
+        const n = this.nodes[p.node];
+        return Math.hypot(n.x - p.x, n.z - p.z) <= POI_MAX_DIST;
+      });
     this.poiNodes = this.poiList.map(p => p.node);
   }
 
-  /** Dijkstra. allowJwalk=false запрещает jwalk-рёбра. Возвращает массив node id или null. */
-  route(fromId, toId, allowJwalk) {
+  /**
+   * Один полный проход Dijkstra от fromId. allowJwalk=false запрещает
+   * jwalk-рёбра. Возвращает { dist, prev } для последующего построения ЛЮБОГО
+   * числа путей без повторного прохода — критично для выбора случайной цели
+   * (см. `_pickRandomNode` в peds.js): полный проход по 693 узлам без кучи
+   * стоит ~1-3 мс, повторять его на каждого кандидата цели нельзя.
+   */
+  routesFrom(fromId, allowJwalk) {
     const n = this.nodes.length;
     const dist = new Array(n).fill(Infinity);
     const prev = new Array(n).fill(-1);
@@ -293,45 +403,58 @@ export class PedGraph {
       }
       if (u === -1) break;
       done[u] = true;
-      if (u === toId) break;
       for (const e of this.adj[u]) {
         if (e.kind === 'jwalk' && !allowJwalk) continue;
         const nd = dist[u] + e.cost;
         if (nd < dist[e.to]) { dist[e.to] = nd; prev[e.to] = u; }
       }
     }
+    return { dist, prev };
+  }
+
+  /** Восстановление пути к toId из {prev}, полученного в routesFrom(). Без пересчёта. */
+  pathTo(prev, fromId, toId) {
     if (fromId !== toId && prev[toId] === -1) return null;
     const path = [];
     for (let c = toId; c !== -1; c = prev[c]) path.push(c);
     path.reverse();
+    if (path[0] !== fromId) return null;
     return path;
+  }
+
+  /** Dijkstra "в один вызов" — для единичных запросов и тестов. Для выбора
+   *  цели среди множества кандидатов используй routesFrom()+pathTo() напрямую,
+   *  не зови route() в цикле (см. комментарий у routesFrom). */
+  route(fromId, toId, allowJwalk) {
+    const { prev } = this.routesFrom(fromId, allowJwalk);
+    return this.pathTo(prev, fromId, toId);
   }
 
   /**
    * Дескриптор ребра для движения пешехода (from=id a, to=id b).
-   * Возвращает { kind, advance, ... } или null.
+   * Возвращает { kind, ... } или null.
    */
   edgeInfo(aId, bId) {
     const a = this.nodes[aId], b = this.nodes[bId];
     let kind = null;
     for (const e of this.adj[aId]) if (e.to === bId) kind = e.kind;
     if (!kind) return null;
-    const sideOf = (node) => (node.axis === 'z' ? (node.x > node.road ? 1 : -1) : (node.z > node.road ? 1 : -1));
-    const posOf = (node) => (node.axis === 'z' ? node.z : node.x);
-    const d = { kind, advance: 1 };
+    const d = { kind };
     if (kind === 'walk') {
-      d.axis = a.axis; d.coord = a.road; d.side = sideOf(a);
+      d.axis = a.axis; d.coord = a.road; d.side = a.side;
       d.posStart = posOf(a); d.posEnd = posOf(b);
-    } else if (kind === 'cross') {
-      d.axis = a.axis; d.coord = a.road; d.side = sideOf(a);
-      d.pos = posOf(a);
-      d.advance = 2; // зебра = пара рёбер через центр
-    } else if (kind === 'jwalk') {
-      d.axis = a.axis; d.coord = a.road; d.side = sideOf(a);
-      d.pos = posOf(a);
+    } else if (kind === 'cross' || kind === 'jwalk') {
+      // один из концов — центр перекрёстка (без axis/road/side) для 'cross',
+      // либо оба конца — тротуарные узлы для 'jwalk'; берём тротуарный узел
+      // (не center) как источник ориентации — sideOf по координатам центра
+      // давал мусор (у center нет .road), тогда как у lane/mid узлов side уже
+      // готов при построении графа.
+      const lane = a.kind === 'center' ? b : a;
+      d.axis = lane.axis; d.coord = lane.road; d.side = lane.side;
+      d.pos = posOf(lane);
     } else if (kind === 'turn') {
       d.x0 = a.x; d.z0 = a.z; d.x1 = b.x; d.z1 = b.z;
-      d.newAxis = b.axis; d.newCoord = b.road; d.newSide = sideOf(b); d.newPos = posOf(b);
+      d.newAxis = b.axis; d.newCoord = b.road; d.newSide = b.side; d.newPos = posOf(b);
     }
     return d;
   }
@@ -420,12 +543,43 @@ test('POI маппинг', () => {
   assert.equal(g.poiList[0].tag, 'cvetnik');
   assert.equal(g.poiNodes.length, 1);
 });
+
+test('setPOIs отбрасывает точки вне сетки (ориентиры Машука южнее z=-256)', () => {
+  const g = new PedGraph();
+  g.build(makeIntersections());
+  g.setPOIs([
+    { x: -32, z: 18, tag: 'cvetnik' },  // внутри сетки — остаётся
+    { x: 0, z: -448, tag: 'tower' },    // вершина Машука, далеко за границей — отбрасывается
+  ]);
+  assert.equal(g.poiList.length, 1);
+  assert.equal(g.poiList[0].tag, 'cvetnik');
+});
+
+test('routesFrom+pathTo дают тот же путь, что и route() (регресс на рефакторинг)', () => {
+  const g = new PedGraph();
+  g.build(makeIntersections());
+  const fromId = g.nearestNode(-192 - 8, -256);
+  const toId = g.nearestNode(64, 64);
+  const direct = g.route(fromId, toId, false);
+  const { prev } = g.routesFrom(fromId, false);
+  const viaSplit = g.pathTo(prev, fromId, toId);
+  assert.deepEqual(viaSplit, direct);
+});
+
+test('routesFrom даёт непустой набор узлов с dist в [1,3] (примерно 2-6 walk-рёбер)', () => {
+  const g = new PedGraph();
+  g.build(makeIntersections());
+  const fromId = g.nearestNode(0, 0);
+  const { dist } = g.routesFrom(fromId, false);
+  const candidates = dist.filter((d) => d >= 1 && d <= 3);
+  assert.ok(candidates.length > 0);
+});
 ```
 
 - [ ] **Step 2: Запустить тесты — должны пройти сразу (реализация в Task 2)**
 
 Run: `node --test tests/pedgraph.test.mjs`
-Expected: 11 tests PASS. Если какой-то падает — исправь `src/pedgraph.js`.
+Expected: 14 tests PASS (6 из Task 2 + 8 из Task 3). Если какой-то падает — исправь `src/pedgraph.js`.
 
 - [ ] **Step 3: Коммит**
 
@@ -454,17 +608,39 @@ import { PedGraph } from './pedgraph.js';
 ```js
         violator: Math.random() < CFG.pedViolatorChance,
         active: false, nearZone: false, laneOff: 0,
-        route: null, routeIdx: 0, _edgeKind: null, _edgeAdvance: 1, edgeEnd: 0,
-        idleT: 0, _blockedT: 0,
+        route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
+        idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
 ```
+
+Полей `_edgeAdvance` **нет** — маршрутизация не пропускает рёбра при движении
+(см. Step 2, `_finishEdge` всегда `routeIdx += 1`; см. также `pedgraph.js`,
+`edgeInfo` не возвращает поле `advance`). `_stuckT` — отдельный от `_blockedT`
+счётчик: `_blockedT` копится при упоре в другого пешехода (кар-фолловинг,
+Task 6), `_stuckT` — при упоре в статику (Task 6); разные таймауты и разная
+реакция, поэтому не переиспользуем одно поле. `_reroute` — кулдаун (сек) до
+следующей попытки `_activate`/пересчёта маршрута для этого пешехода.
 
 В `adoptPedestrian()` объект `ped` (строка `angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30), walk: 0,`) добавь после `walk: 0`:
 
 ```js
       violator: Math.random() < CFG.pedViolatorChance,
       active: false, nearZone: false, laneOff: 0,
-      route: null, routeIdx: 0, _edgeKind: null, _edgeAdvance: 1, edgeEnd: 0,
-      idleT: 0, _blockedT: 0,
+      route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
+      idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
+```
+
+В том же методе `adoptPedestrian`, перед `return ped;`, добавь немедленную
+попытку активации — высаженный/подобранный пассажир обычно оказывается прямо
+рядом с игроком (внутри активного радиуса), и без этой строки он до 0.5 с
+ждёт очередного тика `_classify` пассивным пешеходом (`nearZone`/`active`
+ещё `false`, обход статики для него в эти доли секунды не работает). `_activate`
+уже безопасен к вызову раньше готовности графа (ранний выход на `!this.graph`),
+поэтому проверка не нужна:
+
+```js
+    if (this._playerRef && Math.hypot(ped.x - this._playerRef.x, ped.z - this._playerRef.z) <= CFG.pedActiveRadius) {
+      this._activate(ped);
+    }
 ```
 
 - [ ] **Step 2: Добавить методы графа и классификации**
@@ -479,7 +655,10 @@ import { PedGraph } from './pedgraph.js';
 Добавь в класс (после метода `_heading`) новые методы:
 
 ```js
-  /* Построить граф ходьбы из мира + POI (достопримечательности, точки подачи, заправки) */
+  /* Построить граф ходьбы из мира + POI (достопримечательности, точки подачи,
+     заправки) + одноразовый spatial hash зданий (ячейки 16 м) для _obstacleAt
+     (Task 6) — линейный перебор ~250 AABB на каждого активного пешехода
+     каждый кадр слишком дорог. */
   initGraph(world) {
     this.world = world;
     if (!world || !world.intersections || !world.intersections.length) return;
@@ -491,10 +670,40 @@ import { PedGraph } from './pedgraph.js';
     for (const s of world.fuelStations || []) pois.push({ x: s.x, z: s.z, tag: 'fuel' });
     graph.setPOIs(pois);
     this.graph = graph;
+
+    this._buildingHash = new Map();
+    const cell = 16;
+    for (const b of world.buildings || []) {
+      const cx0 = Math.floor(b.x0 / cell), cx1 = Math.floor(b.x1 / cell);
+      const cz0 = Math.floor(b.z0 / cell), cz1 = Math.floor(b.z1 / cell);
+      for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
+        const key = cx + ',' + cz;
+        if (!this._buildingHash.has(key)) this._buildingHash.set(key, []);
+        this._buildingHash.get(key).push(b);
+      }
+    }
   }
 
-  /* Классификация зон (0.5 с, гистерезис) — активная/ближняя/дальняя */
+  /* Классификация зон (0.5 с, гистерезис) — активная/ближняя/дальняя.
+     Животные и скрытые (mesh.visible=false, см. game.js _applyDensity)
+     полный ИИ не получают. Не более 2 новых активаций за тик — каждая стоит
+     один полный проход Dijkstra (~1-3 мс); при резком появлении сразу
+     нескольких пешеходов в зоне это защита от фриза кадра (см. спеку,
+     «Производительность»).
+     Не деактивируем посреди cross/wait/turn — не только по правилу спеки
+     («не обрывать переход»), но и из-за конкретного технического риска для
+     turn: активный поворот (через graph-ребро kind='turn') откладывает
+     обновление p.axis/p.coord/p.pos до ЗАВЕРШЕНИЯ (в ветке `turn` внутри
+     `_updateActive`, Task 5) — если деактивировать пешехода до этого момента,
+     visual-интерполяция (p.turn) доиграет через общий `_updateTurn`, но
+     axis/coord/pos останутся от ДО поворота, а `_worldPos` после обнуления
+     p.turn считает мировую позицию именно по ним — пешеход визуально
+     телепортируется обратно в точку начала поворота. */
   _classify(dt) {
+    // кулдауны пересчёта маршрута тикают каждый кадр, не только на классификации
+    for (const p of this.cars) {
+      if (p._reroute > 0) p._reroute -= dt;
+    }
     this._classifyTimer -= dt;
     if (this._classifyTimer > 0) return;
     this._classifyTimer = 0.5;
@@ -502,25 +711,47 @@ import { PedGraph } from './pedgraph.js';
     const pl = this._playerRef;
     const px = pl && pl.x !== undefined ? pl.x : 0;
     const pz = pl && pl.z !== undefined ? pl.z : 0;
+    let activations = 0;
     for (const p of this.cars) {
-      if (!p.alive) continue;
+      if (!p.alive || p.isAnimal || !p.mesh.visible) continue;
       const d = Math.hypot(p.x - px, p.z - pz);
       p.nearZone = d <= CFG.pedNearRadius;
-      if (!p.active && d <= CFG.pedActiveRadius) this._activate(p);
-      else if (p.active && d > CFG.pedActiveRadius + 5 && p.mode !== 'cross' && p.mode !== 'wait') this._deactivate(p);
+      if (!p.active && d <= CFG.pedActiveRadius) {
+        if (activations >= 2 || p._reroute > 0) continue;
+        this._activate(p);
+        activations++;
+      } else if (p.active && d > CFG.pedActiveRadius + 5 && p.mode !== 'cross' && p.mode !== 'wait' && p.mode !== 'turn') {
+        this._deactivate(p);
+      }
     }
   }
 
-  /* Активировать: ближайший узел -> цель -> маршрут */
+  /* Активировать: узел входа на СВОЕЙ ленте -> цель -> маршрут.
+     Ранний выход при отлёте/убегании/пинке — не обрывает их сменой mode.
+     Ровно один проход Dijkstra (routesFrom) на активацию — дальше выбор
+     цели и восстановление пути работают по готовым dist/prev без повторных
+     проходов (см. pedgraph.js, комментарий у routesFrom). */
   _activate(p) {
-    if (!this.graph) return;
-    const fromId = this.graph.nearestNode(p.x, p.z);
-    if (fromId == null) return;
-    const toId = this._pickDestination(p, fromId);
-    if (toId == null || toId === fromId) return;
-    const path = this.graph.route(fromId, toId, p.violator);
-    if (!path || path.length < 2) return;
-    p.route = this._edgesFor(path);
+    if (!this.graph || p.isAnimal) return;
+    if (p.knockT > 0 || p.mode === 'flee' || p.mode === 'kick') return;
+    p.route = null; p.routeIdx = 0; p.laneOff = 0;
+
+    const fromId = this.graph.nodeOnLane(p.axis, p.coord, p.side, p.pos);
+    if (fromId == null) { p.active = false; p._reroute = 2.0; return; }
+
+    const { dist, prev } = this.graph.routesFrom(fromId, p.violator);
+    const toId = this._pickDestination(p, fromId, dist);
+    if (toId == null || toId === fromId) { p.active = false; p._reroute = 2.0; return; }
+
+    const path = this.graph.pathTo(prev, fromId, toId);
+    if (!path || path.length < 2) { p.active = false; p._reroute = 2.0; return; }
+
+    const fromNode = this.graph.nodes[fromId];
+    const approach = {
+      kind: 'walk', axis: p.axis, coord: p.coord, side: p.side,
+      posStart: p.pos, posEnd: p.axis === 'z' ? fromNode.z : fromNode.x,
+    };
+    p.route = [approach, ...this._edgesFor(path)];
     p.routeIdx = 0;
     p.active = true;
     p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
@@ -534,56 +765,84 @@ import { PedGraph } from './pedgraph.js';
     if (p.mode === 'idle') p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
   }
 
-  /* Выбор цели: гибрид POI (по архетипу) + случайная на дистанции 2-6 */
-  _pickDestination(p, fromId) {
-    const g = this.graph;
-    const from = g.nodes[fromId];
+  /* Выбор цели: гибрид POI (по архетипу, взвешенно) + случайная — всё в
+     пределах готовой карты dist[] (2-6 walk-рёбер ~ dist 1-3), БЕЗ повторных
+     вызовов Dijkstra (dist уже посчитан один раз в _activate). */
+  _pickDestination(p, fromId, dist) {
     if (p.archetype === 'tourist') {
-      const id = this._pickPoiFor(from, 'cvetnik', 'proval');
+      const id = this._pickPoiFor(fromId, dist, 'cvetnik', 'proval');
       if (id != null) return id;
     }
     if (p.archetype === 'grandma') {
-      const id = this._pickPoiFor(from, 'rynok', 'pickup', 'fuel');
+      const id = this._pickPoiFor(fromId, dist, 'rynok', 'pickup', 'fuel');
       if (id != null) return id;
     }
-    if (g.poiNodes.length && Math.random() < 0.5) {
-      return g.poiNodes[Math.floor(Math.random() * g.poiNodes.length)];
+    if (Math.random() < 0.5) {
+      const id = this._pickWeightedPoi(fromId, dist);
+      if (id != null) return id;
     }
-    return this._pickRandomNode(fromId, p.violator);
+    return this._pickRandomNode(fromId, dist);
   }
 
-  _pickPoiFor(from, ...tags) {
+  /* POI нужной категории в пределах dist[1,3]: случайный из ДО ТРЁХ ближайших
+     подходящих, не считая узел прибытия и всё ближе 1 (иначе пешеход у своей
+     единственной ближайшей достопримечательности после idle тут же выбирает
+     её же снова — toId===fromId, активация молча ничего не делает, а таймер
+     простоя уже истёк: вечный idle без движения). БЕЗ fallback на весь список
+     POI — по той же причине. */
+  _pickPoiFor(fromId, dist, ...tags) {
     const g = this.graph;
-    const pool = g.poiList.filter(po => tags.some(t => po.tag && po.tag.includes(t)));
-    const list = pool.length ? pool : g.poiList;
-    if (!list.length) return null;
-    let best = null, bd = Infinity;
-    for (const po of list) {
-      const n = g.nodes[po.node];
-      if (!n) continue;
-      const d = (n.x - from.x) ** 2 + (n.z - from.z) ** 2;
-      if (d < bd) { bd = d; best = po.node; }
-    }
-    return best;
+    const pool = g.poiList
+      .filter(po => tags.some(t => po.tag && po.tag.includes(t)))
+      .filter(po => po.node !== fromId && dist[po.node] >= 1 && dist[po.node] <= 3)
+      .sort((a, b) => dist[a.node] - dist[b.node]);
+    if (!pool.length) return null;
+    const top = pool.slice(0, 3);
+    return top[Math.floor(Math.random() * top.length)].node;
   }
 
-  _pickRandomNode(fromId, violator) {
+  /* Случайный POI без привязки к архетипу, взвешенно по категориям:
+     достопримечательность 0.5 / точка подачи такси 0.35 / заправка 0.15.
+     Без весов точки подачи (~300 шт.) забивают выбор — достопримечательности
+     (9 шт.) практически никогда не выпадают. */
+  _pickWeightedPoi(fromId, dist) {
     const g = this.graph;
-    const lanes = g.nodes.filter(n => n.kind === 'lane' || n.kind === 'mid');
-    for (let i = 0; i < 12; i++) {
-      const cand = lanes[Math.floor(Math.random() * lanes.length)];
-      if (cand.id === fromId) continue;
-      const path = g.route(fromId, cand.id, violator);
-      if (path && path.length - 1 >= 2 && path.length - 1 <= 6) return cand.id;
+    const inRange = g.poiList.filter(po => po.node !== fromId && dist[po.node] >= 1 && dist[po.node] <= 3);
+    if (!inRange.length) return null;
+    const byCat = { landmark: [], pickup: [], fuel: [] };
+    for (const po of inRange) {
+      const cat = po.tag === 'pickup' ? 'pickup' : po.tag === 'fuel' ? 'fuel' : 'landmark';
+      byCat[cat].push(po);
     }
-    for (const n of lanes) {
-      const path = g.route(fromId, n.id, violator);
-      if (path) return n.id;
-    }
-    return null;
+    const weights = [['landmark', 0.5], ['pickup', 0.35], ['fuel', 0.15]].filter(([c]) => byCat[c].length);
+    if (!weights.length) return null;
+    const total = weights.reduce((s, [, w]) => s + w, 0);
+    let r = Math.random() * total;
+    let cat = weights[weights.length - 1][0];
+    for (const [c, w] of weights) { if (r < w) { cat = c; break; } r -= w; }
+    const list = byCat[cat];
+    return list[Math.floor(Math.random() * list.length)].node;
   }
 
-  /* Маршрут -> массив дескрипторов рёбер (сливаем пару cross через центр) */
+  /* Случайный тротуарный узел на графовой дистанции 2-6 рёбер (dist∈[1,3]),
+     по готовой карте dist[] — без единого повторного Dijkstra. */
+  _pickRandomNode(fromId, dist) {
+    const g = this.graph;
+    const candidates = [];
+    for (const n of g.nodes) {
+      if ((n.kind !== 'lane' && n.kind !== 'mid') || n.id === fromId) continue;
+      const d = dist[n.id];
+      if (d >= 1 && d <= 3) candidates.push(n.id);
+    }
+    if (!candidates.length) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  /* Маршрут -> массив дескрипторов рёбер (сливаем пару cross через центр в
+     один описатель — сторона departure берётся с некруглого узла, см.
+     pedgraph.js edgeInfo). routeIdx индексирует ЭТОТ массив, а не исходный
+     path — каждый элемент = один шаг движения, поэтому _finishEdge всегда
+     продвигает на 1, без отдельного поля advance. */
   _edgesFor(path) {
     const out = [];
     for (let i = 0; i + 1 < path.length; i++) {
@@ -605,7 +864,6 @@ import { PedGraph } from './pedgraph.js';
     if (p.routeIdx >= p.route.length) { this._arrive(p); return; }
     const e = p.route[p.routeIdx];
     p._edgeKind = e.kind;
-    p._edgeAdvance = e.advance || 1;
     p.speed = p.baseSpeed;
     if (e.kind === 'walk') {
       p.axis = e.axis; p.coord = e.coord; p.side = e.side;
@@ -628,8 +886,9 @@ import { PedGraph } from './pedgraph.js';
     }
   }
 
-  _finishEdge(p, advance) {
-    p.routeIdx += advance;
+  /* Всегда продвигает на 1 элемент p.route — см. комментарий у _edgesFor. */
+  _finishEdge(p) {
+    p.routeIdx += 1;
     this._startEdge(p);
   }
 
@@ -679,18 +938,41 @@ Expected: `OK: index.html` без синтаксических ошибок.
 
 - [ ] **Step 6: Проверить зонную активацию в браузере**
 
-Открой `http://localhost:8000` (сервер уже запущен) и в консоли:
+`main.js` экспонирует игру как `window.game = new Game()`. Открой
+`http://localhost:8000` (сервер уже запущен) и в консоли:
 ```js
-window.__peds = null; // после первого кадра:
-setInterval(() => { console.log(gameRef && gameRef.peds && gameRef.peds.debugSummary()); }, 2000);
+setInterval(() => { console.log(window.game && window.game.peds && window.game.peds.debugSummary()); }, 2000);
 ```
-Если `gameRef` недоступен глобально — проверь в коде `game.js`/`main.js`, как экспонируется игра, и используй доступный идентификатор.
 Expected: `nodes:693 active:<число> near:<число> routed:<число>`; `active` ≈ 4–10 и `routed` ≥ `active`−1 (пешеходы в idle — без route).
 
-- [ ] **Step 7: Коммит**
+- [ ] **Step 7: Поправить порядок инициализации `world` в `game.js` (`_initManagers`)**
+
+Сейчас `peds.spawn()` вызывается **до** присвоения `peds.world`/`peds.lightsRef`
+— первичная валидация позиции спавна (`_spotBlocked`, добавляется в Task 6)
+останется без доступа к `world` на первом спавне и молча пропустит проверку.
+
+В `src/game.js`, метод `_initManagers`, найди:
+
+```js
+    this.peds = new PedestrianManager(this.scene);
+    this.peds.spawn(CFG.pedCount, this.player);
+    this.peds.lightsRef = this.world.lights;
+    this.peds.world = this.world;
+```
+
+и замени порядок строк на:
+
+```js
+    this.peds = new PedestrianManager(this.scene);
+    this.peds.lightsRef = this.world.lights;
+    this.peds.world = this.world;
+    this.peds.spawn(CFG.pedCount, this.player);
+```
+
+- [ ] **Step 8: Коммит**
 
 ```bash
-git add src/peds.js
+git add src/peds.js src/game.js
 git commit -m "feat: зонная классификация пешеходов, активация и маршруты по графу"
 ```
 
@@ -721,7 +1003,7 @@ git commit -m "feat: зонная классификация пешеходов,
     if (p.mode === 'cross') {
       this._updateCross(p, dt);
       if (p.cross === null && (p._edgeKind === 'cross' || p._edgeKind === 'jwalk')) {
-        this._finishEdge(p, p._edgeAdvance);
+        this._finishEdge(p);
       }
       return;
     }
@@ -730,22 +1012,28 @@ git commit -m "feat: зонная классификация пешеходов,
       if (p.turn === null && p._edgeKind === 'turn') {
         const t = p._turnTo;
         p.axis = t.newAxis; p.coord = t.newCoord; p.side = t.newSide; p.pos = t.newPos;
-        this._finishEdge(p, 1);
+        this._finishEdge(p);
       }
       return;
     }
-    // walk/run по ленте
+    // walk/run по ленте: скорость восстанавливаем КАЖДЫЙ кадр, иначе пешеход,
+    // один раз упёршийся в препятствие/лидера (_avoidStatic/_avoidPeds ставят
+    // speed=0 или снижают его), остаётся замороженным навсегда — ничто больше
+    // не поднимает speed обратно к baseSpeed.
+    p.speed = p.baseSpeed;
     this._avoidStatic(p, dt);
-    this._avoidPeds(p);
+    this._avoidPeds(p, dt);
     p.pos += p.speed * dt * p.dir;
     if (p._edgeKind === 'walk' && Math.abs(p.pos - p.edgeEnd) < 0.7) {
-      this._finishEdge(p, p._edgeAdvance);
+      this._finishEdge(p);
       return;
     }
-    if (p._edgeKind === 'cross' || p._edgeKind === 'jwalk') {
-      this._finishEdge(p, p._edgeAdvance);
-      return;
-    }
+    // ВАЖНО: здесь НЕТ проверки `p._edgeKind === 'cross' || 'jwalk'` — если
+    // она сюда попала, значит переход был прерван через _cancelCross (см.
+    // ниже), а не завершён по-настоящему; притворяться, что дорога перейдена,
+    // и продвигать routeIdx — баг (пешеход остаётся на своей стороне, а
+    // маршрут думает, что он уже на другой). Настоящее завершение перехода
+    // обрабатывается веткой `p.mode === 'cross'` выше.
   }
 ```
 
@@ -798,16 +1086,52 @@ git commit -m "feat: зонная классификация пешеходов,
     if (this.graph && p.active) this._activate(p);
 ```
 
-- [ ] **Step 4: Проверить сборку**
+- [ ] **Step 4: Исправить `_cancelCross` — не притворяться, что переход завершён**
+
+Сейчас `_cancelCross` (слишком долгий красный / машины не пропускают) просто
+возвращает `p.mode` в `walk`/`run`, оставляя `p._edgeKind === 'cross'` — на
+следующем кадре активный пешеход попадает в walk-ветку `_updateActive` (Step 1
+этой задачи), где убрана проверка `_edgeKind === 'cross'`, поэтому раньше это
+приводило к ложному `_finishEdge` (маршрут думал, что дорога перейдена, хотя
+пешеход остался на своей стороне). Теперь вместо этого — честный отказ от
+попытки перейти: маршрут сбрасывается, пешеход пере-активируется заново
+(получит новую цель на следующей классификации).
+
+В `src/peds.js` найди:
+
+```js
+  _cancelCross(p) {
+    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+    p.cross = null;
+    p.turnT = 1.5;
+  }
+```
+
+и замени на:
+
+```js
+  _cancelCross(p) {
+    p.cross = null;
+    if (p.active && (p._edgeKind === 'cross' || p._edgeKind === 'jwalk')) {
+      // маршрут через эту зебру отменён (слишком долгий красный / машины) —
+      // не выдаём это за завершённый переход; пересчитаем маршрут заново
+      p.route = null; p.routeIdx = 0; p.active = false; p._reroute = 0.5;
+    }
+    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+    p.turnT = 1.5;
+  }
+```
+
+- [ ] **Step 5: Проверить сборку**
 
 Run: `python3 build.py`
 Expected: `OK: index.html`.
 
-- [ ] **Step 5: Проверить в браузере**
+- [ ] **Step 6: Проверить в браузере**
 
-В консоли браузера убедись, что пешеходы в `debugSummary()` имеют `routed` близкое к `active`. Понаблюдай 1–2 минуты: активные пешеходы идут по тротуарам, на перекрёстках поворачивают/переходят по зебре, ждут зелёный у светофора, доходят до цели, стоят (`idle`), потом снова идут. Не должны «застревать» или дёргаться.
+В консоли браузера убедись, что пешеходы в `debugSummary()` имеют `routed` близкое к `active`. Понаблюдай 1–2 минуты: активные пешеходы идут по тротуарам, на перекрёстках поворачивают/переходят по зебре, ждут зелёный у светофора, доходят до цели, стоят (`idle`), потом снова идут. Не должны «застревать» или дёргаться, ни один не должен зависнуть в `idle` навсегда (проверка B4 — дойди до Цветника/рынка и понаблюдай несколько циклов idle→маршрут подряд у одного и того же пешехода архетипа `tourist`/`grandma`).
 
-- [ ] **Step 6: Коммит**
+- [ ] **Step 7: Коммит**
 
 ```bash
 git add src/peds.js
@@ -821,7 +1145,7 @@ git commit -m "feat: движение активных пешеходов по �
 **Files:**
 - Modify: `src/peds.js`
 
-- [ ] **Step 1: Учесть `laneOff` в `_worldPos`**
+- [ ] **Step 1: Учесть `laneOff` в `_worldPos` и завести отдельный temp-объект**
 
 В `_worldPos`, ветку по умолчанию (после `if (p.mode === 'turn' && p.turn)`), замени:
 
@@ -835,26 +1159,99 @@ git commit -m "feat: движение активных пешеходов по �
     const off = p.side * PED_SIDE + (p.laneOff || 0);
 ```
 
-- [ ] **Step 2: Добавить методы обхода статики/пешеходов**
+В начале файла, рядом с `_tempPedWp`/`_tempPedWpSync`/`_tempPedWpTurn`, добавь
+ещё один переиспользуемый временный объект — `_avoidStatic` (Step 3) вызывает
+`_lanePoint` до 5 раз за кадр на одного пешехода (проба текущего смещения + до
+4 кандидатов), и если использовать общий `_tempPedWp`, результат одного вызова
+затирается следующим до того, как вызывающий код успевает с ним поработать
+(сейчас безопасно только потому, что каждый вызов используется немедленно, но
+это хрупко и легко сломать будущей правкой):
+
+```js
+const _tempPedProbe = { x: 0, z: 0 };
+```
+
+- [ ] **Step 2: Исправить `_startCross` — jwalk не должен телепортировать на пол-квартала**
+
+Сейчас `_startCross(p)` всегда округляет `p.pos` до ближайшего перекрёстка
+(`Math.round(p.pos / CFG.CELL) * CFG.CELL`) — корректно для настоящей зебры
+(узел `cross` и так стоит на координате перекрёстка), но для `jwalk`-перехода
+`p.pos` уже стоит на серединном узле квартала (`pos ≡ 32 (mod 64)`), и такое
+округление прыгает на ближайший перекрёсток — до 32 м в сторону — вместо
+честного перехода прямо на месте. Нужен параметр, отключающий округление для
+jwalk, и пометка на `p.cross`, которую уже использует «Task 6 Step 6»
+(разрешение перехода на красный) и `_getLightForPed` (jwalk не ждёт светофор).
+
+В `src/peds.js` найди:
+
+```js
+  _startCross(p) {
+    p.pos = Math.round(p.pos / CFG.CELL) * CFG.CELL;
+    p.mode = p.isAnimal ? 'cross' : 'wait'; // Животные сразу идут на переход
+    p.waitT = 0;
+    const crossSpeed = p.isAnimal ? p.speed * 1.5 : p.speed * 1.3;
+    p.cross = {
+      from: p.side * PED_SIDE,
+      to: -p.side * PED_SIDE,
+      t: 0,
+      dur: (PED_SIDE * 2) / crossSpeed,
+    };
+  }
+```
+
+и замени на:
+
+```js
+  _startCross(p, jwalk = false) {
+    if (!jwalk) p.pos = Math.round(p.pos / CFG.CELL) * CFG.CELL;
+    p.mode = p.isAnimal ? 'cross' : 'wait'; // Животные сразу идут на переход
+    p.waitT = 0;
+    const crossSpeed = p.isAnimal ? p.speed * 1.5 : p.speed * 1.3;
+    p.cross = {
+      from: p.side * PED_SIDE,
+      to: -p.side * PED_SIDE,
+      t: 0,
+      dur: (PED_SIDE * 2) / crossSpeed,
+      jwalk,
+    };
+  }
+```
+
+Существующие вызовы `this._startCross(p)` без второго аргумента (из `_decide`,
+для животных и обычного «перейти дорогу») продолжают работать как раньше —
+`jwalk` по умолчанию `false`. Новый вызов из `_startEdge` (Task 4, Step 2) уже
+передаёт `e.kind === 'jwalk'` вторым аргументом.
+
+- [ ] **Step 3: Добавить методы обхода статики/пешеходов**
 
 Добавь после `_updateTurn`:
 
 ```js
   /* Точка на ленте с заданным боковым смещением (для проверки препятствий) */
-  _lanePoint(p, off, out = _tempPedWp) {
+  _lanePoint(p, off, out = _tempPedProbe) {
     const o = p.side * PED_SIDE + off;
     if (p.axis === 'z') { out.x = p.coord + o; out.z = p.pos; }
     else { out.x = p.pos; out.z = p.coord + o; }
     return out;
   }
 
-  /* Есть ли статическое препятствие (пропс/здание/круглый коллайдер) в точке */
+  /* Есть ли статическое препятствие (пропс/здание/круглый коллайдер) в точке.
+     Здания — через одноразовый spatial hash (initGraph, Task 4), не линейным
+     перебором ~250 AABB на каждого активного пешехода каждый кадр. */
   _obstacleAt(x, z) {
     const w = this.world;
     if (!w) return false;
     if (w._checkPropCollision(x, z, 0.4)) return true;
-    for (const b of w.buildings) {
-      if (x > b.x0 - 0.3 && x < b.x1 + 0.3 && z > b.z0 - 0.3 && z < b.z1 + 0.3) return true;
+    if (this._buildingHash) {
+      const cell = 16;
+      const cx = Math.floor(x / cell), cz = Math.floor(z / cell);
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+        const bucket = this._buildingHash.get((cx + dx) + ',' + (cz + dz));
+        if (!bucket) continue;
+        for (const b of bucket) {
+          if (x > b.x0 - 0.3 && x < b.x1 + 0.3 && z > b.z0 - 0.3 && z < b.z1 + 0.3) return true;
+        }
+      }
     }
     for (const c of w.circleColliders) {
       if (Math.hypot(x - c.x, z - c.z) < c.r + 0.3) return true;
@@ -862,7 +1259,12 @@ git commit -m "feat: движение активных пешеходов по �
     return false;
   }
 
-  /* Боковое смещение вокруг статики (активная и ближняя зоны) */
+  /* Боковое смещение вокруг статики (активная и ближняя зоны). laneOff
+     ограничен ±1.5 (полуширина тротуара 2 м минус запас на корпус пешехода —
+     значение согласовано со спекой, было ±1.9 у пешехода при ширине тротуара
+     2 м, что вылезало на проезжую часть). Полная блокировка дольше 1.5 с —
+     явная реакция (не бесконечная заморозка speed=0): активный пересчитывает
+     маршрут, пассивный разворачивается — см. спеку, «Обход препятствий». */
   _avoidStatic(p, dt) {
     if (!this.world || (!p.nearZone && !p.active)) return;
     const look = 2.2;
@@ -874,32 +1276,62 @@ git commit -m "feat: движение активных пешеходов по �
     if (!this._obstacleAt(probe.x, probe.z)) {
       p.laneOff *= Math.max(0, 1 - 4 * dt);
       if (Math.abs(p.laneOff) < 0.02) p.laneOff = 0;
+      p._stuckT = 0;
       return;
     }
     for (const o of [1.4, -1.4, 2.4, -2.4]) {
-      const cand = clamp((p.laneOff || 0) + o, -1.9, 1.9);
+      const cand = clamp((p.laneOff || 0) + o, -1.5, 1.5);
       const pr = this._lanePoint(p, cand);
       pr.x += dirX * look;
       pr.z += dirZ * look;
-      if (!this._obstacleAt(pr.x, pr.z)) { p.laneOff = cand; return; }
+      if (!this._obstacleAt(pr.x, pr.z)) { p.laneOff = cand; p._stuckT = 0; return; }
     }
-    p.speed = 0; // полностью заблокировано — короткая остановка
+    // заблокировано с обеих сторон
+    p.speed = 0;
+    p._stuckT += dt;
+    if (p._stuckT > 1.5) {
+      p._stuckT = 0;
+      if (p.active) {
+        // не держим протухший маршрут — деактивация с коротким кулдауном
+        // даёт _classify пере-активировать пешехода на следующем тике с
+        // новой целью, минуя препятствие
+        p.route = null; p.routeIdx = 0; p.active = false; p._reroute = 0.3;
+      } else {
+        p.dir = -p.dir; p.turnT = 0.5;
+      }
+    }
   }
 
-  /* Разъезд активных пешеходов на одной ленте (кар-фолловинг + обгон) */
-  _avoidPeds(p) {
+  /* Разъезд активных пешеходов на одной ленте (кар-фолловинг + обгон).
+     Лидер с сильно отличающимся laneOff (>0.9 м) пропускается — иначе
+     пешеход, ушедший вбок для обгона, продолжает считаться «впереди» и
+     обгон никогда не завершается (dt — не 1/60, чтобы таймер не зависел от
+     частоты кадров). */
+  _avoidPeds(p, dt) {
     for (const o of this.cars) {
       if (o === p || !o.alive || !o.active) continue;
       if (o.mode !== 'walk' && o.mode !== 'run' && o.mode !== 'idle' && o.mode !== 'wait') continue;
       if (o.axis !== p.axis || o.coord !== p.coord || o.side !== p.side) continue;
+      if (Math.abs((o.laneOff || 0) - (p.laneOff || 0)) > 0.9) continue;
       const d = (o.pos - p.pos) * p.dir;
       if (d <= 0 || d > 2.2) continue;
       const leaderSpeed = (o.mode === 'idle' || o.mode === 'wait') ? 0 : o.speed;
       if (p.speed > leaderSpeed) p.speed = Math.max(0.3, leaderSpeed);
       if (leaderSpeed < p.baseSpeed * 0.6) {
-        p._blockedT += 1 / 60;
+        p._blockedT += dt;
         if (p._blockedT > 1.0 && p.laneOff === 0) {
-          p.laneOff = (o.laneOff || 0) >= 0 ? -1.4 : 1.4;
+          // Встречные (o.dir !== p.dir) видят друг друга "впереди"
+          // ОДНОВРЕМЕННО: формула ниже для обгона ((o.laneOff||0)>=0?-1.4:1.4)
+          // при laneOff=0 с обеих сторон даёт ОДИНАКОВЫЙ знак для обоих — оба
+          // уходят в одну и ту же сторону и продолжают блокировать друг
+          // друга. Для встречных используем правило, зависящее только от
+          // собственного p.dir — у встречных dir противоположны, значит и
+          // знак гарантированно разный, они расходятся. Для обгона (тот же
+          // dir, лидер медленнее) сторона по-прежнему выбирается от лидера.
+          const headOn = o.dir !== p.dir;
+          p.laneOff = headOn
+            ? (p.dir > 0 ? 1.4 : -1.4)
+            : ((o.laneOff || 0) >= 0 ? -1.4 : 1.4);
           p.speed = Math.min(p.baseSpeed * 1.25, p.speed + 0.5);
         }
       } else {
@@ -910,15 +1342,18 @@ git commit -m "feat: движение активных пешеходов по �
   }
 ```
 
-- [ ] **Step 3: Вызывать обход статики и у пассивных (ближняя зона)**
+- [ ] **Step 4: Вызывать обход статики и у пассивных (ближняя зона), восстанавливать скорость**
 
 В `_updateWalk`, в самом начале метода (перед `p.pos += p.speed * dt * p.dir;`) добавь:
 
 ```js
-    if (p.nearZone && !p.active) this._avoidStatic(p, dt);
+    if (p.nearZone && !p.active) {
+      p.speed = p.baseSpeed; // восстановление после предыдущей блокировки — см. _avoidStatic
+      this._avoidStatic(p, dt);
+    }
 ```
 
-- [ ] **Step 4: Валидация позиции спавна от коллизий**
+- [ ] **Step 5: Валидация позиции спавна от коллизий**
 
 Добавь методы (после `_obstacleAt`):
 
@@ -944,7 +1379,7 @@ git commit -m "feat: движение активных пешеходов по �
       if (this._spotBlocked(wx, wz)) continue;
 ```
 
-- [ ] **Step 5: Разрешить нарушителям переход на красный при зазоре**
+- [ ] **Step 6: Разрешить нарушителям переход на красный при зазоре**
 
 В `_updateWait` замени блок со светофором:
 
@@ -980,23 +1415,110 @@ git commit -m "feat: движение активных пешеходов по �
     if (p.cross && p.cross.jwalk) return null; // незаконный переход светофором не управляется
 ```
 
-- [ ] **Step 6: Проверить сборку**
+- [ ] **Step 7: Проверить сборку**
 
 Run: `python3 build.py`
 Expected: `OK: index.html`.
 
-- [ ] **Step 7: Проверить в браузере**
+- [ ] **Step 8: Проверить в браузере**
 
-1. Подъезжай к пешеходам: они обходят фонари/лавки/деревья (боковое смещение), не застревают в них.
-2. На одной ленте пешеходы не слипаются: догоняющий замедляется или обходит.
-3. У зебры ждут зелёный/зазор; ~20% (нарушители) идут на красный при пустой дороге и иногда перебегают середину квартала.
+1. Подъезжай к пешеходам: они обходят фонари/лавки/деревья (боковое смещение), не застревают в них навсегда (проверка A5 — постой рядом с заблокированным пешеходом 2-3 с, он должен либо обойти, либо развернуться/пересчитать маршрут, а не замереть).
+2. На одной ленте пешеходы не слипаются: догоняющий замедляется или обходит и **возвращается** в исходную полосу после обгона (проверка A9 — обгон должен завершаться, не залипать).
+3. У зебры ждут зелёный/зазор; ~20% (нарушители) идут на красный при пустой дороге и иногда перебегают середину квартала (jwalk) — без прыжка на соседний перекрёсток (проверка A4).
 4. Спавн пешеходов рядом с тобой — не внутри машин/лавок (проверь поворотом камеры на 360°).
 
-- [ ] **Step 8: Коммит**
+- [ ] **Step 9: Коммит**
 
 ```bash
 git add src/peds.js
 git commit -m "feat: обход пешеходами препятствий (статика, пешеходы, машины) и нарушения ПДД"
+```
+
+---
+
+### Task 6b: Разметка переходов по фактической траектории пешехода
+
+**Files:**
+- Modify: `src/citygen.js`
+
+**Контекст:** см. спеку, подраздел «Разметка переходов». `_startCross`
+(Task 6, Step 2) уже кладёт пешехода ровно на координату перекрёстка вдоль его
+оси движения (`Math.round(p.pos / CFG.CELL) * CFG.CELL` — `CFG.CELL=64` это
+шаг сетки перекрёстков, значит снап уже точный, никакого дрейфа в логике
+движения нет) — но нарисованная зебра в `_crosswalks` стоит на ±6.2 м от
+центра и узкая (~5 м из 12 м ширины проезжей части). Правим **разметку**, а не
+логику: не трогаем `_startCross`/`_decide`/тайминг принятия решения — это
+рискованная зона (геометрия поворотов/ожидания), которую нельзя надёжно
+скорректировать без визуальной проверки в браузере.
+
+- [ ] **Step 1: Отцентровать и расширить полосы зебры**
+
+В `src/citygen.js`, метод `_crosswalks`, найди блок формирования `mNorth`/`mSouth`/`mWest`/`mEast`:
+
+```js
+    for (const isec of this.intersections) {
+      const sx = isec.x, sz = isec.z;
+      // 4 зебры вокруг каждого перекрёстка
+      for (let k = -2; k <= 2; k++) {
+        const off = k * 1.1;
+        // Верхний и нижний подходы к перекрёстку (полосы вдоль X)
+        const mNorth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz - 6.2);
+        const mSouth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz + 6.2);
+        listV.push(mNorth, mSouth);
+
+        // Левый и правый подходы к перекрёстку (полосы вдоль Z)
+        const mWest = new THREE.Matrix4().makeTranslation(sx - 6.2, 0.11, sz + off);
+        const mEast = new THREE.Matrix4().makeTranslation(sx + 6.2, 0.11, sz + off);
+        listH.push(mWest, mEast);
+      }
+    }
+```
+
+и замени смещение `±6.2` на `0` (центрируем на перекрёстке — там же, где
+`_startCross` уже кладёт пешехода) и диапазон `k` с `[-2,2]` (±2.2 м) на
+`[-5,5]` (±5.5 м, покрывает фактическую ширину пешеходной зоны перехода):
+
+```js
+    for (const isec of this.intersections) {
+      const sx = isec.x, sz = isec.z;
+      // 4 зебры вокруг каждого перекрёстка, центрированные на нём — там же,
+      // где _startCross кладёт пешехода при переходе (см. Task 6, Step 2)
+      for (let k = -5; k <= 5; k++) {
+        const off = k * 1.1;
+        const mNorth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz);
+        listV.push(mNorth);
+
+        const mWest = new THREE.Matrix4().makeTranslation(sx, 0.11, sz + off);
+        listH.push(mWest);
+      }
+    }
+```
+
+Полос теперь вдвое меньше на перекрёсток (по одной ленте на ориентацию вместо
+северной+южной/западной+восточной пар), но каждая шире (`k∈[-5,5]` вместо
+`[-2,2]`) и стоит там, где пешеход реально идёт, а не сдвинута в сторону —
+итоговое число инстансов `InstancedMesh` даже меньше прежнего, на
+производительность влиять не может.
+
+- [ ] **Step 2: Проверить сборку**
+
+Run: `python3 build.py`
+Expected: `OK: index.html`.
+
+- [ ] **Step 3: Визуально сверить в браузере (обязательно — не только по коду)**
+
+Подойди/подъезжай к нескольким перекрёсткам (со светофором и без) и понаблюдай
+переход пешехода: он должен идти по нарисованным полосам, а не рядом с ними.
+Если расхождение осталось (например, полосы недостаточно широкие или чуть
+смещены из-за визуальной толщины самих полос/скруглений камеры) — подправь
+диапазон `k` или добавь небольшой финальный оффсет в этом же методе
+(`_crosswalks`), не трогая `peds.js`.
+
+- [ ] **Step 4: Коммит**
+
+```bash
+git add src/citygen.js
+git commit -m "fix: разметка переходов centрирована на перекрёстке под фактическую траекторию пешехода"
 ```
 
 ---
@@ -1009,15 +1531,23 @@ git commit -m "feat: обход пешеходами препятствий (с�
 - [ ] **Step 1: Полная сборка**
 
 Run: `python3 build.py && node --test tests/`
-Expected: `OK: index.html` и `# tests 11` pass.
+Expected: `OK: index.html` и `# tests 14` pass (Task 0 делает `node --test`
+вообще запускаемым — без `package.json` тут была бы `SyntaxError`).
 
 - [ ] **Step 2: Регрессионная проверка в браузере**
 
 1. Старт смены, езда по городу 3–5 минут: пешеходы дальше 150 м ведут себя как раньше (простая ходьба), активные — по маршрутам.
 2. Поворот камеры на 360° при стоянке: нет пешеходов, стоящих внутри лавок/фонарей/машин.
-3. Сбивание пешехода: отлёт/убегание работают, после восстановления маршрут пересчитывается.
+3. Сбивание пешехода: отлёт/убегание работают, после восстановления маршрут пересчитывается (не «телепортирует» на старую цель).
 4. Заказы/пассажиры (`adoptPedestrian`): ушедший пассажир ведёт себя как горожанин.
 5. `debugSummary()`: `nodes:693`, `active`+`near` в разумных пределах, нет NaN/undefined в `p.x/p.z` (консоль чистая).
+6. Собаки/коты не участвуют в маршрутах (не ждут светофор, перебегают как раньше — B3), но не застревают в лавках/деревьях в ближней/активной зоне.
+7. Пешеход-турист/бабушка после прибытия к POI не зависает в `idle` навечно — понаблюдай 2-3 полных цикла `idle → маршрут` у одного и того же пешехода (проверка B4).
+8. Достопримечательности иногда реально выбираются целью (не только точки подачи такси) — понаблюдай маршруты нескольких активных пешеходов подряд (проверка B1).
+9. Резкий разворот камеры/машины, вводящий сразу несколько пешеходов в активную зону, не даёт заметного фриза кадра (лимит 2 активации за тик, Task 4).
+10. Переход выполняется по нарисованной зебре (Task 6b), а не рядом с ней.
+11. Активный пешеход, срезающий угол на перекрёстке (`turn`), не телепортируется назад, если в этот момент выехал за пределы активного радиуса — понаблюдай за поворотом на границе зоны (проверка B/`_classify` turn-guard).
+12. Два активных пешехода, идущих навстречу друг другу по одному тротуару, расходятся в разные стороны, а не толкаются на месте (проверка `_avoidPeds` head-on).
 
 - [ ] **Step 3: Убрать временный отладочный вывод (если добавлялся) и пересобрать**
 
@@ -1033,8 +1563,48 @@ git commit -m "fix: финальные правки пешеходов по ре
 
 ---
 
-## Self-Review (выполнено при написании)
+## Self-Review (ревизия 2026-08-07)
 
-- **Покрытие спеки:** зоны (Task 1, 4), граф+рёбра (Task 2), Dijkstra/jwalk/POI (Task 2-3), маршрут и idle (Task 4-5), ПДД включая нарушения (Task 6), обход статики/пешеходов/машин (Task 6), спавн без коллизий (Task 6), интеграция `adoptPedestrian` (Task 4 — общие поля/обновление), константы (Task 1).
+- **Покрытие спеки:** зоны (Task 1, 4), тесты запускаемы (Task 0), граф+рёбра
+  (Task 2), Dijkstra без повторных проходов/jwalk/POI с фильтром по дистанции
+  (Task 2-3), маршрут без телепорта на входе, взвешенные POI, кулдаун
+  ре-активации, лимит активаций за тик (Task 4-5), ПДД включая нарушения и
+  корректный jwalk (Task 6), обход статики/пешеходов/машин без необратимой
+  заморозки скорости (Task 6), спавн без коллизий (Task 6), разметка под
+  фактическую траекторию (Task 6b), интеграция `adoptPedestrian` и животных
+  (Task 4 — общие поля/обновление, пропуск `isAnimal`), константы (Task 1).
 - **Плейсхолдеров нет** — все шаги содержат полный код.
-- **Консистентность типов:** `_startEdge`/`_finishEdge`/`_arrive`/`_activate`/`_deactivate`/`_pickDestination`/`_pickPoiFor`/`_pickRandomNode`/`_edgesFor`/`_updateActive`/`_avoidStatic`/`_avoidPeds`/`_lanePoint`/`_obstacleAt`/`_spotBlocked`/`initGraph`/`_classify`/`debugSummary` определены в плане и согласованы. Поля пешехода: `violator`, `active`, `nearZone`, `laneOff`, `route`, `routeIdx`, `_edgeKind`, `_edgeAdvance`, `edgeEnd`, `idleT`, `_blockedT`, `_turnTo` инициализируются в `spawn`/`adoptPedestrian` (Task 4 Step 1).
+- **Консистентность типов:** `_startEdge`/`_finishEdge`/`_arrive`/`_activate`/
+  `_deactivate`/`_pickDestination`/`_pickPoiFor`/`_pickWeightedPoi`/
+  `_pickRandomNode`/`_edgesFor`/`_updateActive`/`_avoidStatic`/`_avoidPeds`/
+  `_lanePoint`/`_obstacleAt`/`_spotBlocked`/`initGraph`/`_classify`/
+  `_cancelCross`/`_startCross`/`debugSummary` определены в плане и
+  согласованы; `_edgeAdvance` из плана исключён (был источником бага
+  пропуска рёбер — A2). Поля пешехода: `violator`, `active`, `nearZone`,
+  `laneOff`, `route`, `routeIdx`, `_edgeKind`, `edgeEnd`, `idleT`,
+  `_blockedT`, `_stuckT`, `_reroute`, `_turnTo` инициализируются в
+  `spawn`/`adoptPedestrian` (Task 4 Step 1).
+- **Известные компромиссы, оставленные сознательно:** `_pickRandomNode`
+  перебирает узлы линейно (не через приоритетную очередь) — приемлемо при
+  ~2 активациях за тик и уже готовом `dist[]`; при полной блокировке статикой
+  активный пешеход деактивируется и ждёт следующего тика классификации
+  (~0.5 с), а не пересчитывает маршрут мгновенно в том же кадре — небольшая
+  задержка ради простоты кода; разметка переходов (Task 6b) подбирается
+  полу-эмпирически с явным шагом визуальной проверки в браузере, так как
+  точная геометрия зависит от рендера, который нельзя проверить только чтением
+  кода.
+- **Учтён независимый повторный анализ** (`docs/plans/2026-08-07-intelligent-peds-analysis.md`,
+  написан отдельно от этой ревизии) — из его 5 замечаний 3 применимы к текущей
+  редакции плана и внесены: (1) `_classify` не деактивирует посреди `turn` —
+  иначе `axis`/`coord`/`pos` для активного графового поворота остаются от
+  точки ДО поворота (обновляются только по завершении, в `_updateActive`), и
+  пешеход визуально откатывается назад; (2) `_avoidPeds` для встречных
+  (`o.dir !== p.dir`) выбирает сторону обхода детерминированно от
+  собственного `p.dir`, а не от `laneOff` оппонента — иначе оба, стартуя с
+  `laneOff=0`, синхронно уходят в одну и ту же сторону и не расходятся; (3)
+  `adoptPedestrian` пытается активироваться сразу, а не ждёт до 0.5 с
+  следующего тика `_classify`, — высаженный пассажир обычно стоит прямо в
+  активном радиусе игрока. Два замечания того анализа (A и C) касались
+  формулировок исходного, дореформенного плана и уже покрыты этой ревизией
+  иначе — без поглощения ребра в `advance` (A2 выше) и хешем зданий вместо
+  линейного перебора (A11 выше).
