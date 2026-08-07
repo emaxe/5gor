@@ -284,21 +284,46 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 #error-overlay button { padding: 12px 24px; border-radius: 10px; border: none; font-size: 15px; cursor: pointer; background: #2e6fb5; color: #fff; }
 
 /* ---------- Мобильные ---------- */
+/* Раскладка HUD на телефоне:
+   верх — информация (статус слева, заказ по центру, мини-карта справа),
+   левый край — колонка кнопок действий (под левый палец),
+   низ слева — скорость/топливо/урон,
+   низ справа — джойстик + ручник (вся зона управления под правый палец),
+   центр-низ — контекстная кнопка действия. */
 @media (max-width: 720px) {
   #minimap { width: 116px; height: 116px; }
-  #hud-tl { font-size: 12px; padding: 6px 10px; }
+  #hud-tl { top: 10px; left: 10px; bottom: auto; font-size: 12px; padding: 6px 10px; }
   #money { font-size: 15px; }
-  #hud-bl { min-width: 100px; padding: 6px 10px; bottom: 22%; }
+  #hud-bl { bottom: 12px; left: 10px; min-width: 100px; padding: 6px 10px; }
   #speed-val { font-size: 24px; }
-  #hud-tc { top: 118px; }
+  #hud-tc { top: 130px; }
   #order-card { min-width: 150px; max-width: 60vw; }
+  #dialogue-bubble { max-width: 92vw; }
   #nav-arrow-wrap { width: 52px; height: 52px; }
-  #hud-btns button { width: 40px; height: 40px; font-size: 17px; }
-  #hud-tl { top: auto; bottom: 10px; left: 10px; }
+  /* кнопки действий — вертикальная колонка на левом краю */
+  #hud-btns {
+    position: fixed;
+    left: 10px; top: 45%;
+    transform: translateY(-50%);
+    flex-direction: column;
+    gap: 8px;
+  }
+  #hud-btns button { width: 44px; height: 44px; font-size: 19px; }
+  #btn-pause { border-color: rgba(242, 193, 46, 0.55); }
   #hud-tr { top: 10px; right: 10px; }
   .card { padding: 20px 18px; min-width: 0; width: 92vw; }
   #btn-interact-wrap { bottom: 34%; }
   #toasts { top: 12px; }
+  /* джойстик — вправо, ручник — слева от него на одной линии */
+  #joy-zone {
+    left: auto;
+    right: calc(14px + env(safe-area-inset-right));
+    bottom: calc(18px + env(safe-area-inset-bottom));
+  }
+  #btn-hb {
+    right: calc(164px + env(safe-area-inset-right));
+    bottom: calc(40px + env(safe-area-inset-bottom));
+  }
 }
 
 </style>
