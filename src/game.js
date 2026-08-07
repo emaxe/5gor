@@ -236,9 +236,9 @@ export class Game {
     this.traffic.lightsRef = this.world.lights;
 
     this.peds = new PedestrianManager(this.scene);
-    this.peds.spawn(CFG.pedCount, this.player);
     this.peds.lightsRef = this.world.lights;
     this.peds.world = this.world;
+    this.peds.spawn(CFG.pedCount, this.player);
     this.world.peds = this.peds;
     this.world.gameRef = this;
 

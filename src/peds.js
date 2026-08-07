@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { CFG } from './config.js';
 import { rand, clamp, lerp, choice, buildPedMesh, makeSpeechSprite, updateSpeechSprite, isInPlayerView } from './utils.js';
 import { Events } from './eventbus.js';
+import { PedGraph } from './pedgraph.js';
 
 const _tempPedWp = { x: 0, z: 0 };
 const _tempPedWpSync = { x: 0, z: 0 };
@@ -69,6 +70,8 @@ export class PedestrianManager {
     this.cars = []; // сущности
     this.trafficRef = null;
     this._count = 0;
+    this.graph = null;
+    this._classifyTimer = 0;
   }
 
   /* Реплика над головой пешехода / животного */
@@ -167,7 +170,11 @@ export class PedestrianManager {
         speed: 0, baseSpeed: 2.2, side: 1, turnT: 0, mode: 'walk', cross: null, turn: null,
         targetPos: null, targetIsec: null,
         waitT: 0, fx: 0, fz: 0, fvx: 0, fvz: 0, fleeT: 0, knockT: 0, hitCd: 0,
-        angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30)
+        angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30),
+        violator: Math.random() < CFG.pedViolatorChance,
+        active: false, nearZone: false, laneOff: 0,
+        route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
+        idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
       };
       this.cars.push(ped);
       this.scene.add(mesh);
@@ -319,6 +326,253 @@ export class PedestrianManager {
     }
     if (p.walk && p.mode !== 'wait') h += Math.sin(p.walk) * 0.04;
     return h;
+  }
+
+  /* Построить граф ходьбы из мира + POI (достопримечательности, точки подачи,
+     заправки) + одноразовый spatial hash зданий (ячейки 16 м) для _obstacleAt
+     (Task 6) — линейный перебор ~250 AABB на каждого активного пешехода
+     каждый кадр слишком дорог. */
+  initGraph(world) {
+    this.world = world;
+    if (!world || !world.intersections || !world.intersections.length) return;
+    const graph = new PedGraph();
+    graph.build(world.intersections);
+    const pois = [];
+    for (const l of world.landmarks || []) pois.push({ x: l.x, z: l.z, tag: l.id });
+    for (const p of world.pickupPoints || []) pois.push({ x: p.x, z: p.z, tag: 'pickup' });
+    for (const s of world.fuelStations || []) pois.push({ x: s.x, z: s.z, tag: 'fuel' });
+    graph.setPOIs(pois);
+    this.graph = graph;
+
+    this._buildingHash = new Map();
+    const cell = 16;
+    for (const b of world.buildings || []) {
+      const cx0 = Math.floor(b.x0 / cell), cx1 = Math.floor(b.x1 / cell);
+      const cz0 = Math.floor(b.z0 / cell), cz1 = Math.floor(b.z1 / cell);
+      for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
+        const key = cx + ',' + cz;
+        if (!this._buildingHash.has(key)) this._buildingHash.set(key, []);
+        this._buildingHash.get(key).push(b);
+      }
+    }
+  }
+
+  /* Классификация зон (0.5 с, гистерезис) — активная/ближняя/дальняя.
+     Животные и скрытые (mesh.visible=false, см. game.js _applyDensity)
+     полный ИИ не получают. Не более 2 новых активаций за тик — каждая стоит
+     один полный проход Dijkstra (~1-3 мс); при резком появлении сразу
+     нескольких пешеходов в зоне это защита от фриза кадра (см. спеку,
+     «Производительность»).
+     Не деактивируем посреди cross/wait/turn — не только по правилу спеки
+     («не обрывать переход»), но и из-за конкретного технического риска для
+     turn: активный поворот (через graph-ребро kind='turn') откладывает
+     обновление p.axis/p.coord/p.pos до ЗАВЕРШЕНИЯ (в ветке `turn` внутри
+     `_updateActive`, Task 5) — если деактивировать пешехода до этого момента,
+     visual-интерполяция (p.turn) доиграет через общий `_updateTurn`, но
+     axis/coord/pos останутся от ДО поворота, а `_worldPos` после обнуления
+     p.turn считает мировую позицию именно по ним — пешеход визуально
+     телепортируется обратно в точку начала поворота. */
+  _classify(dt) {
+    // кулдауны пересчёта маршрута тикают каждый кадр, не только на классификации
+    for (const p of this.cars) {
+      if (p._reroute > 0) p._reroute -= dt;
+    }
+    this._classifyTimer -= dt;
+    if (this._classifyTimer > 0) return;
+    this._classifyTimer = 0.5;
+    if (!this.graph) return;
+    const pl = this._playerRef;
+    const px = pl && pl.x !== undefined ? pl.x : 0;
+    const pz = pl && pl.z !== undefined ? pl.z : 0;
+    let activations = 0;
+    for (const p of this.cars) {
+      if (!p.alive || p.isAnimal || !p.mesh.visible) continue;
+      const d = Math.hypot(p.x - px, p.z - pz);
+      p.nearZone = d <= CFG.pedNearRadius;
+      if (!p.active && d <= CFG.pedActiveRadius) {
+        if (activations >= 2 || p._reroute > 0) continue;
+        this._activate(p);
+        activations++;
+      } else if (p.active && d > CFG.pedActiveRadius + 5 && p.mode !== 'cross' && p.mode !== 'wait' && p.mode !== 'turn') {
+        this._deactivate(p);
+      }
+    }
+  }
+
+  /* Активировать: узел входа на СВОЕЙ ленте -> цель -> маршрут.
+     Ранний выход при отлёте/убегании/пинке — не обрывает их сменой mode.
+     Ровно один проход Dijkstra (routesFrom) на активацию — дальше выбор
+     цели и восстановление пути работают по готовым dist/prev без повторных
+     проходов (см. pedgraph.js, комментарий у routesFrom). */
+  _activate(p) {
+    if (!this.graph || p.isAnimal) return;
+    if (p.knockT > 0 || p.mode === 'flee' || p.mode === 'kick') return;
+    p.route = null; p.routeIdx = 0; p.laneOff = 0;
+
+    const fromId = this.graph.nodeOnLane(p.axis, p.coord, p.side, p.pos);
+    if (fromId == null) { p.active = false; p._reroute = 2.0; return; }
+
+    const { dist, prev } = this.graph.routesFrom(fromId, p.violator);
+    const toId = this._pickDestination(p, fromId, dist);
+    if (toId == null || toId === fromId) { p.active = false; p._reroute = 2.0; return; }
+
+    const path = this.graph.pathTo(prev, fromId, toId);
+    if (!path || path.length < 2) { p.active = false; p._reroute = 2.0; return; }
+
+    const fromNode = this.graph.nodes[fromId];
+    const approach = {
+      kind: 'walk', axis: p.axis, coord: p.coord, side: p.side,
+      posStart: p.pos, posEnd: p.axis === 'z' ? fromNode.z : fromNode.x,
+    };
+    p.route = [approach, ...this._edgesFor(path)];
+    p.routeIdx = 0;
+    p.active = true;
+    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+    this._startEdge(p);
+  }
+
+  _deactivate(p) {
+    p.active = false;
+    p.route = null; p.routeIdx = 0;
+    p.laneOff = 0;
+    if (p.mode === 'idle') p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+  }
+
+  /* Выбор цели: гибрид POI (по архетипу, взвешенно) + случайная — всё в
+     пределах готовой карты dist[] (2-6 walk-рёбер ~ dist 1-3), БЕЗ повторных
+     вызовов Dijkstra (dist уже посчитан один раз в _activate). */
+  _pickDestination(p, fromId, dist) {
+    if (p.archetype === 'tourist') {
+      const id = this._pickPoiFor(fromId, dist, 'cvetnik', 'proval');
+      if (id != null) return id;
+    }
+    if (p.archetype === 'grandma') {
+      const id = this._pickPoiFor(fromId, dist, 'rynok', 'pickup', 'fuel');
+      if (id != null) return id;
+    }
+    if (Math.random() < 0.5) {
+      const id = this._pickWeightedPoi(fromId, dist);
+      if (id != null) return id;
+    }
+    return this._pickRandomNode(fromId, dist);
+  }
+
+  /* POI нужной категории в пределах dist[1,3]: случайный из ДО ТРЁХ ближайших
+     подходящих, не считая узел прибытия и всё ближе 1 (иначе пешеход у своей
+     единственной ближайшей достопримечательности после idle тут же выбирает
+     её же снова — toId===fromId, активация молча ничего не делает, а таймер
+     простоя уже истёк: вечный idle без движения). БЕЗ fallback на весь список
+     POI — по той же причине. */
+  _pickPoiFor(fromId, dist, ...tags) {
+    const g = this.graph;
+    const pool = g.poiList
+      .filter(po => tags.some(t => po.tag && po.tag.includes(t)))
+      .filter(po => po.node !== fromId && dist[po.node] >= 1 && dist[po.node] <= 3)
+      .sort((a, b) => dist[a.node] - dist[b.node]);
+    if (!pool.length) return null;
+    const top = pool.slice(0, 3);
+    return top[Math.floor(Math.random() * top.length)].node;
+  }
+
+  /* Случайный POI без привязки к архетипу, взвешенно по категориям:
+     достопримечательность 0.5 / точка подачи такси 0.35 / заправка 0.15.
+     Без весов точки подачи (~300 шт.) забивают выбор — достопримечательности
+     (9 шт.) практически никогда не выпадают. */
+  _pickWeightedPoi(fromId, dist) {
+    const g = this.graph;
+    const inRange = g.poiList.filter(po => po.node !== fromId && dist[po.node] >= 1 && dist[po.node] <= 3);
+    if (!inRange.length) return null;
+    const byCat = { landmark: [], pickup: [], fuel: [] };
+    for (const po of inRange) {
+      const cat = po.tag === 'pickup' ? 'pickup' : po.tag === 'fuel' ? 'fuel' : 'landmark';
+      byCat[cat].push(po);
+    }
+    const weights = [['landmark', 0.5], ['pickup', 0.35], ['fuel', 0.15]].filter(([c]) => byCat[c].length);
+    if (!weights.length) return null;
+    const total = weights.reduce((s, [, w]) => s + w, 0);
+    let r = Math.random() * total;
+    let cat = weights[weights.length - 1][0];
+    for (const [c, w] of weights) { if (r < w) { cat = c; break; } r -= w; }
+    const list = byCat[cat];
+    return list[Math.floor(Math.random() * list.length)].node;
+  }
+
+  /* Случайный тротуарный узел на графовой дистанции 2-6 рёбер (dist∈[1,3]),
+     по готовой карте dist[] — без единого повторного Dijkstra. */
+  _pickRandomNode(fromId, dist) {
+    const g = this.graph;
+    const candidates = [];
+    for (const n of g.nodes) {
+      if ((n.kind !== 'lane' && n.kind !== 'mid') || n.id === fromId) continue;
+      const d = dist[n.id];
+      if (d >= 1 && d <= 3) candidates.push(n.id);
+    }
+    if (!candidates.length) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  /* Маршрут -> массив дескрипторов рёбер (сливаем пару cross через центр в
+     один описатель — сторона departure берётся с некруглого узла, см.
+     pedgraph.js edgeInfo). routeIdx индексирует ЭТОТ массив, а не исходный
+     path — каждый элемент = один шаг движения, поэтому _finishEdge всегда
+     продвигает на 1, без отдельного поля advance. */
+  _edgesFor(path) {
+    const out = [];
+    for (let i = 0; i + 1 < path.length; i++) {
+      const a = path[i], b = path[i + 1];
+      const e = this.graph.edgeInfo(a, b);
+      if (!e) continue;
+      if (e.kind === 'cross' && i + 2 < path.length && this.graph.nodes[b].kind === 'center') {
+        out.push(e);
+        i += 1;
+        continue;
+      }
+      out.push(e);
+    }
+    return out;
+  }
+
+  /* Начать движение по текущему ребру маршрута */
+  _startEdge(p) {
+    if (p.routeIdx >= p.route.length) { this._arrive(p); return; }
+    const e = p.route[p.routeIdx];
+    p._edgeKind = e.kind;
+    p.speed = p.baseSpeed;
+    if (e.kind === 'walk') {
+      p.axis = e.axis; p.coord = e.coord; p.side = e.side;
+      p.dir = e.posEnd >= e.posStart ? 1 : -1;
+      p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+      p.edgeEnd = e.posEnd;
+      p.cross = null; p.turn = null;
+    } else if (e.kind === 'cross' || e.kind === 'jwalk') {
+      p.axis = e.axis; p.coord = e.coord; p.side = e.side; p.pos = e.pos;
+      p.cross = null; p.turn = null;
+      this._startCross(p, e.kind === 'jwalk');
+    } else if (e.kind === 'turn') {
+      p.mode = 'turn';
+      p.cross = null;
+      p.turn = {
+        x0: e.x0, z0: e.z0, x1: e.x1, z1: e.z1, t: 0,
+        dur: Math.hypot(e.x1 - e.x0, e.z1 - e.z0) / Math.max(p.speed, 0.5),
+      };
+      p._turnTo = e;
+    }
+  }
+
+  /* Всегда продвигает на 1 элемент p.route — см. комментарий у _edgesFor. */
+  _finishEdge(p) {
+    p.routeIdx += 1;
+    this._startEdge(p);
+  }
+
+  _arrive(p) {
+    p.route = null; p.routeIdx = 0;
+    p.active = true;
+    p.mode = 'idle';
+    p.speed = 0;
+    p.cross = null; p.turn = null;
+    p.idleT = rand(CFG.pedIdleTime[0], CFG.pedIdleTime[1]);
+    p.laneOff = 0;
   }
 
   /* Есть ли приближающаяся машина на нашей дороге рядом с переходом */
@@ -548,7 +802,9 @@ export class PedestrianManager {
     this.trafficRef = traffic;
     this._playerRef = player;
     if (world) this.world = world;
+    if (world && !this.graph) this.initGraph(world);
     if (traffic && traffic.lightsRef) this.lightsRef = traffic.lightsRef;
+    this._classify(dt);
     if (world && world.lights) this.lightsRef = world.lights;
 
     for (const p of this.cars) {
@@ -649,12 +905,19 @@ export class PedestrianManager {
       targetPos: null, targetIsec: null,
       waitT: 0, fx: 0, fz: 0, fvx: 0, fvz: 0, fleeT: 0, knockT: 0, hitCd: 0,
       angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30), walk: 0,
+      violator: Math.random() < CFG.pedViolatorChance,
+      active: false, nearZone: false, laneOff: 0,
+      route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
+      idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
     };
     ped.fx = x; ped.fz = z;
     this._snapToSidewalk(ped);
     const wp = this._worldPos(ped, _tempPedWpSync);
     ped.x = wp.x; ped.z = wp.z;
     this.cars.push(ped);
+    if (this._playerRef && Math.hypot(ped.x - this._playerRef.x, ped.z - this._playerRef.z) <= CFG.pedActiveRadius) {
+      this._activate(ped);
+    }
     return ped;
   }
 
@@ -682,6 +945,14 @@ export class PedestrianManager {
       p.mesh.rotation.x = 0; p.mesh.rotation.z = 0;
       p.mesh.rotation.y = this._heading(p);
     }
+  }
+
+  debugSummary() {
+    if (!this.graph) return 'graph: none';
+    const active = this.cars.filter(p => p.active).length;
+    const near = this.cars.filter(p => p.nearZone).length;
+    const routes = this.cars.filter(p => p.route).length;
+    return `nodes:${this.graph.nodes.length} active:${active} near:${near} routed:${routes}`;
   }
 }
 
