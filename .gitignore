@@ -14,3 +14,7 @@ __pycache__/
 .github/skills/
 .codex/
 .agents/
+
+# git worktrees / superpowers sdd workspace
+.worktrees/
+.superpowers/
