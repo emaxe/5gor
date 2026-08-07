@@ -18,6 +18,7 @@ MODULES = [
     "audio.js",
     "input.js",
     "citygen.js",
+    "pedgraph.js",
     "player.js",
     "traffic.js",
     "peds.js",
