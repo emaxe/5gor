@@ -654,6 +654,12 @@ const CFG = {
   orderExpireSec: 110,
   orderSpawnEverySec: 9,
 
+  // Пешеходы: зоны ИИ и нарушения ПДД
+  pedActiveRadius: 110,      // ≤110 м — полный ИИ (маршрут, ПДД, обход)
+  pedNearRadius: 150,        // 110–150 м — простое движение + обход статики
+  pedViolatorChance: 0.2,    // ~20% нарушают ПДД (переход на красный/jwalk)
+  pedIdleTime: [5, 15],      // пауза пешехода после прибытия, сек
+
   // Качество (устаревший алиас, держится ради обратной совместимости старых
   // сохранений — реальные настройки теперь в CFG.gfx)
   quality: 'high', // high | low (вкл/выкл тени, pixelRatio)
@@ -3400,18 +3406,15 @@ class World {
 
     for (const isec of this.intersections) {
       const sx = isec.x, sz = isec.z;
-      // 4 зебры вокруг каждого перекрёстка
-      for (let k = -2; k <= 2; k++) {
+      // 4 зебры вокруг каждого перекрёстка, центрированные на нём — там же,
+      // где _startCross кладёт пешехода при переходе (см. Task 6, Step 2)
+      for (let k = -5; k <= 5; k++) {
         const off = k * 1.1;
-        // Верхний и нижний подходы к перекрёстку (полосы вдоль X)
-        const mNorth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz - 6.2);
-        const mSouth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz + 6.2);
-        listV.push(mNorth, mSouth);
+        const mNorth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz);
+        listV.push(mNorth);
 
-        // Левый и правый подходы к перекрёстку (полосы вдоль Z)
-        const mWest = new THREE.Matrix4().makeTranslation(sx - 6.2, 0.11, sz + off);
-        const mEast = new THREE.Matrix4().makeTranslation(sx + 6.2, 0.11, sz + off);
-        listH.push(mWest, mEast);
+        const mWest = new THREE.Matrix4().makeTranslation(sx, 0.11, sz + off);
+        listH.push(mWest);
       }
     }
 
@@ -5369,6 +5372,261 @@ class World {
   }
 }
 
+/* ===== pedgraph.js ===== */
+
+const PG_PED_SIDE = CFG.HALF + CFG.SIDE / 2; // 8 — центр тротуара от оси дороги
+const EDGE = CFG.CELL;
+const POI_MAX_DIST = 40; // POI дальше этого от ближайшего узла — вне сетки (напр. Машук), отбрасываем
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Координата узла вдоль его собственной оси ходьбы (для lane/mid узлов). */
+function posOf(node) {
+  return node.axis === 'z' ? node.z : node.x;
+}
+
+/**
+ * Статический граф ходьбы города.
+ * Узлы: 4 «тротуарных» (+ серединные) на лентах дорог и 1 центр перехода на
+ * перекрёстке. Рёбра: walk (тротуар), cross (зебра через дорогу, пара через
+ * центр), turn (срез угла на перекрёстке), jwalk (середина квартала, только
+ * для нарушителей). Без зависимостей (no THREE/DOM) — тестируется в node.
+ *
+ * Единицы стоимости — не рёбра: walk-сегмент 0.5, поворот 1.5, cross-ребро 1
+ * (переход через дорогу = 2 таких ребра подряд через центр), jwalk 3. Когда в
+ * коде/тестах говорится «дистанция N рёбер» — это длина итогового `path` из
+ * `pathTo()`/`route()` минус 1, а не значение `dist[]` (см. `_pickRandomNode`
+ * в `peds.js`, где `dist[]` используется лишь как дешёвая аппроксимация).
+ */
+class PedGraph {
+  constructor() {
+    this.nodes = [];            // { id, x, z, kind, axis?, road?, side?, edges: [] }
+    this.adj = [];              // adj[id] = [{ to, cost, kind }]
+    this._byKey = new Map();    // "x,z" -> node
+    this._intersections = [];
+    this.poiList = [];          // [{ node: nodeId, tag: string|null }]
+    this.poiNodes = [];         // [nodeId]
+  }
+
+  _addNode(x, z, kind, extra) {
+    const key = Math.round(x) + ',' + Math.round(z);
+    let n = this._byKey.get(key);
+    if (n) return n;
+    const id = this.nodes.length;
+    n = Object.assign({ id, x, z, kind, edges: [] }, extra);
+    this._byKey.set(key, n);
+    this.nodes.push(n);
+    this.adj.push([]);
+    return n;
+  }
+
+  _addEdge(a, b, kind, cost) {
+    a.edges.push(b.id);
+    b.edges.push(a.id);
+    this.adj[a.id].push({ to: b.id, cost, kind });
+    this.adj[b.id].push({ to: a.id, cost, kind });
+  }
+
+  build(intersections) {
+    this._intersections = intersections;
+    const rng = mulberry32(20260807);
+    const roadsX = [...new Set(intersections.map(i => i.x))].sort((a, b) => a - b); // вертикальные дороги
+    const roadsZ = [...new Set(intersections.map(i => i.z))].sort((a, b) => a - b); // горизонтальные
+
+    // --- тротуарные ленты + серединные узлы (walk) ---
+    for (const r of roadsX) {
+      for (let i = 0; i + 1 < roadsZ.length; i++) {
+        const za = roadsZ[i], zb = roadsZ[i + 1], zm = (za + zb) / 2;
+        for (const side of [-1, 1]) {
+          const x = r + side * PG_PED_SIDE;
+          const na = this._addNode(x, za, 'lane', { axis: 'z', road: r, side });
+          const nm = this._addNode(x, zm, 'mid', { axis: 'z', road: r, side });
+          const nb = this._addNode(x, zb, 'lane', { axis: 'z', road: r, side });
+          this._addEdge(na, nm, 'walk', 0.5);
+          this._addEdge(nm, nb, 'walk', 0.5);
+        }
+      }
+    }
+    for (const r of roadsZ) {
+      for (let i = 0; i + 1 < roadsX.length; i++) {
+        const xa = roadsX[i], xb = roadsX[i + 1], xm = (xa + xb) / 2;
+        for (const side of [-1, 1]) {
+          const z = r + side * PG_PED_SIDE;
+          const na = this._addNode(xa, z, 'lane', { axis: 'x', road: r, side });
+          const nm = this._addNode(xm, z, 'mid', { axis: 'x', road: r, side });
+          const nb = this._addNode(xb, z, 'lane', { axis: 'x', road: r, side });
+          this._addEdge(na, nm, 'walk', 0.5);
+          this._addEdge(nm, nb, 'walk', 0.5);
+        }
+      }
+    }
+
+    // --- перекрёстки: центр + зебры (cross) + повороты (turn) ---
+    for (const isec of intersections) {
+      const center = this._addNode(isec.x, isec.z, 'center');
+      const nW = this._byKey.get((isec.x - PG_PED_SIDE) + ',' + isec.z);
+      const nE = this._byKey.get((isec.x + PG_PED_SIDE) + ',' + isec.z);
+      const nN = this._byKey.get(isec.x + ',' + (isec.z - PG_PED_SIDE));
+      const nS = this._byKey.get(isec.x + ',' + (isec.z + PG_PED_SIDE));
+      if (nW && nE) { this._addEdge(nW, center, 'cross', 1); this._addEdge(center, nE, 'cross', 1); }
+      if (nN && nS) { this._addEdge(nN, center, 'cross', 1); this._addEdge(center, nS, 'cross', 1); }
+      for (const [a, b] of [[nW, nN], [nW, nS], [nE, nN], [nE, nS]]) {
+        if (a && b) this._addEdge(a, b, 'turn', 1.5);
+      }
+    }
+
+    // --- jwalk через середины кварталов (~30% блоков, детерминированный сид) ---
+    for (const r of roadsX) {
+      for (let i = 0; i + 1 < roadsZ.length; i++) {
+        if (rng() >= 0.3) continue;
+        const zm = (roadsZ[i] + roadsZ[i + 1]) / 2;
+        const a = this._byKey.get((r - PG_PED_SIDE) + ',' + zm);
+        const b = this._byKey.get((r + PG_PED_SIDE) + ',' + zm);
+        if (a && b) this._addEdge(a, b, 'jwalk', 3);
+      }
+    }
+    for (const r of roadsZ) {
+      for (let i = 0; i + 1 < roadsX.length; i++) {
+        if (rng() >= 0.3) continue;
+        const xm = (roadsX[i] + roadsX[i + 1]) / 2;
+        const a = this._byKey.get(xm + ',' + (r - PG_PED_SIDE));
+        const b = this._byKey.get(xm + ',' + (r + PG_PED_SIDE));
+        if (a && b) this._addEdge(a, b, 'jwalk', 3);
+      }
+    }
+  }
+
+  /** Ближайший узел указанных видов. kinds: ['lane','mid','center'] */
+  nearestNode(x, z, kinds = ['lane', 'mid']) {
+    let best = null, bd = Infinity;
+    for (const n of this.nodes) {
+      if (!kinds.includes(n.kind)) continue;
+      const d = (n.x - x) ** 2 + (n.z - z) ** 2;
+      if (d < bd) { bd = d; best = n; }
+    }
+    return best ? best.id : null;
+  }
+
+  /**
+   * Ближайший узел (lane/mid) СТРОГО на заданной ленте (axis, road-координата,
+   * сторона). В отличие от nearestNode — не притянет к геометрически близкому
+   * узлу на другой (например перпендикулярной) дороге. Используется при
+   * активации пешехода: узел входа должен лежать на его текущей ленте, иначе
+   * пешеход телепортируется при первом же шаге маршрута.
+   */
+  nodeOnLane(axis, coord, side, pos) {
+    let best = null, bd = Infinity;
+    for (const n of this.nodes) {
+      if ((n.kind !== 'lane' && n.kind !== 'mid')) continue;
+      if (n.axis !== axis || n.road !== coord || n.side !== side) continue;
+      const d = Math.abs(posOf(n) - pos);
+      if (d < bd) { bd = d; best = n; }
+    }
+    return best ? best.id : null;
+  }
+
+  /**
+   * Маппинг POI-точек на ближайшие тротуарные узлы. list: [{x, z, tag?}].
+   * Точки дальше POI_MAX_DIST от найденного узла отбрасываются — иначе
+   * ориентиры вне сетки (Машук: канатка/беседка/башня, z < -256) намертво
+   * притягиваются к южному краю города и искажают выбор цели.
+   */
+  setPOIs(list) {
+    this.poiList = list
+      .map(p => ({ node: this.nearestNode(p.x, p.z), tag: p.tag || null, x: p.x, z: p.z }))
+      .filter(p => p.node != null)
+      .filter(p => {
+        const n = this.nodes[p.node];
+        return Math.hypot(n.x - p.x, n.z - p.z) <= POI_MAX_DIST;
+      });
+    this.poiNodes = this.poiList.map(p => p.node);
+  }
+
+  /**
+   * Один полный проход Dijkstra от fromId. allowJwalk=false запрещает
+   * jwalk-рёбра. Возвращает { dist, prev } для последующего построения ЛЮБОГО
+   * числа путей без повторного прохода — критично для выбора случайной цели
+   * (см. `_pickRandomNode` в peds.js): полный проход по 693 узлам без кучи
+   * стоит ~1-3 мс, повторять его на каждого кандидата цели нельзя.
+   */
+  routesFrom(fromId, allowJwalk) {
+    const n = this.nodes.length;
+    const dist = new Array(n).fill(Infinity);
+    const prev = new Array(n).fill(-1);
+    const done = new Array(n).fill(false);
+    dist[fromId] = 0;
+    for (;;) {
+      let u = -1, best = Infinity;
+      for (let i = 0; i < n; i++) {
+        if (!done[i] && dist[i] < best) { best = dist[i]; u = i; }
+      }
+      if (u === -1) break;
+      done[u] = true;
+      for (const e of this.adj[u]) {
+        if (e.kind === 'jwalk' && !allowJwalk) continue;
+        const nd = dist[u] + e.cost;
+        if (nd < dist[e.to]) { dist[e.to] = nd; prev[e.to] = u; }
+      }
+    }
+    return { dist, prev };
+  }
+
+  /** Восстановление пути к toId из {prev}, полученного в routesFrom(). Без пересчёта. */
+  pathTo(prev, fromId, toId) {
+    if (fromId !== toId && prev[toId] === -1) return null;
+    const path = [];
+    for (let c = toId; c !== -1; c = prev[c]) path.push(c);
+    path.reverse();
+    if (path[0] !== fromId) return null;
+    return path;
+  }
+
+  /** Dijkstra "в один вызов" — для единичных запросов и тестов. Для выбора
+   *  цели среди множества кандидатов используй routesFrom()+pathTo() напрямую,
+   *  не зови route() в цикле (см. комментарий у routesFrom). */
+  route(fromId, toId, allowJwalk) {
+    const { prev } = this.routesFrom(fromId, allowJwalk);
+    return this.pathTo(prev, fromId, toId);
+  }
+
+  /**
+   * Дескриптор ребра для движения пешехода (from=id a, to=id b).
+   * Возвращает { kind, ... } или null.
+   */
+  edgeInfo(aId, bId) {
+    const a = this.nodes[aId], b = this.nodes[bId];
+    let kind = null;
+    for (const e of this.adj[aId]) if (e.to === bId) kind = e.kind;
+    if (!kind) return null;
+    const d = { kind };
+    if (kind === 'walk') {
+      d.axis = a.axis; d.coord = a.road; d.side = a.side;
+      d.posStart = posOf(a); d.posEnd = posOf(b);
+    } else if (kind === 'cross' || kind === 'jwalk') {
+      // один из концов — центр перекрёстка (без axis/road/side) для 'cross',
+      // либо оба конца — тротуарные узлы для 'jwalk'; берём тротуарный узел
+      // (не center) как источник ориентации — sideOf по координатам центра
+      // давал мусор (у center нет .road), тогда как у lane/mid узлов side уже
+      // готов при построении графа.
+      const lane = a.kind === 'center' ? b : a;
+      d.axis = lane.axis; d.coord = lane.road; d.side = lane.side;
+      d.pos = posOf(lane);
+    } else if (kind === 'turn') {
+      d.x0 = a.x; d.z0 = a.z; d.x1 = b.x; d.z1 = b.z;
+      d.newAxis = b.axis; d.newCoord = b.road; d.newSide = b.side; d.newPos = posOf(b);
+    }
+    return d;
+  }
+}
+
 /* ===== player.js ===== */
 
 
@@ -6299,9 +6557,11 @@ let WORLD_INTERSECTIONS = [];
 
 
 
+
 const _tempPedWp = { x: 0, z: 0 };
 const _tempPedWpSync = { x: 0, z: 0 };
 const _tempPedWpTurn = { x: 0, z: 0 };
+const _tempPedProbe = { x: 0, z: 0 };
 
 const PED_COLORS = [0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30];
 const PED_SIDE = CFG.HALF + CFG.SIDE / 2; // 8 — центр тротуара от оси дороги
@@ -6365,6 +6625,8 @@ class PedestrianManager {
     this.cars = []; // сущности
     this.trafficRef = null;
     this._count = 0;
+    this.graph = null;
+    this._classifyTimer = 0;
   }
 
   /* Реплика над головой пешехода / животного */
@@ -6463,7 +6725,11 @@ class PedestrianManager {
         speed: 0, baseSpeed: 2.2, side: 1, turnT: 0, mode: 'walk', cross: null, turn: null,
         targetPos: null, targetIsec: null,
         waitT: 0, fx: 0, fz: 0, fvx: 0, fvz: 0, fleeT: 0, knockT: 0, hitCd: 0,
-        angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30)
+        angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30),
+        violator: Math.random() < CFG.pedViolatorChance,
+        active: false, nearZone: false, laneOff: 0,
+        route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
+        idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
       };
       this.cars.push(ped);
       this.scene.add(mesh);
@@ -6493,6 +6759,7 @@ class PedestrianManager {
       const wz = axis === 'z' ? pos : coord + side * PED_SIDE;
       const d = Math.hypot(wx - px, wz - pz);
 
+      if (this._spotBlocked(wx, wz)) continue;
       if (d < 50) continue;
 
       const viewDist = Math.min(145, 115 + pSpeed * 1.6);
@@ -6574,7 +6841,7 @@ class PedestrianManager {
       out.z = lerp(p.turn.z0, p.turn.z1, k);
       return out;
     }
-    const off = p.side * PED_SIDE;
+    const off = p.side * PED_SIDE + (p.laneOff || 0);
     if (p.axis === 'z') { out.x = p.coord + off; out.z = p.pos; }
     else { out.x = p.pos; out.z = p.coord + off; }
     return out;
@@ -6583,6 +6850,7 @@ class PedestrianManager {
   /* Поиск светофора */
   _getLightForPed(p) {
     if (p.isAnimal) return null; // Животные игнорируют светофоры!
+    if (p.cross && p.cross.jwalk) return null; // незаконный переход светофором не управляется
     if (!this.lightsRef || !this.lightsRef.length) return null;
     const isecVal = Math.round(p.pos / CFG.CELL) * CFG.CELL;
     const targetIsecX = p.axis === 'z' ? p.coord : isecVal;
@@ -6617,6 +6885,253 @@ class PedestrianManager {
     return h;
   }
 
+  /* Построить граф ходьбы из мира + POI (достопримечательности, точки подачи,
+     заправки) + одноразовый spatial hash зданий (ячейки 16 м) для _obstacleAt
+     (Task 6) — линейный перебор ~250 AABB на каждого активного пешехода
+     каждый кадр слишком дорог. */
+  initGraph(world) {
+    this.world = world;
+    if (!world || !world.intersections || !world.intersections.length) return;
+    const graph = new PedGraph();
+    graph.build(world.intersections);
+    const pois = [];
+    for (const l of world.landmarks || []) pois.push({ x: l.x, z: l.z, tag: l.id });
+    for (const p of world.pickupPoints || []) pois.push({ x: p.x, z: p.z, tag: 'pickup' });
+    for (const s of world.fuelStations || []) pois.push({ x: s.x, z: s.z, tag: 'fuel' });
+    graph.setPOIs(pois);
+    this.graph = graph;
+
+    this._buildingHash = new Map();
+    const cell = 16;
+    for (const b of world.buildings || []) {
+      const cx0 = Math.floor(b.x0 / cell), cx1 = Math.floor(b.x1 / cell);
+      const cz0 = Math.floor(b.z0 / cell), cz1 = Math.floor(b.z1 / cell);
+      for (let cx = cx0; cx <= cx1; cx++) for (let cz = cz0; cz <= cz1; cz++) {
+        const key = cx + ',' + cz;
+        if (!this._buildingHash.has(key)) this._buildingHash.set(key, []);
+        this._buildingHash.get(key).push(b);
+      }
+    }
+  }
+
+  /* Классификация зон (0.5 с, гистерезис) — активная/ближняя/дальняя.
+     Животные и скрытые (mesh.visible=false, см. game.js _applyDensity)
+     полный ИИ не получают. Не более 2 новых активаций за тик — каждая стоит
+     один полный проход Dijkstra (~1-3 мс); при резком появлении сразу
+     нескольких пешеходов в зоне это защита от фриза кадра (см. спеку,
+     «Производительность»).
+     Не деактивируем посреди cross/wait/turn — не только по правилу спеки
+     («не обрывать переход»), но и из-за конкретного технического риска для
+     turn: активный поворот (через graph-ребро kind='turn') откладывает
+     обновление p.axis/p.coord/p.pos до ЗАВЕРШЕНИЯ (в ветке `turn` внутри
+     `_updateActive`, Task 5) — если деактивировать пешехода до этого момента,
+     visual-интерполяция (p.turn) доиграет через общий `_updateTurn`, но
+     axis/coord/pos останутся от ДО поворота, а `_worldPos` после обнуления
+     p.turn считает мировую позицию именно по ним — пешеход визуально
+     телепортируется обратно в точку начала поворота. */
+  _classify(dt) {
+    // кулдауны пересчёта маршрута тикают каждый кадр, не только на классификации
+    for (const p of this.cars) {
+      if (p._reroute > 0) p._reroute -= dt;
+    }
+    this._classifyTimer -= dt;
+    if (this._classifyTimer > 0) return;
+    this._classifyTimer = 0.5;
+    if (!this.graph) return;
+    const pl = this._playerRef;
+    const px = pl && pl.x !== undefined ? pl.x : 0;
+    const pz = pl && pl.z !== undefined ? pl.z : 0;
+    let activations = 0;
+    for (const p of this.cars) {
+      if (!p.alive || p.isAnimal || !p.mesh.visible) continue;
+      const d = Math.hypot(p.x - px, p.z - pz);
+      p.nearZone = d <= CFG.pedNearRadius;
+      if (!p.active && d <= CFG.pedActiveRadius) {
+        if (activations >= 2 || p._reroute > 0) continue;
+        this._activate(p);
+        activations++;
+      } else if (p.active && d > CFG.pedActiveRadius + 5 && p.mode !== 'cross' && p.mode !== 'wait' && p.mode !== 'turn') {
+        this._deactivate(p);
+      }
+    }
+  }
+
+  /* Активировать: узел входа на СВОЕЙ ленте -> цель -> маршрут.
+     Ранний выход при отлёте/убегании/пинке — не обрывает их сменой mode.
+     Ровно один проход Dijkstra (routesFrom) на активацию — дальше выбор
+     цели и восстановление пути работают по готовым dist/prev без повторных
+     проходов (см. pedgraph.js, комментарий у routesFrom). */
+  _activate(p) {
+    if (!this.graph || p.isAnimal) return;
+    if (p.knockT > 0 || p.mode === 'flee' || p.mode === 'kick') return;
+    p.route = null; p.routeIdx = 0; p.laneOff = 0;
+
+    const fromId = this.graph.nodeOnLane(p.axis, p.coord, p.side, p.pos);
+    if (fromId == null) { p.active = false; p._reroute = 2.0; return; }
+
+    const { dist, prev } = this.graph.routesFrom(fromId, p.violator);
+    const toId = this._pickDestination(p, fromId, dist);
+    if (toId == null || toId === fromId) { p.active = false; p._reroute = 2.0; return; }
+
+    const path = this.graph.pathTo(prev, fromId, toId);
+    if (!path || path.length < 2) { p.active = false; p._reroute = 2.0; return; }
+
+    const fromNode = this.graph.nodes[fromId];
+    const approach = {
+      kind: 'walk', axis: p.axis, coord: p.coord, side: p.side,
+      posStart: p.pos, posEnd: p.axis === 'z' ? fromNode.z : fromNode.x,
+    };
+    p.route = [approach, ...this._edgesFor(path)];
+    p.routeIdx = 0;
+    p.active = true;
+    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+    this._startEdge(p);
+  }
+
+  _deactivate(p) {
+    p.active = false;
+    p.route = null; p.routeIdx = 0;
+    p.laneOff = 0;
+    if (p.mode === 'idle') p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+  }
+
+  /* Выбор цели: гибрид POI (по архетипу, взвешенно) + случайная — всё в
+     пределах готовой карты dist[] (2-6 walk-рёбер ~ dist 1-3), БЕЗ повторных
+     вызовов Dijkstra (dist уже посчитан один раз в _activate). */
+  _pickDestination(p, fromId, dist) {
+    if (p.archetype === 'tourist') {
+      const id = this._pickPoiFor(fromId, dist, 'cvetnik', 'proval');
+      if (id != null) return id;
+    }
+    if (p.archetype === 'grandma') {
+      const id = this._pickPoiFor(fromId, dist, 'rynok', 'pickup', 'fuel');
+      if (id != null) return id;
+    }
+    if (Math.random() < 0.5) {
+      const id = this._pickWeightedPoi(fromId, dist);
+      if (id != null) return id;
+    }
+    return this._pickRandomNode(fromId, dist);
+  }
+
+  /* POI нужной категории в пределах dist[1,3]: случайный из ДО ТРЁХ ближайших
+     подходящих, не считая узел прибытия и всё ближе 1 (иначе пешеход у своей
+     единственной ближайшей достопримечательности после idle тут же выбирает
+     её же снова — toId===fromId, активация молча ничего не делает, а таймер
+     простоя уже истёк: вечный idle без движения). БЕЗ fallback на весь список
+     POI — по той же причине. */
+  _pickPoiFor(fromId, dist, ...tags) {
+    const g = this.graph;
+    const pool = g.poiList
+      .filter(po => tags.some(t => po.tag && po.tag.includes(t)))
+      .filter(po => po.node !== fromId && dist[po.node] >= 1 && dist[po.node] <= 3)
+      .sort((a, b) => dist[a.node] - dist[b.node]);
+    if (!pool.length) return null;
+    const top = pool.slice(0, 3);
+    return top[Math.floor(Math.random() * top.length)].node;
+  }
+
+  /* Случайный POI без привязки к архетипу, взвешенно по категориям:
+     достопримечательность 0.5 / точка подачи такси 0.35 / заправка 0.15.
+     Без весов точки подачи (~300 шт.) забивают выбор — достопримечательности
+     (9 шт.) практически никогда не выпадают. */
+  _pickWeightedPoi(fromId, dist) {
+    const g = this.graph;
+    const inRange = g.poiList.filter(po => po.node !== fromId && dist[po.node] >= 1 && dist[po.node] <= 3);
+    if (!inRange.length) return null;
+    const byCat = { landmark: [], pickup: [], fuel: [] };
+    for (const po of inRange) {
+      const cat = po.tag === 'pickup' ? 'pickup' : po.tag === 'fuel' ? 'fuel' : 'landmark';
+      byCat[cat].push(po);
+    }
+    const weights = [['landmark', 0.5], ['pickup', 0.35], ['fuel', 0.15]].filter(([c]) => byCat[c].length);
+    if (!weights.length) return null;
+    const total = weights.reduce((s, [, w]) => s + w, 0);
+    let r = Math.random() * total;
+    let cat = weights[weights.length - 1][0];
+    for (const [c, w] of weights) { if (r < w) { cat = c; break; } r -= w; }
+    const list = byCat[cat];
+    return list[Math.floor(Math.random() * list.length)].node;
+  }
+
+  /* Случайный тротуарный узел на графовой дистанции 2-6 рёбер (dist∈[1,3]),
+     по готовой карте dist[] — без единого повторного Dijkstra. */
+  _pickRandomNode(fromId, dist) {
+    const g = this.graph;
+    const candidates = [];
+    for (const n of g.nodes) {
+      if ((n.kind !== 'lane' && n.kind !== 'mid') || n.id === fromId) continue;
+      const d = dist[n.id];
+      if (d >= 1 && d <= 3) candidates.push(n.id);
+    }
+    if (!candidates.length) return null;
+    return candidates[Math.floor(Math.random() * candidates.length)];
+  }
+
+  /* Маршрут -> массив дескрипторов рёбер (сливаем пару cross через центр в
+     один описатель — сторона departure берётся с некруглого узла, см.
+     pedgraph.js edgeInfo). routeIdx индексирует ЭТОТ массив, а не исходный
+     path — каждый элемент = один шаг движения, поэтому _finishEdge всегда
+     продвигает на 1, без отдельного поля advance. */
+  _edgesFor(path) {
+    const out = [];
+    for (let i = 0; i + 1 < path.length; i++) {
+      const a = path[i], b = path[i + 1];
+      const e = this.graph.edgeInfo(a, b);
+      if (!e) continue;
+      if (e.kind === 'cross' && i + 2 < path.length && this.graph.nodes[b].kind === 'center') {
+        out.push(e);
+        i += 1;
+        continue;
+      }
+      out.push(e);
+    }
+    return out;
+  }
+
+  /* Начать движение по текущему ребру маршрута */
+  _startEdge(p) {
+    if (p.routeIdx >= p.route.length) { this._arrive(p); return; }
+    const e = p.route[p.routeIdx];
+    p._edgeKind = e.kind;
+    p.speed = p.baseSpeed;
+    if (e.kind === 'walk') {
+      p.axis = e.axis; p.coord = e.coord; p.side = e.side;
+      p.dir = e.posEnd >= e.posStart ? 1 : -1;
+      p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+      p.edgeEnd = e.posEnd;
+      p.cross = null; p.turn = null;
+    } else if (e.kind === 'cross' || e.kind === 'jwalk') {
+      p.axis = e.axis; p.coord = e.coord; p.side = e.side; p.pos = e.pos;
+      p.cross = null; p.turn = null;
+      this._startCross(p, e.kind === 'jwalk');
+    } else if (e.kind === 'turn') {
+      p.mode = 'turn';
+      p.cross = null;
+      p.turn = {
+        x0: e.x0, z0: e.z0, x1: e.x1, z1: e.z1, t: 0,
+        dur: Math.hypot(e.x1 - e.x0, e.z1 - e.z0) / Math.max(p.speed, 0.5),
+      };
+      p._turnTo = e;
+    }
+  }
+
+  /* Всегда продвигает на 1 элемент p.route — см. комментарий у _edgesFor. */
+  _finishEdge(p) {
+    p.routeIdx += 1;
+    this._startEdge(p);
+  }
+
+  _arrive(p) {
+    p.route = null; p.routeIdx = 0;
+    p.active = true;
+    p.mode = 'idle';
+    p.speed = 0;
+    p.cross = null; p.turn = null;
+    p.idleT = rand(CFG.pedIdleTime[0], CFG.pedIdleTime[1]);
+    p.laneOff = 0;
+  }
+
   /* Есть ли приближающаяся машина на нашей дороге рядом с переходом */
   _carOnRoad(p, dist) {
     if (p.isAnimal) return false; // Животные не проверяют машины строго перед переходом (перебегают)
@@ -6646,6 +7161,10 @@ class PedestrianManager {
 
   /* Осознанное движение по тротуару */
   _updateWalk(p, dt) {
+    if (p.nearZone && !p.active) {
+      p.speed = p.baseSpeed; // восстановление после предыдущей блокировки — см. _avoidStatic
+      this._avoidStatic(p, dt);
+    }
     p.pos += p.speed * dt * p.dir;
     if (p.turnT > 0) { p.turnT -= dt; return; }
     if (Math.abs(p.pos) > 232) {
@@ -6699,8 +7218,8 @@ class PedestrianManager {
   }
 
   /* Начать переход */
-  _startCross(p) {
-    p.pos = Math.round(p.pos / CFG.CELL) * CFG.CELL;
+  _startCross(p, jwalk = false) {
+    if (!jwalk) p.pos = Math.round(p.pos / CFG.CELL) * CFG.CELL;
     p.mode = p.isAnimal ? 'cross' : 'wait'; // Животные сразу идут на переход
     p.waitT = 0;
     const crossSpeed = p.isAnimal ? p.speed * 1.5 : p.speed * 1.3;
@@ -6709,6 +7228,7 @@ class PedestrianManager {
       to: -p.side * PED_SIDE,
       t: 0,
       dur: (PED_SIDE * 2) / crossSpeed,
+      jwalk,
     };
   }
 
@@ -6718,7 +7238,7 @@ class PedestrianManager {
 
     const light = this._getLightForPed(p);
     if (light) {
-      if (light.state !== 2) {
+      if (light.state !== 2 && !p.violator) {
         if (p.waitT > 22.0) this._cancelCross(p);
         return;
       }
@@ -6734,8 +7254,13 @@ class PedestrianManager {
   }
 
   _cancelCross(p) {
-    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
     p.cross = null;
+    if (p.active && (p._edgeKind === 'cross' || p._edgeKind === 'jwalk')) {
+      // маршрут через эту зебру отменён (слишком долгий красный / машины) —
+      // не выдаём это за завершённый переход; пересчитаем маршрут заново
+      p.route = null; p.routeIdx = 0; p.active = false; p._reroute = 0.5;
+    }
+    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
     p.turnT = 1.5;
   }
 
@@ -6794,6 +7319,182 @@ class PedestrianManager {
     }
   }
 
+  /* Точка на ленте с заданным боковым смещением (для проверки препятствий) */
+  _lanePoint(p, off, out = _tempPedProbe) {
+    const o = p.side * PED_SIDE + off;
+    if (p.axis === 'z') { out.x = p.coord + o; out.z = p.pos; }
+    else { out.x = p.pos; out.z = p.coord + o; }
+    return out;
+  }
+
+  /* Есть ли статическое препятствие (пропс/здание/круглый коллайдер) в точке.
+     Здания — через одноразовый spatial hash (initGraph, Task 4), не линейным
+     перебором ~250 AABB на каждого активного пешехода каждый кадр. */
+  _obstacleAt(x, z) {
+    const w = this.world;
+    if (!w) return false;
+    if (w._checkPropCollision(x, z, 0.4)) return true;
+    if (this._buildingHash) {
+      const cell = 16;
+      const cx = Math.floor(x / cell), cz = Math.floor(z / cell);
+      for (let dx = -1; dx <= 1; dx++) for (let dz = -1; dz <= 1; dz++) {
+        const bucket = this._buildingHash.get((cx + dx) + ',' + (cz + dz));
+        if (!bucket) continue;
+        for (const b of bucket) {
+          if (x > b.x0 - 0.3 && x < b.x1 + 0.3 && z > b.z0 - 0.3 && z < b.z1 + 0.3) return true;
+        }
+      }
+    }
+    for (const c of w.circleColliders) {
+      if (Math.hypot(x - c.x, z - c.z) < c.r + 0.3) return true;
+    }
+    return false;
+  }
+
+  /* Свободно ли место для спавна (нет статики, машин, игрока) */
+  _spotBlocked(x, z) {
+    if (this._obstacleAt(x, z)) return true;
+    const tr = this.trafficRef;
+    if (tr) {
+      for (const c of tr.cars) {
+        if (c.alive && Math.hypot(c.x - x, c.z - z) < c.radius + 1.1) return true;
+      }
+    }
+    const pl = this._playerRef;
+    if (pl && Math.hypot(pl.x - x, pl.z - z) < 3.0) return true;
+    return false;
+  }
+
+  /* Боковое смещение вокруг статики (активная и ближняя зоны). laneOff
+     ограничен ±1.5 (полуширина тротуара 2 м минус запас на корпус пешехода —
+     значение согласовано со спекой, было ±1.9 у пешехода при ширине тротуара
+     2 м, что вылезало на проезжую часть). Полная блокировка дольше 1.5 с —
+     явная реакция (не бесконечная заморозка speed=0): активный пересчитывает
+     маршрут, пассивный разворачивается — см. спеку, «Обход препятствий». */
+  _avoidStatic(p, dt) {
+    if (!this.world || (!p.nearZone && !p.active)) return;
+    const look = 2.2;
+    const dirX = p.axis === 'z' ? 0 : p.dir;
+    const dirZ = p.axis === 'z' ? p.dir : 0;
+    const probe = this._lanePoint(p, p.laneOff || 0);
+    probe.x += dirX * look;
+    probe.z += dirZ * look;
+    if (!this._obstacleAt(probe.x, probe.z)) {
+      p.laneOff *= Math.max(0, 1 - 4 * dt);
+      if (Math.abs(p.laneOff) < 0.02) p.laneOff = 0;
+      p._stuckT = 0;
+      return;
+    }
+    for (const o of [1.4, -1.4, 2.4, -2.4]) {
+      const cand = clamp((p.laneOff || 0) + o, -1.5, 1.5);
+      const pr = this._lanePoint(p, cand);
+      pr.x += dirX * look;
+      pr.z += dirZ * look;
+      if (!this._obstacleAt(pr.x, pr.z)) { p.laneOff = cand; p._stuckT = 0; return; }
+    }
+    // заблокировано с обеих сторон
+    p.speed = 0;
+    p._stuckT += dt;
+    if (p._stuckT > 1.5) {
+      p._stuckT = 0;
+      if (p.active) {
+        // не держим протухший маршрут — деактивация с коротким кулдауном
+        // даёт _classify пере-активировать пешехода на следующем тике с
+        // новой целью, минуя препятствие
+        p.route = null; p.routeIdx = 0; p.active = false; p._reroute = 0.3;
+      } else {
+        p.dir = -p.dir; p.turnT = 0.5;
+      }
+    }
+  }
+
+  /* Разъезд активных пешеходов на одной ленте (кар-фолловинг + обгон).
+     Лидер с сильно отличающимся laneOff (>0.9 м) пропускается — иначе
+     пешеход, ушедший вбок для обгона, продолжает считаться «впереди» и
+     обгон никогда не завершается (dt — не 1/60, чтобы таймер не зависел от
+     частоты кадров). */
+  _avoidPeds(p, dt) {
+    for (const o of this.cars) {
+      if (o === p || !o.alive || !o.active) continue;
+      if (o.mode !== 'walk' && o.mode !== 'run' && o.mode !== 'idle' && o.mode !== 'wait') continue;
+      if (o.axis !== p.axis || o.coord !== p.coord || o.side !== p.side) continue;
+      if (Math.abs((o.laneOff || 0) - (p.laneOff || 0)) > 0.9) continue;
+      const d = (o.pos - p.pos) * p.dir;
+      if (d <= 0 || d > 2.2) continue;
+      const leaderSpeed = (o.mode === 'idle' || o.mode === 'wait') ? 0 : o.speed;
+      if (p.speed > leaderSpeed) p.speed = Math.max(0.3, leaderSpeed);
+      if (leaderSpeed < p.baseSpeed * 0.6) {
+        p._blockedT += dt;
+        if (p._blockedT > 1.0 && p.laneOff === 0) {
+          // Встречные (o.dir !== p.dir) видят друг друга "впереди"
+          // ОДНОВРЕМЕННО: формула ниже для обгона ((o.laneOff||0)>=0?-1.4:1.4)
+          // при laneOff=0 с обеих сторон даёт ОДИНАКОВЫЙ знак для обоих — оба
+          // уходят в одну и ту же сторону и продолжают блокировать друг
+          // друга. Для встречных используем правило, зависящее только от
+          // собственного p.dir — у встречных dir противоположны, значит и
+          // знак гарантированно разный, они расходятся. Для обгона (тот же
+          // dir, лидер медленнее) сторона по-прежнему выбирается от лидера.
+          const headOn = o.dir !== p.dir;
+          p.laneOff = headOn
+            ? (p.dir > 0 ? 1.4 : -1.4)
+            : ((o.laneOff || 0) >= 0 ? -1.4 : 1.4);
+          p.speed = Math.min(p.baseSpeed * 1.25, p.speed + 0.5);
+        }
+      } else {
+        p._blockedT = 0;
+      }
+    }
+    if (p._blockedT > 2.0) p._blockedT = 0; // не копим вечно
+  }
+
+  /* Активное движение по маршруту (активная зона) */
+  _updateActive(p, dt) {
+    if (p.mode === 'kick') return;
+    if (p.mode === 'idle') {
+      p.idleT -= dt;
+      if (p.idleT <= 0) this._activate(p);
+      return;
+    }
+    if (p.mode === 'wait') {
+      this._updateWait(p, dt);
+      return;
+    }
+    if (p.mode === 'cross') {
+      this._updateCross(p, dt);
+      if (p.cross === null && (p._edgeKind === 'cross' || p._edgeKind === 'jwalk')) {
+        this._finishEdge(p);
+      }
+      return;
+    }
+    if (p.mode === 'turn') {
+      this._updateTurn(p, dt);
+      if (p.turn === null && p._edgeKind === 'turn') {
+        const t = p._turnTo;
+        p.axis = t.newAxis; p.coord = t.newCoord; p.side = t.newSide; p.pos = t.newPos;
+        this._finishEdge(p);
+      }
+      return;
+    }
+    // walk/run по ленте: скорость восстанавливаем КАЖДЫЙ кадр, иначе пешеход,
+    // один раз упёршийся в препятствие/лидера (_avoidStatic/_avoidPeds ставят
+    // speed=0 или снижают его), остаётся замороженным навсегда — ничто больше
+    // не поднимает speed обратно к baseSpeed.
+    p.speed = p.baseSpeed;
+    this._avoidStatic(p, dt);
+    this._avoidPeds(p, dt);
+    p.pos += p.speed * dt * p.dir;
+    if (p._edgeKind === 'walk' && Math.abs(p.pos - p.edgeEnd) < 0.7) {
+      this._finishEdge(p);
+      return;
+    }
+    // ВАЖНО: здесь НЕТ проверки `p._edgeKind === 'cross' || 'jwalk'` — если
+    // она сюда попала, значит переход был прерван через _cancelCross (см.
+    // ниже), а не завершён по-настоящему; притворяться, что дорога перейдена,
+    // и продвигать routeIdx — баг (пешеход остаётся на своей стороне, а
+    // маршрут думает, что он уже на другой). Настоящее завершение перехода
+    // обрабатывается веткой `p.mode === 'cross'` выше.
+  }
+
   /* Реакция на близкий проезд игрока (Near-Miss) и пинание авто */
   _checkNearMissAndKick(p, player, dt) {
     if (!player || p.knockT > 0 || p.mode === 'flee') return;
@@ -6844,7 +7545,9 @@ class PedestrianManager {
     this.trafficRef = traffic;
     this._playerRef = player;
     if (world) this.world = world;
+    if (world && !this.graph) this.initGraph(world);
     if (traffic && traffic.lightsRef) this.lightsRef = traffic.lightsRef;
+    this._classify(dt);
     if (world && world.lights) this.lightsRef = world.lights;
 
     for (const p of this.cars) {
@@ -6880,7 +7583,8 @@ class PedestrianManager {
         p.fz += p.fvz * dt;
         p.fleeT -= dt;
         if (p.fleeT <= 0) this._snapToSidewalk(p);
-      } else if (p.mode === 'cross') this._updateCross(p, dt);
+      } else if (p.active) this._updateActive(p, dt);
+      else if (p.mode === 'cross') this._updateCross(p, dt);
       else if (p.mode === 'turn') this._updateTurn(p, dt);
       else if (p.mode === 'wait') this._updateWait(p, dt);
       else if (p.mode !== 'kick') this._updateWalk(p, dt);
@@ -6945,12 +7649,19 @@ class PedestrianManager {
       targetPos: null, targetIsec: null,
       waitT: 0, fx: 0, fz: 0, fvx: 0, fvz: 0, fleeT: 0, knockT: 0, hitCd: 0,
       angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30), walk: 0,
+      violator: Math.random() < CFG.pedViolatorChance,
+      active: false, nearZone: false, laneOff: 0,
+      route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
+      idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
     };
     ped.fx = x; ped.fz = z;
     this._snapToSidewalk(ped);
     const wp = this._worldPos(ped, _tempPedWpSync);
     ped.x = wp.x; ped.z = wp.z;
     this.cars.push(ped);
+    if (this._playerRef && Math.hypot(ped.x - this._playerRef.x, ped.z - this._playerRef.z) <= CFG.pedActiveRadius) {
+      this._activate(ped);
+    }
     return ped;
   }
 
@@ -6967,6 +7678,7 @@ class PedestrianManager {
     p.turnT = 0.8;
     p.speed = p.baseSpeed;
     this._assignNewTarget(p);
+    if (this.graph && p.active) this._activate(p);
   }
 
   _sync(p) {
@@ -6978,6 +7690,14 @@ class PedestrianManager {
       p.mesh.rotation.x = 0; p.mesh.rotation.z = 0;
       p.mesh.rotation.y = this._heading(p);
     }
+  }
+
+  debugSummary() {
+    if (!this.graph) return 'graph: none';
+    const active = this.cars.filter(p => p.active).length;
+    const near = this.cars.filter(p => p.nearZone).length;
+    const routes = this.cars.filter(p => p.route).length;
+    return `nodes:${this.graph.nodes.length} active:${active} near:${near} routed:${routes}`;
   }
 }
 
@@ -8936,9 +9656,9 @@ class Game {
     this.traffic.lightsRef = this.world.lights;
 
     this.peds = new PedestrianManager(this.scene);
-    this.peds.spawn(CFG.pedCount, this.player);
     this.peds.lightsRef = this.world.lights;
     this.peds.world = this.world;
+    this.peds.spawn(CFG.pedCount, this.player);
     this.world.peds = this.peds;
     this.world.gameRef = this;
 
