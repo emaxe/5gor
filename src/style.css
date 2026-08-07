@@ -214,6 +214,8 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 #menu-hint { font-size: 11.5px; color: #6e7681; text-align: center; margin-top: 8px; line-height: 1.5; }
 .card label { display: flex; align-items: center; gap: 10px; font-size: 15px; padding: 6px 0; }
 .card select { background: #1c2430; color: #e8e8e8; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 6px; }
+.card label:has(select) { justify-content: space-between; }
+.settings-hint { font-size: 12px; color: #6e7681; text-align: center; margin: 2px 0 4px; line-height: 1.4; }
 
 /* ---------- Гараж ---------- */
 #garage .card { width: 520px; max-width: 94vw; }

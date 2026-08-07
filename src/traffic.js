@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { rand, clamp, choice, lerpAngle, makeTaxiTexture, makePlateTexture, mergeColored, makeSpeechSprite, updateSpeechSprite } from './utils.js';
+import { rand, clamp, choice, lerpAngle, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture, makeSpeechSprite, updateSpeechSprite } from './utils.js';
+import { buildCarModel } from './carmodel.js';
 import { Events } from './eventbus.js';
 
 const _tempTrafficWp = { x: 0, z: 0 };
@@ -40,13 +41,44 @@ const PED_REPLY_QUOTES = [
   "Сам пешком иди!"
 ];
 
+/* Типы трафика: силуэт (carmodel.js CAR_SHAPES) + габариты + палитра + вес
+   спавна (относительный, не обязан суммироваться в 100 — см. pickTrafficType).
+   forceColor — у машины фиксированный "служебный" цвет (полиция/такси/маршрутка),
+   не выбирается случайно из палитры. beacon — маячок на крыше. livery —
+   шашечки по бортам + плафон "ТАКСИ" (только у самого такси). */
 export const TRAFFIC_TYPES = [
-  { name: 'sedan', r: 2.0, len: 4.4, w: 1.9, colors: [0xe8e8e8, 0x9aa0a8, 0x5060a0, 0xb03030, 0x2a2a2a, 0xc0a070] },
-  { name: 'suv', r: 2.2, len: 4.8, w: 2.0, colors: [0x3a4a3a, 0x505860, 0x8a7050, 0x2a2a2a] },
-  { name: 'van', r: 2.3, len: 5.2, w: 2.1, colors: [0xd8d8d0, 0xa8b8a0, 0xc8a060, 0xe8e0d0] },
-  { name: 'truck', r: 2.6, len: 7.0, w: 2.3, colors: [0x6a7a8a, 0x9a6a4a, 0x4a5a6a] },
-  { name: 'taxi', r: 2.0, len: 4.4, w: 1.9, colors: [0xf2c12e] },
+  // --- легковые ---
+  { name: 'sedan', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 16, colors: [0xe8e8e8, 0x9aa0a8, 0x5060a0, 0xb03030, 0x2a2a2a, 0xc0a070] },
+  { name: 'hatch', shape: 'hatch', r: 1.9, len: 4.0, w: 1.85, weight: 12, colors: [0xd0d0d0, 0x3a5aa0, 0xc03030, 0x2a2a2a, 0xe0c040] },
+  { name: 'wagon', shape: 'wagon', r: 2.1, len: 4.6, w: 1.9, weight: 8, colors: [0x4a5a4a, 0x8a8a90, 0x2a2a2a, 0xa0703a] },
+  { name: 'coupe', shape: 'coupe', r: 1.9, len: 4.3, w: 1.88, weight: 5, colors: [0xc02030, 0x1a1a1a, 0xd8d8d8, 0x2050a0] },
+  { name: 'suv', shape: 'suv', r: 2.3, len: 4.8, w: 2.0, weight: 10, colors: [0x3a4a3a, 0x505860, 0x8a7050, 0x2a2a2a] },
+  // --- коммерческий транспорт ---
+  { name: 'van', shape: 'van', r: 2.3, len: 5.2, w: 2.1, weight: 7, colors: [0xd8d8d0, 0xa8b8a0, 0xc8a060, 0xe8e0d0] },
+  { name: 'pickup', shape: 'pickup', r: 2.2, len: 5.0, w: 1.95, weight: 4, colors: [0x5a5a5a, 0xa03030, 0x2a2a2a, 0xc8c8c0] },
+  { name: 'truck', shape: 'truck', r: 2.6, len: 7.0, w: 2.3, weight: 5, colors: [0x6a7a8a, 0x9a6a4a, 0x4a5a6a] },
+  // --- общественный/спецтранспорт ---
+  { name: 'marshrutka', shape: 'van', r: 2.3, len: 5.4, w: 2.05, weight: 4, colors: [0xf0f0f0], forceColor: true },
+  { name: 'bus', shape: 'bus', r: 2.9, len: 8.5, w: 2.35, weight: 2, colors: [0xe4e4e4], forceColor: true },
+  { name: 'police', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 1.5, colors: [0x1c2430], forceColor: true, beacon: 'police' },
+  { name: 'ambulance', shape: 'van', r: 2.3, len: 5.0, w: 2.0, weight: 1, colors: [0xf4f4f0], forceColor: true, beacon: 'ambulance' },
+  // --- ретро/советские ---
+  { name: 'zhiguli', shape: 'retro', r: 1.9, len: 4.1, w: 1.75, weight: 9, colors: [0xd8c088, 0x6a4a6a, 0xa8c8d8, 0xc03030, 0xe8e4d0] },
+  { name: 'volga', shape: 'retro', r: 2.1, len: 4.7, w: 1.85, weight: 5, colors: [0x2a3a2a, 0x1a1a1a, 0xc8c0a8] },
+  { name: 'bukhanka', shape: 'van', r: 2.1, len: 4.4, w: 1.9, weight: 3, colors: [0xa8c8d8, 0xe8e4d0, 0x4a6a4a] },
+  // --- такси (жёлтая ливрея, как у игрока) ---
+  { name: 'taxi', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 8, colors: [0xf2c12e], forceColor: true, livery: true },
 ];
+
+const TRAFFIC_WEIGHT_TOTAL = TRAFFIC_TYPES.reduce((s, t) => s + t.weight, 0);
+function pickTrafficType() {
+  let r = Math.random() * TRAFFIC_WEIGHT_TOTAL;
+  for (let i = 0; i < TRAFFIC_TYPES.length; i++) {
+    r -= TRAFFIC_TYPES[i].weight;
+    if (r <= 0) return i;
+  }
+  return TRAFFIC_TYPES.length - 1;
+}
 
 /**
  * Менеджер городского трафика (управление автомобилями NPC, перекрестками и светофорами).
@@ -59,144 +91,63 @@ export class TrafficManager {
     this.scene = scene;
     /** @type {Array<Object>} список активных автомобилей трафика */
     this.cars = [];
-    this._geo = new Map();        // тип -> merged-геометрия кузова
+    // Материалы общие на весь трафик (OPT-15) — carmodel.js сливает кузов+колёса
+    // каждой NPC-машины в один vertexColors-меш на этом материале.
     this.matColored = new THREE.MeshLambertMaterial({ vertexColors: true });
-    this.matBodyTex = new THREE.MeshLambertMaterial({ map: makeTaxiTexture('#f2c12e') });
+    this.matGlass = new THREE.MeshLambertMaterial({ color: 0x1c2836, transparent: true, opacity: 0.72 });
+    this.matHead = new THREE.MeshLambertMaterial({ color: 0xfff8e0, emissive: 0x665522 });
+    this.matStop = new THREE.MeshLambertMaterial({ color: 0xff2020, emissive: 0x551111 });
+    this.matPlate = new THREE.MeshLambertMaterial({ map: makePlateTexture() });
+    this.matSign = new THREE.MeshLambertMaterial({ map: makeTaxiSignTexture(), emissive: 0x806010, emissiveIntensity: 0.35 });
+    this.matLivery = new THREE.MeshLambertMaterial({ map: makeCheckerStripTexture() });
+    this.matBeaconRed = new THREE.MeshLambertMaterial({ color: 0x550000, emissive: 0xff2020, emissiveIntensity: 0.75 });
+    this.matBeaconBlue = new THREE.MeshLambertMaterial({ color: 0x000555, emissive: 0x3060ff, emissiveIntensity: 0.75 });
     this.lightsRef = [];          // [{isec:{x,z}, state}] — от мира
+    this._beaconT = 0;
 
     // Водители сигналят и ругаются при таране игроком
     Events.on('crash', (d) => {
       if (d && d.victim === 'car' && d.car && d.impact > 3) {
-        Events.emit('horn');
+        Events.emit('horn', { sourceX: d.car.x, sourceZ: d.car.z });
         this.say(d.car, choice(DRIVER_RAM_QUOTES), 3.0);
       }
     });
   }
 
-  /* --- Сборка модели типа (каждый вызов — новая машина) --- */
-  _buildCar(type) {
-    const def = TRAFFIC_TYPES[type];
-    const grp = new THREE.Group();
-    const isTruck = type === 3;
-    const isTaxi = type === 4;
-    const bodyCol = isTaxi ? null : choice(def.colors);
-    const glassCol = 0x1c2430;
-    const darkCol = 0x22262c;
-    const lightCol = 0xf4f6f8;
-
-    const parts = [];
-    const addBox = (w, h, d, col, x, y, z) => {
-      const g = new THREE.BoxGeometry(w, h, d);
-      g.translate(x, y, z);
-      parts.push({ g, c: col });
-    };
-
-    // нижняя часть кузова (пороги)
-    addBox(def.w * 0.98, 0.42, def.len, bodyCol || 0xe8b92e, 0, 0.72, 0);
-    // капот (перед) и багажник (зад) — чуть выше, уже
-    addBox(def.w * 0.92, 0.24, def.len * 0.34, bodyCol || 0xf2c12e, 0, 0.98, def.len * 0.31);
-    addBox(def.w * 0.92, 0.24, def.len * 0.3, bodyCol || 0xf2c12e, 0, 0.98, -def.len * 0.29);
-    // кабина: стекло (тёмное) + крыша
-    addBox(def.w * 0.86, 0.46, def.len * 0.42, glassCol, 0, 1.32, -def.len * 0.02);
-    addBox(def.w * 0.8, 0.1, def.len * 0.4, bodyCol || 0xf2c12e, 0, 1.58, -def.len * 0.02);
-    // бамперы
-    addBox(def.w * 1.06, 0.2, 0.2, darkCol, 0, 0.56, def.len / 2 + 0.12);
-    addBox(def.w * 1.06, 0.2, 0.2, darkCol, 0, 0.56, -def.len / 2 - 0.12);
-    // боковые зеркала
-    addBox(0.14, 0.1, 0.12, bodyCol || 0xf2c12e, def.w / 2 + 0.06, 1.06, def.len * 0.22);
-    addBox(0.14, 0.1, 0.12, bodyCol || 0xf2c12e, -(def.w / 2 + 0.06), 1.06, def.len * 0.22);
-
-    if (isTruck) {
-      // грузовик: кабина смещена вперёд, сзади высокий кузов
-      parts.length = 0;
-      addBox(def.w * 0.98, 0.4, def.len * 0.2, darkCol, 0, 0.62, def.len * 0.36);
-      addBox(def.w * 0.9, 0.5, 0.9, choice(def.colors), 0, 1.0, def.len * 0.36);
-      addBox(def.w * 0.84, 0.3, 0.7, glassCol, 0, 1.36, def.len * 0.36);
-      addBox(def.w * 0.96, 1.5, def.len * 0.55, choice(def.colors), 0, 1.35, -def.len * 0.1);
-      addBox(def.w * 1.06, 0.2, 0.2, darkCol, 0, 0.56, def.len / 2 + 0.12);
-      addBox(def.w * 1.06, 0.2, 0.2, darkCol, 0, 0.56, -def.len / 2 - 0.12);
-    }
-
-    let bodyMesh;
-    if (isTaxi) {
-      // такси: весь кузов с текстурой «шашечек» — одна текстурированная часть
-      const g = new THREE.BoxGeometry(def.w, 0.42, def.len);
-      bodyMesh = new THREE.Mesh(g, this.matBodyTex);
-      bodyMesh.position.y = 0.72;
-      grp.add(bodyMesh);
-      // кабина поверх
-      const cab = new THREE.Mesh(new THREE.BoxGeometry(def.w * 0.86, 0.46, def.len * 0.42), new THREE.MeshLambertMaterial({ color: glassCol }));
-      cab.position.set(0, 1.32, -def.len * 0.02);
-      grp.add(cab);
-      const roof = new THREE.Mesh(new THREE.BoxGeometry(def.w * 0.8, 0.1, def.len * 0.4), new THREE.MeshLambertMaterial({ color: 0xf2c12e }));
-      roof.position.set(0, 1.58, -def.len * 0.02);
-      grp.add(roof);
-    } else {
-      const merged = mergeColored(parts);
-      bodyMesh = new THREE.Mesh(merged, this.matColored);
-      grp.add(bodyMesh);
-    }
-
-    // фары и стоп-сигналы (отдельные меши — яркие цвета)
-    const headMat = new THREE.MeshLambertMaterial({ color: 0xfff8e0, emissive: 0x665522 });
-    const stopMat = new THREE.MeshLambertMaterial({ color: 0xff2020, emissive: 0x551111 });
-    for (const s of [-1, 1]) {
-      const hl = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.14, 0.1), headMat);
-      hl.position.set(s * def.w * 0.34, 0.9, def.len / 2 + 0.06);
-      grp.add(hl);
-      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.12, 0.1), stopMat);
-      tl.position.set(s * def.w * 0.34, 0.9, -def.len / 2 - 0.06);
-      grp.add(tl);
-    }
-    // номерной знак сзади
-    const plateMat = new THREE.MeshLambertMaterial({ map: makePlateTexture() });
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.05), plateMat);
-    plate.position.set(0, 0.62, -def.len / 2 - 0.16);
-    grp.add(plate);
-
-    // колёса: шина + диск
-    const wheelZ = [def.len * 0.3, -def.len * 0.3];
-    for (const sx of [-1, 1]) for (const sz of wheelZ) {
-      const tire = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.3, 10), new THREE.MeshLambertMaterial({ color: 0x1a1a1c }));
-      tire.rotation.z = Math.PI / 2;
-      tire.position.set(sx * (def.w / 2 + 0.05), 0.46, sz);
-      grp.add(tire);
-      const rim = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.32, 8), new THREE.MeshLambertMaterial({ color: lightCol }));
-      rim.rotation.z = Math.PI / 2;
-      rim.position.set(sx * (def.w / 2 + 0.05), 0.46, sz);
-      grp.add(rim);
-    }
-    // антенна на крыше (не у грузовика — у него кузов)
-    if (!isTruck) {
-      const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.5, 4), new THREE.MeshLambertMaterial({ color: darkCol }));
-      ant.position.set(-def.w * 0.28, 1.72, -def.len * 0.1);
-      grp.add(ant);
-    }
-    // ручки дверей
-    for (const s of [-1, 1]) {
-      const hd = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.06, 0.34), new THREE.MeshLambertMaterial({ color: darkCol }));
-      hd.position.set(s * (def.w / 2 + 0.02), 0.82, -def.len * 0.08);
-      grp.add(hd);
-    }
-    // шашечки на крыше такси
-    if (isTaxi) {
-      const sign = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.22, 0.35), new THREE.MeshLambertMaterial({ color: 0xf2c12e, emissive: 0x806010 }));
-      sign.position.set(0, 1.72, -def.len * 0.02);
-      grp.add(sign);
-    }
-    grp.userData.type = TRAFFIC_TYPES[type].name;
-    return grp;
+  /* --- Сборка модели типа через общую фабрику carmodel.js (статичная сборка —
+     кузов+колёса+мелочёвка сливаются в 1 меш, см. buildCarModel) --- */
+  _buildCar(typeIdx) {
+    const def = TRAFFIC_TYPES[typeIdx];
+    const bodyColor = def.forceColor ? def.colors[0] : choice(def.colors);
+    const darkColor = 0x22262c;
+    const chromeColor = def.shape === 'retro' ? 0xd8d8d8 : 0xc8c8c8;
+    const built = buildCarModel({
+      shape: def.shape, w: def.w, len: def.len, animated: false,
+      matBody: this.matColored, matGlass: this.matGlass,
+      matHead: this.matHead, matStop: this.matStop,
+      matPlate: this.matPlate, matSign: this.matSign, matLivery: this.matLivery,
+      matBeaconRed: this.matBeaconRed, matBeaconBlue: this.matBeaconBlue,
+      bodyColor, darkColor, chromeColor,
+      hasPlate: true, hasSign: !!def.livery, hasLivery: !!def.livery, beacon: def.beacon || null,
+      cacheKey: `${def.name}|${bodyColor}`,
+    });
+    built.group.userData.type = def.name;
+    built.group.userData.refs = built.refs;
+    return built.group;
   }
 
   /* --- Заполнить пул --- */
   spawn(count, player) {
     while (this.cars.length < count) {
-      const type = Math.random() < 0.14 ? 4 : (Math.random() < 0.35 ? Math.floor(Math.random() * 4) : Math.floor(Math.random() * 3));
-      const mesh = this._buildCar(type);
+      const typeIdx = pickTrafficType();
+      const def = TRAFFIC_TYPES[typeIdx];
+      const mesh = this._buildCar(typeIdx);
+      const refs = mesh.userData.refs || {};
       const car = {
-        type, mesh, alive: true, radius: TRAFFIC_TYPES[type].r,
+        type: typeIdx, mesh, alive: true, radius: def.r,
         axis: 'z', coord: 0, dir: 1, pos: 0, speed: 0, target: 10, lane: 1, turnT: 0,
-        speechSprite: null, speechT: 0, yellCd: 0
+        speechSprite: null, speechT: 0, yellCd: 0,
+        beaconRed: refs.beaconRed || null, beaconBlue: refs.beaconBlue || null,
       };
       this.cars.push(car);
       this.scene.add(mesh);
@@ -205,7 +156,7 @@ export class TrafficManager {
   }
 
   placeNear(car, player) {
-    const r = this._randRoad(player);
+    const r = this._randRoad(player.x, player.z);
     car.axis = r.axis;
     car.coord = r.coord;
     car.dir = r.dir;
@@ -261,8 +212,12 @@ export class TrafficManager {
 
   update(dt, player, world, density, peds) {
     const px = player.x, pz = player.z;
+    // маячок полиции/скорой: красный/синий мигают в противофазе
+    this._beaconT = (this._beaconT + dt) % 0.6;
+    const beaconRedOn = this._beaconT < 0.3;
     for (const car of this.cars) {
       if (!car.alive) continue;
+      if (car.beaconRed) { car.beaconRed.visible = beaconRedOn; car.beaconBlue.visible = !beaconRedOn; }
       const wp = this._worldPos(car, _tempTrafficWp);
       car.x = wp.x; car.z = wp.z;
 
@@ -304,7 +259,7 @@ export class TrafficManager {
               car.target = Math.min(car.target, 0); // пропускаем
               if (car.yellCd <= 0 && dP < 16 && Math.random() < 0.12) {
                 car.yellCd = 7.0;
-                Events.emit('horn');
+                Events.emit('horn', { sourceX: car.x, sourceZ: car.z });
                 this.say(car, choice(DRIVER_PED_QUOTES), 2.5);
                 peds.say(p, choice(PED_REPLY_QUOTES), 2.5);
               }
@@ -321,7 +276,7 @@ export class TrafficManager {
               // Машина трафика сбивает пешехода!
               peds._knockDown(p, nx, nz, car.speed);
               Events.emit('trafficHitPed');
-              Events.emit('horn');
+              Events.emit('horn', { sourceX: car.x, sourceZ: car.z });
               this.say(car, choice(DRIVER_HIT_PED_QUOTES), 3.0);
               car.speed = Math.max(1, car.speed - 3.5);
             } else {

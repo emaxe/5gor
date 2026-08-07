@@ -1,4 +1,4 @@
-import { UPGRADES, CARS, TUNING } from './config.js';
+import { CFG, CFG_GFX_PRESETS, UPGRADES, CARS, TUNING } from './config.js';
 
 export class UpgradeSystem {
   constructor() {
@@ -60,7 +60,7 @@ export class UpgradeSystem {
         money: data.money, rating: data.rating, levels: this.levels, tuning: this.tuning,
         carId: this.carId, ownedCars: this.ownedCars,
         stats: data.stats, day: data.day,
-        sound: data.sound, music: data.music, quality: CFG.quality,
+        sound: data.sound, music: data.music, quality: CFG.quality, gfx: CFG.gfx,
       }));
     } catch (e) { /* приватный режим */ }
   }
@@ -77,6 +77,9 @@ export class UpgradeSystem {
       if (d.sound !== undefined) window._sndPref = d.sound;
       if (d.music !== undefined) window._musPref = d.music;
       if (d.quality) CFG.quality = d.quality;
+      // gfx — новая схема; старые сохранения без неё откатываются на пресет по quality
+      if (d.gfx) CFG.gfx = { ...CFG.gfx, ...d.gfx };
+      else if (d.quality) CFG.gfx = { ...CFG.gfx, ...CFG_GFX_PRESETS[d.quality === 'high' ? 'high' : 'low'], preset: d.quality === 'high' ? 'high' : 'low' };
       return d;
     } catch (e) { return null; }
   }

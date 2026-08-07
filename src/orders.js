@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG, LANDMARKS, DISTRICTS } from './config.js';
-import { dist2D, rand, choice, pickWeighted, fmtMoney, makeMarkerTexture, makeBeamSprite, buildPedMesh } from './utils.js';
+import { dist2D, rand, choice, pickWeighted, fmtMoney, makeMarkerTexture, makeBeamSprite, buildPedMesh, attachParcelBox, detachParcelBox } from './utils.js';
 import { Events } from './eventbus.js';
 import { getPassengerDialogue, PASSENGER_NAMES, CLIENT_AVATARS } from './dialogues.js';
 
@@ -44,7 +44,7 @@ const MISSION_TEMPLATES = [
       return {
         pickup: Orders.pickPoint(world, 'center'),
         drops: [
-          { x: -96, z: -160, name: 'Озеро Провал' },
+          { x: -72, z: -160, name: 'Озеро Провал' },
           { x: 12, z: -350, name: 'Эолова арфа' },
           { x: 0, z: -448, name: 'Смотровая башня' },
         ],
@@ -300,10 +300,14 @@ class PassengerManager {
 
   _placePassenger(order) {
     const mesh = buildPedMesh();
-    mesh.position.set(order.pickup.x, 0, order.pickup.z);
+    const h = this.world ? this.world.heightAt(order.pickup.x, order.pickup.z) : 0;
+    mesh.position.set(order.pickup.x, h + 0.02, order.pickup.z);
     this._faceRoad(mesh, order.pickup.x, order.pickup.z);
     this.world.scene.add(mesh);
-    order.passenger = { mesh, state: 'wait', t: rand(0, 6), walkT: 0, wx: 0, wz: 0 };
+    if (order.type === 'package') {
+      attachParcelBox(mesh);
+    }
+    order.passenger = { mesh, state: 'wait', x: order.pickup.x, z: order.pickup.z, t: rand(0, 6), walkT: 0, wx: 0, wz: 0 };
   }
 
   _removePassenger(order) {
@@ -314,8 +318,15 @@ class PassengerManager {
   }
 
   /* Пассажир в салоне (виден сквозь стекло): голова и плечи на пассажирском сиденье */
-  _cabIn(player) {
-    if (!player || !player.group) return;
+  _cabIn(player, order) {
+    // bodyGroup — визуальная подгруппа кузова (крен/клевок при вождении),
+    // пассажир едет вместе с ней, а не с корневой group (там же колёса)
+    const parentGroup = player && (player.bodyGroup || player.group);
+    if (!parentGroup) return;
+    if (order && order.type === 'package') {
+      this._cabOut();
+      return; // Для посылки человек в салон НЕ садится!
+    }
     if (!this._cabPassenger) {
       const mesh = buildPedMesh();
       for (const leg of mesh.userData.legs) leg.visible = false;
@@ -324,7 +335,7 @@ class PassengerManager {
       mesh.position.set(0.55, 0.06, -0.25);
       this._cabPassenger = mesh;
     }
-    if (!this._cabPassenger.parent) player.group.add(this._cabPassenger);
+    if (!this._cabPassenger.parent) parentGroup.add(this._cabPassenger);
     this._cabPassenger.visible = true;
   }
 
@@ -358,21 +369,44 @@ class PassengerManager {
    */
   accept(order, player) {
     if (order.state !== 'open') return false;
+    // Требование полной остановки машины!
+    if (Math.abs(player.speed) > 0.8) {
+      Events.emit('toast', { text: 'Для посадки/забора посылки полностью остановите машину!', color: '#ff9900' });
+      return false;
+    }
+
     order.state = 'active';
     order.startTime = performance.now();
     if (order.timeLimit) {
       order.timer = order.timeLimit;
     }
     this._removeMarker(order);
-    // пассажир садится в такси
+
+    // Человек у точки забора (отправитель или пассажир)
     if (order.passenger) {
-      order.passenger.state = 'riding';
-      order.passenger.mesh.visible = false;
+      const pas = order.passenger;
+      if (order.type === 'package') {
+        // Отправитель передаёт посылку: убираем коробку из его рук, а сам он
+        // превращается в обычного городского пешехода и уходит по своим делам
+        detachParcelBox(pas.mesh);
+        if (this.world && this.world.peds) {
+          this.world.peds.adoptPedestrian(pas.mesh, order.pickup.x, order.pickup.z);
+        }
+        order.passenger = null;
+      } else {
+        // Обычный пассажир (и врачи/миссии) садится внутрь такси:
+        // убираем 3D-модель пассажира со сцены на улице
+        pas.state = 'riding';
+        pas.mesh.visible = false;
+        if (pas.mesh.parent) {
+          pas.mesh.parent.remove(pas.mesh);
+        }
+      }
     }
-    this._cabIn(player);
+    this._cabIn(player, order);
     this.active = order;
     this.open = this.open.filter((o) => o.id !== order.id);
-    player.passengerCount = 1;
+    player.passengerCount = order.type === 'package' ? 0 : 1;
     player.style = 0.7;
     player.styleTimer = 0;
     Events.emit('order:accepted', { order, player });
@@ -412,7 +446,8 @@ class PassengerManager {
       const pas = o.passenger;
       if (pas && pas.state === 'wait') {
         pas.t += dt;
-        pas.mesh.position.y = Math.abs(Math.sin(pas.t * 2)) * 0.05;
+        const h = this.world ? this.world.heightAt(pas.x, pas.z) : 0;
+        pas.mesh.position.y = h + 0.02 + Math.abs(Math.sin(pas.t * 2)) * 0.05;
       }
       if (o.timeLimit) {
         o.timer -= dt;
@@ -485,6 +520,13 @@ class PassengerManager {
     const drop = a.drops[a.dropIdx];
     const dist = dist2D(player.x, player.z, drop.x, drop.z);
     if (dist > 7) return null;
+
+    // Требование полной остановки машины!
+    if (Math.abs(player.speed) > 0.8) {
+      Events.emit('toast', { text: 'Для высадки/передачи посылки полностью остановите машину!', color: '#ff9900' });
+      return null;
+    }
+
     // финальная остановка?
     const isLast = a.dropIdx >= a.drops.length - 1;
     if (!isLast) {
@@ -508,29 +550,49 @@ class PassengerManager {
 
     this.active = null;
     this._hideDropMarker();
-    // пассажир выходит из такси и уходит
     this._cabOut();
-    const pas = a.passenger;
-    if (pas) {
-      pas.state = 'walk';
-      pas.walkT = 0;
-      pas.mesh.visible = true;
-      pas.mesh.position.set(drop.x, 0, drop.z);
-      // уходит в сторону от дороги (вглубь квартала)
-      let bx = 0, bz = 0, best = 1e9;
-      for (const r of this.world.roadsV) {
-        const d = Math.abs(drop.x - r.c);
-        if (d < best) { best = d; bx = drop.x - r.c; bz = 0; }
+
+    if (a.type === 'package') {
+      // Для посылки у точки доставки создаём получателя и вручаем ему коробку —
+      // он берёт посылку в руки и уходит по своим делам как обычный пешеход
+      const recipientMesh = buildPedMesh();
+      const h = this.world ? this.world.heightAt(drop.x, drop.z) : 0;
+      recipientMesh.position.set(drop.x, h + 0.02, drop.z);
+      this.world.scene.add(recipientMesh);
+      attachParcelBox(recipientMesh);
+      if (this.world && this.world.peds) {
+        this.world.peds.adoptPedestrian(recipientMesh, drop.x, drop.z);
       }
-      for (const r of this.world.roadsH) {
-        const d = Math.abs(drop.z - r.c);
-        if (d < best) { best = d; bx = 0; bz = drop.z - r.c; }
+    } else {
+      // Для пассажира: высаживаем его из машины, он выходит на тротуар и уходит
+      const pas = a.passenger;
+      if (pas && pas.mesh) {
+        pas.mesh.visible = true;
+        this.world.scene.add(pas.mesh);
+        const offsetSide = Math.random() < 0.5 ? 1.5 : -1.5;
+        pas.mesh.position.set(drop.x + offsetSide, 0, drop.z + offsetSide);
+        let bx = 0, bz = 0, best = 1e9;
+        for (const r of this.world.roadsV) {
+          const d = Math.abs(drop.x - r.c);
+          if (d < best) { best = d; bx = drop.x - r.c; bz = 0; }
+        }
+        for (const r of this.world.roadsH) {
+          const d = Math.abs(drop.z - r.c);
+          if (d < best) { best = d; bx = 0; bz = drop.z - r.c; }
+        }
+        const l = Math.hypot(bx, bz) || 1;
+        const walkerObj = {
+          mesh: pas.mesh,
+          state: 'walk',
+          walkT: 0,
+          wx: bx / l,
+          wz: bz / l
+        };
+        pas.mesh.rotation.y = Math.atan2(walkerObj.wx, walkerObj.wz);
+        this._walkers.push(walkerObj);
       }
-      const l = Math.hypot(bx, bz) || 1;
-      pas.wx = bx / l; pas.wz = bz / l;
-      pas.mesh.rotation.y = Math.atan2(pas.wx, pas.wz);
-      this._walkers.push(pas);
     }
+
     player.passengerCount = 0;
     const res = {
       title: a.title, pay: pay, tips, total, type: a.type, missionId: a.missionId,

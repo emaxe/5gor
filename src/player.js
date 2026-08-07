@@ -1,9 +1,19 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { clamp, lerp, dist2D, circleAABB, makeTaxiTexture, makePlateTexture } from './utils.js';
+import { clamp, lerp, dist2D, circleAABB, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture } from './utils.js';
+import { buildCarModel } from './carmodel.js';
 import { Events } from './eventbus.js';
 
 const _tempPlayerCircleRes = { nx: 0, nz: 0, depth: 0 };
+
+/* carType (config.js CARS[].base.carType) -> силуэт + габариты (carmodel.js CAR_SHAPES) */
+const CAR_TYPE_SHAPE = {
+  taxi:     { shape: 'sedan', w: 1.9,  len: 4.3 },
+  classic:  { shape: 'retro', w: 1.85, len: 4.0 },
+  comfort:  { shape: 'hatch', w: 1.92, len: 4.25 },
+  minivan:  { shape: 'van',   w: 2.05, len: 4.7 },
+  business: { shape: 'premium', w: 1.95, len: 4.6 },
+};
 
 /**
  * Класс автомобиля игрока (физика, коллизии, визуал и свойства).
@@ -41,155 +51,92 @@ export class PlayerCar {
     /** @type {import('./config.js').Tuning} параметры тюнинга */
     this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, spoiler: false };
     this.groundY = 0.5;
+    this._builtCarType = null;
+    this._roll = 0; this._pitch = 0;
+    this._blinkT = 0;
+    this._initMaterials();
     this._build();
     this._buildLights();
   }
 
-  /* --- Сборка модели из примитивов --- */
+  /* --- Материалы: создаются один раз и переживают пересборку геометрии,
+     чтобы смена тюнинга (цвет/диски) не требовала перекомпиляции шейдеров --- */
+  _initMaterials() {
+    this.matBody = new THREE.MeshLambertMaterial({ color: this.tuning.color });
+    this.matDark = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+    this.matChrome = new THREE.MeshLambertMaterial({ color: 0xc8c8c8 });
+    this.matGlass = new THREE.MeshLambertMaterial({ color: 0x9fd8e8, transparent: true, opacity: 0.8 });
+    this.matHead = new THREE.MeshLambertMaterial({ color: 0x8a8368, emissive: 0xfff6d8, emissiveIntensity: 0 });
+    this.matStop = new THREE.MeshLambertMaterial({ color: 0x551010, emissive: 0xff2020, emissiveIntensity: 0.25 });
+    this.matTurnA = new THREE.MeshLambertMaterial({ color: 0x4a2c00, emissive: 0xff9500, emissiveIntensity: 0 });
+    this.matTurnB = new THREE.MeshLambertMaterial({ color: 0x4a2c00, emissive: 0xff9500, emissiveIntensity: 0 });
+    this.matReverse = new THREE.MeshLambertMaterial({ color: 0x555555, emissive: 0xffffff, emissiveIntensity: 0 });
+    this.matRim = new THREE.MeshLambertMaterial({ color: this.tuning.rims });
+    this.matPlate = new THREE.MeshLambertMaterial({ map: makePlateTexture() });
+    this.matSign = new THREE.MeshLambertMaterial({ map: makeTaxiSignTexture(), emissive: 0x806010, emissiveIntensity: 0 });
+    this.matLivery = new THREE.MeshLambertMaterial({ map: makeCheckerStripTexture() });
+  }
+
+  /* --- Сборка модели из примитивов (только при смене типа машины —
+     смена цвета/дисков/спойлера идёт через _applyTuning без пересборки) --- */
   _build() {
-    if (this.group) { this.scene.remove(this.group); this._disposeGroup(this.group); }
-    const g = new THREE.Group();
-    const bodyTex = makeTaxiTexture('#' + this.tuning.color.toString(16).padStart(6, '0'));
-    const bodyMat = new THREE.MeshLambertMaterial({ map: bodyTex });
-    const cabinMat = new THREE.MeshLambertMaterial({ color: 0x1c2430 });
-    const darkMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
-    const rimMat = new THREE.MeshLambertMaterial({ color: this.tuning.rims });
-    const trimMat = new THREE.MeshLambertMaterial({ color: 0x3a3a3a });
-    const plateTex = makePlateTexture();
-    const plateMat = new THREE.MeshLambertMaterial({ map: plateTex });
-    const glassMat = new THREE.MeshLambertMaterial({ color: 0x9fd8e8, transparent: true, opacity: 0.8 });
-
     const cType = this.stats.carType || 'taxi';
-    const isMinivan = cType === 'minivan';
-    const isBusiness = cType === 'business';
-    const isClassic = cType === 'classic';
+    if (this.group && this._builtCarType === cType) { this._applyTuning(this.tuning); return; }
+    if (this.group) { this.scene.remove(this.group); this._disposeGroup(this.group); }
+    this._builtCarType = cType;
 
-    const bW = isMinivan ? 2.05 : isBusiness ? 1.95 : 1.9;
-    const bH = isMinivan ? 1.05 : 0.75;
-    const bL = isMinivan ? 4.7 : isBusiness ? 4.5 : isClassic ? 4.1 : 4.3;
+    const def = CAR_TYPE_SHAPE[cType] || CAR_TYPE_SHAPE.taxi;
+    const built = buildCarModel({
+      shape: def.shape, w: def.w, len: def.len, animated: true,
+      matBody: this.matBody, matDark: this.matDark, matChrome: this.matChrome, matGlass: this.matGlass,
+      matHead: this.matHead, matStop: this.matStop, matTurnA: this.matTurnA, matTurnB: this.matTurnB,
+      matReverse: this.matReverse, matRim: this.matRim, matPlate: this.matPlate,
+      matSign: this.matSign, matLivery: this.matLivery,
+      hasPlate: true, hasSign: !!this.stats.isTaxi, hasLivery: !!this.stats.isTaxi,
+    });
 
-    // кузов
-    const body = new THREE.Mesh(new THREE.BoxGeometry(bW, bH, bL), bodyMat);
-    body.position.y = isMinivan ? 0.75 : 0.62;
-    g.add(body);
-
-    // кабина
-    const cabW = bW * 0.9;
-    const cabH = isMinivan ? 0.75 : isBusiness ? 0.58 : 0.62;
-    const cabL = isMinivan ? 2.9 : isBusiness ? 2.2 : 2.1;
-    const cabin = new THREE.Mesh(new THREE.BoxGeometry(cabW, cabH, cabL), cabinMat);
-    cabin.position.set(0, isMinivan ? 1.32 : 1.08, isMinivan ? -0.3 : -0.25);
-    g.add(cabin);
-
-    // капот/бамперы
-    const hood = new THREE.Mesh(new THREE.BoxGeometry(bW * 0.94, 0.28, isMinivan ? 0.5 : 0.7), trimMat);
-    hood.position.set(0, 0.72, bL * 0.45);
-    g.add(hood);
-    const rear = new THREE.Mesh(new THREE.BoxGeometry(bW * 0.94, 0.28, 0.5), trimMat);
-    rear.position.set(0, 0.72, -bL * 0.47);
-    g.add(rear);
-
-    // фары и стоп-сигналы
+    // спойлер строится всегда (скрыт по умолчанию) — включение в _applyTuning
+    // не требует пересборки геометрии
+    const spoilerY = def.shape === 'van' ? 1.9 : def.shape === 'premium' ? 1.5 : 1.42;
+    this.spoilerGroup = new THREE.Group();
+    const wing = new THREE.Mesh(new THREE.BoxGeometry(def.w * 0.9, 0.1, 0.5), this.matBody);
+    wing.position.set(0, spoilerY, -def.len * 0.46);
+    this.spoilerGroup.add(wing);
     for (const s of [-1, 1]) {
-      const hl = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.16, 0.1), new THREE.MeshBasicMaterial({ color: 0xfff6d8 }));
-      hl.position.set((bW * 0.33) * s, 0.72, bL * 0.5 + 0.01);
-      g.add(hl);
-      const tl = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.14, 0.1), new THREE.MeshBasicMaterial({ color: 0xd03030 }));
-      tl.position.set((bW * 0.33) * s, 0.72, -bL * 0.5 - 0.01);
-      g.add(tl);
+      const strut = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.3), this.matDark);
+      strut.position.set(def.w * 0.32 * s, spoilerY - 0.16, -def.len * 0.43);
+      this.spoilerGroup.add(strut);
     }
+    this.spoilerGroup.visible = false;
+    built.bodyGroup.add(this.spoilerGroup);
 
-    // номер
-    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.35, 0.06), plateMat);
-    plate.position.set(0, 0.5, bL * 0.5 + 0.02);
-    g.add(plate);
+    this.group = built.group;
+    this.bodyGroup = built.bodyGroup;
+    this.wheels = built.wheels;
+    this.steerPivots = built.steerPivots;
+    this.lampRefs = built.refs;
+    this.wheelR = built.wheelR;
 
-    // спойлер
-    if (this.tuning.spoiler) {
-      const sp = new THREE.Mesh(new THREE.BoxGeometry(bW * 0.9, 0.1, 0.5), bodyMat);
-      sp.position.set(0, isMinivan ? 1.6 : 1.15, -bL * 0.48);
-      g.add(sp);
-      for (const s of [-1, 1]) {
-        const st = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.3), trimMat);
-        st.position.set((bW * 0.32) * s, isMinivan ? 1.45 : 1.0, -bL * 0.45);
-        g.add(st);
-      }
-    }
-
-    // стёкла: лобовое, заднее, боковые
-    const ws = new THREE.Mesh(new THREE.BoxGeometry(bW * 0.8, 0.5, 0.06), glassMat);
-    ws.position.set(0, isMinivan ? 1.45 : 1.24, bL * 0.22);
-    ws.rotation.x = -0.45;
-    g.add(ws);
-    const wr = new THREE.Mesh(new THREE.BoxGeometry(bW * 0.8, 0.5, 0.06), glassMat);
-    wr.position.set(0, isMinivan ? 1.45 : 1.24, -bL * 0.32);
-    wr.rotation.x = 0.45;
-    g.add(wr);
-    for (const s of [-1, 1]) {
-      const wl = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.44, cabL * 0.8), glassMat);
-      wl.position.set((bW * 0.45) * s, isMinivan ? 1.4 : 1.2, -0.25);
-      g.add(wl);
-    }
-
-    // ручки дверей
-    for (const s of [-1, 1]) {
-      const hd = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.07, 0.4), trimMat);
-      hd.position.set((bW * 0.5) * s, 0.8, 0.35);
-      g.add(hd);
-    }
-
-    // антенна
-    const ant = new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.02, 0.7, 4), darkMat);
-    ant.position.set(-0.55, isMinivan ? 2.1 : 1.75, -0.9);
-    g.add(ant);
-
-    // крыша-шашечки (только у такси)
-    if (this.stats.isTaxi) {
-      const sign = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.22, 0.35), new THREE.MeshLambertMaterial({ color: 0xf2c12e, emissive: 0x806010 }));
-      sign.position.set(0, isMinivan ? 1.75 : 1.44, 0.5);
-      g.add(sign);
-    }
-
-    this.wheels = [];
-    this.steerPivots = [];
-    const wheelGeo = new THREE.CylinderGeometry(0.38, 0.38, 0.3, 10);
-    const hubGeo = new THREE.CylinderGeometry(0.14, 0.14, 0.34, 8);
-    const hubMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
-    const wheelOffsetX = bW * 0.51;
-    const wheelOffsetZ = bL * 0.33;
-
-    for (const [sx, sz, front] of [[-wheelOffsetX, wheelOffsetZ, true], [wheelOffsetX, wheelOffsetZ, true], [-wheelOffsetX, -wheelOffsetZ, false], [wheelOffsetX, -wheelOffsetZ, false]]) {
-      const w = new THREE.Mesh(wheelGeo, rimMat);
-      w.rotation.z = Math.PI / 2;
-      w.userData.front = front;
-      w.userData.baseZ = sz;
-      const hub = new THREE.Mesh(hubGeo, hubMat);
-      hub.rotation.z = Math.PI / 2;
-      w.add(hub);
-      if (front) {
-        const pivot = new THREE.Group();
-        pivot.position.set(sx, 0, sz);
-        w.position.set(0, 0.38, 0);
-        pivot.add(w);
-        g.add(pivot);
-        this.steerPivots.push(pivot);
-      } else {
-        w.position.set(sx, 0.38, sz);
-        g.add(w);
-        this.steerPivots.push(null);
-      }
-      this.wheels.push(w);
-    }
-    this.group = g;
-    this.scene.add(g);
+    this.scene.add(this.group);
+    if (this.headSpot) this.group.add(this.headSpot, this.headTarget); // переносим фонарь-прожектор при пересборке
+    this._applyTuning(this.tuning);
     this._updateMeshPos();
   }
 
+  /**
+   * Применить цвет кузова / диски / спойлер без пересборки геометрии.
+   * @param {import('./config.js').Tuning} tuning
+   */
+  _applyTuning(tuning) {
+    this.matBody.color.setHex(tuning.color);
+    this.matRim.color.setHex(tuning.rims);
+    if (this.spoilerGroup) this.spoilerGroup.visible = !!tuning.spoiler;
+  }
+
   _disposeGroup(g) {
-    g.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-      if (o.material) { if (Array.isArray(o.material)) o.material.forEach((m) => m.dispose()); else o.material.dispose(); }
-    });
+    // материалы принадлежат PlayerCar (созданы в _initMaterials) и переживают
+    // пересборку — освобождаем только геометрию старой модели
+    g.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
   }
 
   _buildLights() {
@@ -204,7 +151,8 @@ export class PlayerCar {
   }
 
   /**
-   * Установить параметры тюнинга кузова и пересобрать модель.
+   * Установить параметры тюнинга кузова и пересобрать модель (или, если тип
+   * машины не менялся, просто перекрасить материалы — см. _build/_applyTuning).
    * @param {import('./config.js').Tuning} tuning
    */
   setTuning(tuning) {
@@ -280,6 +228,11 @@ export class PlayerCar {
     // занос для звука
     this.slip = Math.abs(latSpeed) / 8 + (input.handbrake && Math.abs(fwdSpeed) > 5 ? 0.5 : 0);
 
+    // цели кренов кузова (чисто визуальные, сглаживаются в _updateMeshPos):
+    // крен от боковой скорости в повороте, клевок от продольного ускорения/торможения
+    this._targetRoll = clamp(-latSpeed * 0.018, -0.07, 0.07);
+    this._targetPitch = clamp(-accelV * 0.0011, -0.06, 0.06);
+
     this.velX = fwdX * fwdSpeed + latX * latSpeed;
     this.velZ = fwdZ * fwdSpeed + latZ * latSpeed;
     this.x += this.velX * dt;
@@ -304,6 +257,7 @@ export class PlayerCar {
     }
 
     this._collide(world, traffic);
+    this._updateLamps(dt, input, fwdSpeed);
     this._updateMeshPos(dt);
 
     // звук
@@ -360,38 +314,55 @@ export class PlayerCar {
         }
       }
     }
-    // пешеходы: на малой скорости — просто отталкиваем вбок (уворачивается),
-    // на высокой — сбиваем (отлетает и лежит). Никаких телепортов.
+    // пешеходы (включая пешеходов города и ждущих клиентов на остановках):
+    // на малой скорости — отталкиваем вбок, на высокой — сбиваем.
+    // Два последовательных прохода вместо [...world.peds.cars] + push каждый
+    // кадр (OPT-18) — источники уже существуют как списки, промежуточный
+    // массив не нужен.
     if (world.peds) {
-      for (const p of world.peds.cars) {
-        if (!p.alive) continue;
-        const d = dist2D(this.x, this.z, p.x, p.z);
-        const rr = r + 0.55;
-        if (d >= rr || d < 1e-4) continue;
-        const nx = (p.x - this.x) / d, nz = (p.z - this.z) / d;
-        // выталкиваем из-под машины на границу контакта
-        p.x = this.x + nx * rr;
-        p.z = this.z + nz * rr;
-        if (p.hitCd > 0) continue; // уже уворачивается/сбит — не дёргаем повторно
-        const rel = this.velX * nx + this.velZ * nz;
-        if (this.speed > 3.0) {
-          // сбивание: пешеход отлетает в сторону удара
-          Events.emit('hitPed', { byPlayer: true });
-          this._damage(6, world, 'ped');
-          p.hitCd = 2.0;
-          world.peds._knockDown(p, nx, nz, this.speed);
-        } else {
-          // уворот: пешеход прыгает вбок и убегает
-          p.hitCd = 1.2;
-          const sp = this.speed || 1;
-          const carVX = this.velX / sp, carVZ = this.velZ / sp;
-          const perpX = -carVZ, perpZ = carVX;
-          const sideSign = Math.sign(nx * perpX + nz * perpZ) || 1;
-          const dx = perpX * sideSign * 1.3 + nx * 0.4;
-          const dz = perpZ * sideSign * 1.3 + nz * 0.4;
-          world.peds._dodge(p, dx, dz, this.speed);
+      for (const p of world.peds.cars) this._collidePed(p, r, world);
+      if (world.gameRef && world.gameRef.orders) {
+        for (const o of world.gameRef.orders.open) {
+          if (o.passenger && o.passenger.mesh) this._collidePed(o.passenger, r, world);
         }
       }
+    }
+  }
+
+  _collidePed(p, r, world) {
+    if (p.alive === false || p.x === undefined || p.z === undefined) return;
+    const d = dist2D(this.x, this.z, p.x, p.z);
+    const rr = r + 0.55;
+    if (d >= rr || d < 1e-4) return;
+    const nx = (p.x - this.x) / d, nz = (p.z - this.z) / d;
+    // выталкиваем из-под машины на границу контакта
+    p.x = this.x + nx * rr;
+    p.z = this.z + nz * rr;
+    if (p.mesh) {
+      p.mesh.position.x = p.x;
+      p.mesh.position.z = p.z;
+    }
+    if (p.hitCd > 0) return; // уже уворачивается/сбит — не дёргаем повторно
+
+    // Относительная скорость движения НА пешехода
+    const relVel = this.velX * nx + this.velZ * nz;
+
+    if (Math.abs(this.speed) > 4.2 && relVel > 1.5) {
+      // Реальное наезд/сбивание с ощутимой скоростью
+      Events.emit('hitPed', { byPlayer: true });
+      this._damage(6, world, 'ped');
+      p.hitCd = 2.0;
+      if (world.peds._knockDown) world.peds._knockDown(p, nx, nz, Math.abs(this.speed));
+    } else if (Math.abs(this.speed) > 1.0 && relVel > 0.2) {
+      // Легкое касание/уворот: пешеход отскакивает вбок
+      p.hitCd = 1.2;
+      const sp = Math.abs(this.speed) || 1;
+      const carVX = this.velX / sp, carVZ = this.velZ / sp;
+      const perpX = -carVZ, perpZ = carVX;
+      const sideSign = Math.sign(nx * perpX + nz * perpZ) || 1;
+      const dx = perpX * sideSign * 1.3 + nx * 0.4;
+      const dz = perpZ * sideSign * 1.3 + nz * 0.4;
+      if (world.peds._dodge) world.peds._dodge(p, dx, dz, Math.abs(this.speed));
     }
   }
 
@@ -446,7 +417,7 @@ export class PlayerCar {
     g.position.set(this.x, this.groundY, this.z);
     g.rotation.y = this.heading;
     // колёса: спин вокруг собственной оси (локальный X), руль — поворот пивота
-    const spin = this.speed / 0.38;
+    const spin = this.speed / (this.wheelR || 0.38);
     for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
       w.rotation.x -= spin * dt;
@@ -455,6 +426,31 @@ export class PlayerCar {
       if (pivot) pivot.rotation.y = -this.steerVisual * 0.5;
     }
     this.steerVisual = lerp(this.steerVisual, this._steerIn || 0, 0.15);
+
+    // живая механика кузова: плавный крен в поворотах и клевок при разгоне/торможении
+    // (только визуал — на физику/коллизии не влияет, колёса и группа-корпус независимы)
+    this._roll = lerp(this._roll, this._targetRoll || 0, 0.14);
+    this._pitch = lerp(this._pitch, this._targetPitch || 0, 0.14);
+    if (this.bodyGroup) { this.bodyGroup.rotation.z = this._roll; this.bodyGroup.rotation.x = this._pitch; }
+  }
+
+  /* Рабочий свет: фары, стопы, задний ход, поворотники, плафон "ТАКСИ" —
+     только смена emissiveIntensity общих материалов, без пересоздания мешей */
+  _updateLamps(dt, input, fwdSpeed) {
+    if (this.matHead) this.matHead.emissiveIntensity = this.lightsOn ? 1.1 : 0;
+    const braking = input.brake > 0 && Math.abs(this.speed) > 0.05;
+    if (this.matStop) this.matStop.emissiveIntensity = braking ? 1.1 : 0.25;
+    if (this.matReverse) this.matReverse.emissiveIntensity = fwdSpeed < -0.1 ? 0.9 : 0;
+
+    // поворотники мигают, пока руль отклонён (сторона A = -X, см. carmodel.js)
+    this._blinkT = (this._blinkT + dt) % 0.9;
+    const blinkOn = this._blinkT < 0.45;
+    const steer = input.steer || 0;
+    if (this.matTurnA) this.matTurnA.emissiveIntensity = (steer > 0.15 && blinkOn) ? 1.3 : 0;
+    if (this.matTurnB) this.matTurnB.emissiveIntensity = (steer < -0.15 && blinkOn) ? 1.3 : 0;
+
+    // плафон "ТАКСИ": горит — свободна, приглушён — занята пассажиром
+    if (this.matSign) this.matSign.emissiveIntensity = this.passengerCount > 0 ? 0.06 : 0.5;
   }
 
   setSteer(s) { this._steerIn = s; }

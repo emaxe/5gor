@@ -32,6 +32,7 @@ export class UIManager {
     this._dialogueTimer = null;
 
     Events.on('passenger:speak', (d) => this.showDialogue(d.speaker, d.text, d.avatar, d.color));
+    Events.on('radio:changed', (st) => this.updateRadioDisplay(st));
   }
 
   /* ---------- Кнопки ---------- */
@@ -54,6 +55,7 @@ export class UIManager {
     on('btn-pause', () => this.game.togglePause());
     on('btn-horn', () => this.game.pressHorn());
     on('btn-lights', () => this.game.toggleLights());
+    on('btn-radio', () => this.game.toggleRadio());
     on('btn-repair', () => this.game.garageRepair());
     on('btn-wash', () => this.game.garageWash());
     on('btn-refuel', () => this.game.garageRefuel());
@@ -68,13 +70,36 @@ export class UIManager {
         document.querySelectorAll('.garage-tabs button').forEach((x) => x.classList.remove('active'));
         b.classList.add('active');
         this._garageTab = b.dataset.tab;
-        this.renderGarage();
+        // renderGarage() без аргументов падает на upgrades.stats() — переключение
+        // вкладки не передаёт своих данных, берём их из game (как и остальные вызовы)
+        this.renderGarage(this.game.upgrades, this.game.money, this.game.player);
       });
     });
     // настройки
     on('chk-sound', () => this.game.setSound(this.$('chk-sound').checked));
     on('chk-music', () => this.game.setMusic(this.$('chk-music').checked));
-    on('sel-quality', () => this.game.setQuality(this.$('sel-quality').value));
+    // графика: пресет применяет все поля разом и синхронизирует остальные контролы
+    on('sel-gfx-preset', () => {
+      const v = this.$('sel-gfx-preset').value;
+      if (v === 'custom') return; // «Своё» — не пресет, а следствие ручной правки поля
+      this.game.applyGfxPreset(v);
+      this.syncGfxUI();
+    });
+    // остальные контролы — точечная правка одного поля, переключает пресет на «Своё»
+    const gfxField = (id, key, parse) => on(id, () => {
+      const el = this.$(id);
+      const val = parse ? parse(el.value) : (el.type === 'checkbox' ? el.checked : el.value);
+      this.game.applyGfx({ [key]: val, preset: 'custom' });
+      this.$('sel-gfx-preset').value = 'custom';
+      if (key === 'shadows') this.$('chk-shadow-actors').disabled = val !== 'high';
+    });
+    gfxField('sel-shadows', 'shadows');
+    gfxField('chk-shadow-actors', 'shadowActors');
+    gfxField('sel-pixelratio', 'pixelRatio', parseFloat);
+    gfxField('sel-drawdist', 'drawDistance', Number);
+    gfxField('sel-traffic-density', 'trafficDensity', parseFloat);
+    gfxField('sel-ped-density', 'pedDensity', parseFloat);
+    gfxField('chk-rain', 'rain');
     // клавиатура: Esc/M/G обрабатывает Game через очереди InputManager
   }
 
@@ -181,17 +206,9 @@ export class UIManager {
       oc.classList.add('hidden');
     }
 
-    // стрелка-навигатор: к точке высадки, а без заказа — к ближайшему свободному
+    // стрелка-навигатор: появляется только при активном принятом задании и показывает на конечную точку (высадка/цель)
     const nw = els['nav-arrow-wrap'];
-    let target = orders.activeDrop;
-    if (!target && orders.open.length) {
-      // ближайший свободный заказ (маркер на карте)
-      let bd = Infinity;
-      for (const o of orders.open) {
-        const d = dist2D(player.x, player.z, o.pickup.x, o.pickup.z);
-        if (d < bd) { bd = d; target = o.pickup; }
-      }
-    }
+    const target = orders.activeDrop;
     if (target) {
       nw.classList.remove('hidden');
       const dx = target.x - player.x, dz = target.z - player.z;
@@ -328,7 +345,7 @@ export class UIManager {
     g.font = '13px system-ui'; g.fillStyle = 'rgba(255,255,255,0.85)'; g.textAlign = 'center';
     const centers = {
       center: [32, 32], kurort: [-150, -40], prigorod: [40, 180],
-      sanatorii: [180, -30], mashuk: [-100, -160], proval: [-96, -160],
+      sanatorii: [180, -30], mashuk: [-100, -160], proval: [-72, -160],
       rynok: [96, -32], vokzal: [160, 96],
     };
     for (const d of DISTRICTS) {
@@ -541,9 +558,30 @@ export class UIManager {
   }
 
   /* ---------- Настройки ---------- */
-  syncSettings(sound, music, quality) {
+  syncSettings(sound, music) {
     this.$('chk-sound').checked = sound;
     this.$('chk-music').checked = music;
-    this.$('sel-quality').value = quality;
+    this.syncGfxUI();
+  }
+
+  syncGfxUI() {
+    const g = CFG.gfx;
+    this.$('sel-gfx-preset').value = g.preset || 'custom';
+    this.$('sel-shadows').value = g.shadows;
+    this.$('chk-shadow-actors').checked = g.shadowActors;
+    this.$('chk-shadow-actors').disabled = g.shadows !== 'high';
+    this.$('sel-pixelratio').value = String(g.pixelRatio);
+    this.$('sel-drawdist').value = String(g.drawDistance);
+    this.$('sel-traffic-density').value = String(g.trafficDensity);
+    this.$('sel-ped-density').value = String(g.pedDensity);
+    this.$('chk-rain').checked = g.rain;
+  }
+
+  updateRadioDisplay(st) {
+    const iconEl = this.$('radio-icon');
+    const nameEl = this.$('radio-name');
+    if (iconEl) iconEl.textContent = st.icon;
+    if (nameEl) nameEl.textContent = st.name;
+    this.toast(`📻 Радио: ${st.icon} ${st.name} (${st.genre})`, '#58a6ff');
   }
 }

@@ -13,6 +13,7 @@ SRC = ROOT / "src"
 MODULES = [
     "config.js",
     "utils.js",
+    "carmodel.js",
     "eventbus.js",
     "audio.js",
     "input.js",

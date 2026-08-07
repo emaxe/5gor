@@ -15,7 +15,7 @@ export class InputManager {
     this.handbrake = false;
 
     // очереди одноразовых действий
-    this.queues = { interact: [], horn: [], lights: [], map: [], pause: [], garage: [] };
+    this.queues = { interact: [], horn: [], lights: [], radio: [], map: [], pause: [], garage: [] };
 
     // камера
     this.camYawDelta = 0;
@@ -40,10 +40,11 @@ export class InputManager {
       if (k === 'KeyE') this.queues.interact.push(1);
       if (k === 'KeyH') this.queues.horn.push(1);
       if (k === 'KeyL') this.queues.lights.push(1);
+      if (k === 'KeyR') this.queues.radio.push(1);
       if (k === 'KeyM') this.queues.map.push(1);
       if (k === 'Escape' || k === 'KeyP') this.queues.pause.push(1);
       if (k === 'KeyG') this.queues.garage.push(1);
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyM'].includes(k)) e.preventDefault();
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyR', 'KeyM'].includes(k)) e.preventDefault();
     };
     const up = (e) => this.keys.delete(e.code);
     window.addEventListener('keydown', down);

@@ -87,6 +87,11 @@ export const CFG = {
   SIDE: 4,           // ширина тротуара
   N: 4,              // дороги от -N*CELL до N*CELL
   GRID_EXT: 36,      // дороги выступают за сетку
+  SHADOW_HALF: 90,   // половина бокса shadow-камеры солнца (game.js), фиксирован
+                      // вокруг центра карты (0,0) — geometry.js использует то же
+                      // значение, чтобы не включать castShadow на чанках, которые
+                      // частично выходят за границу (иначе тень обрезается посреди
+                      // объекта и выглядит «оторванной» от него)
 
   // Экономика
   startMoney: 800,
@@ -125,9 +130,20 @@ export const CFG = {
   orderExpireSec: 110,
   orderSpawnEverySec: 9,
 
-  // Качество
+  // Качество (устаревший алиас, держится ради обратной совместимости старых
+  // сохранений — реальные настройки теперь в CFG.gfx)
   quality: 'high', // high | low (вкл/выкл тени, pixelRatio)
 };
+
+/* Настройки графики: реальные поля, применяемые applyGfx() (game.js). Дефолты
+   соответствуют текущему поведению quality:'high'. */
+export const CFG_GFX_PRESETS = {
+  low:    { shadows: 'off',  shadowActors: false, pixelRatio: 1.25, drawDistance: 600,  trafficDensity: 0.5, pedDensity: 0.5, rain: false },
+  medium: { shadows: 'low',  shadowActors: false, pixelRatio: 1.25, drawDistance: 1000, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
+  high:   { shadows: 'high', shadowActors: false, pixelRatio: 1.75, drawDistance: 1400, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
+};
+
+CFG.gfx = { ...CFG_GFX_PRESETS.high, preset: 'high' };
 
 /* Районы города. unlock — рейтинг для появления заказов */
 export const DISTRICTS = [
@@ -213,10 +229,10 @@ export const TUNING = {
 
 /* Достопримечательности (экскурсионные заказы) */
 export const LANDMARKS = [
-  { id: 'proval',    name: 'Озеро Провал',       x: -96, z: -160, desc: 'Голубое озеро в кратере' },
-  { id: 'cvetnik',   name: 'Цветник',            x: -32, z: 32,   desc: 'Парк с фонтаном и гротом' },
+  { id: 'proval',    name: 'Озеро Провал',       x: -72, z: -160, desc: 'Голубое озеро в кратере' },
+  { id: 'cvetnik',   name: 'Цветник',            x: -32, z: 18,   desc: 'Парк с фонтаном и гротом' },
   { id: 'grot',      name: 'Грот Лермонтова',    x: -52, z: 8,    desc: 'Каменный грот в парке' },
-  { id: 'narzan',    name: 'Нарзанные ванны',    x: -32, z: -32,  desc: 'Купол галереи с нарзаном' },
+  { id: 'narzan',    name: 'Нарзанные ванны',    x: -32, z: -15,  desc: 'Купол галереи с нарзаном' },
   { id: 'rynok',     name: 'Рынок «Лира»',       x: 96,  z: -32,  desc: 'Главный рынок города' },
   { id: 'vokzal',    name: 'Ж/д вокзал',         x: 160, z: 96,   desc: 'Вокзал с часами на башне' },
   { id: 'cable',     name: 'Канатная дорога',    x: 20,  z: -288, desc: 'Подъёмник на Машук' },

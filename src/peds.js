@@ -18,7 +18,24 @@ const IDLE_QUOTES = [
   "Вай, какой воздух на КМВ!",
   "Надо зайти нарзана попить...",
   "Где здесь ближайшая аптека?",
-  "Такси в городе стали быстрее..."
+  "Такси в городе стали быстрее...",
+  "В Цветнике опять розы цветут!",
+  "Пятигорский курорт — лучший в мире!",
+  "На Провале Остап Бендер стоял!"
+];
+
+const ANIMAL_DOG_QUOTES = [
+  "Гав-гав!",
+  "Тяв!",
+  "Вуф!",
+  "Р-р-р, гав!"
+];
+
+const ANIMAL_CAT_QUOTES = [
+  "Мяу!",
+  "Мурр-мяу!",
+  "Фр-р-р!",
+  "Мяу-мяу..."
 ];
 
 const CURSE_QUOTES = [
@@ -40,7 +57,7 @@ const KICK_QUOTES = [
 ];
 
 /**
- * Менеджер пешеходов (спавн, ИИ движения по тротуарам и переходам, анимации, ругань и пинание авто).
+ * Менеджер пешеходов и животных (спавн, осознанный ИИ движения к целям, анимации, ругань и животные).
  */
 export class PedestrianManager {
   /**
@@ -48,13 +65,13 @@ export class PedestrianManager {
    */
   constructor(scene) {
     this.scene = scene;
-    /** @type {Array<Object>} список активных пешеходов */
+    /** @type {Array<Object>} список активных пешеходов и животных */
     this.cars = []; // сущности
     this.trafficRef = null;
     this._count = 0;
   }
 
-  /* Реплика над головой пешехода */
+  /* Реплика над головой пешехода / животного */
   say(p, text, duration = 3.0) {
     if (!p.speechSprite) {
       p.speechSprite = makeSpeechSprite(text);
@@ -63,18 +80,44 @@ export class PedestrianManager {
       updateSpeechSprite(p.speechSprite, text);
     }
     p.speechT = duration;
-    Events.emit('spatial:shout', { x: p.x, z: p.z, text, type: 'scream', avatar: '🏃' });
+    const avatar = p.isAnimal ? (p.archetype === 'dog' ? '🐕' : '🐈') : '🏃';
+    const speaker = p.isAnimal ? (p.archetype === 'dog' ? 'Собака рядом' : 'Кот рядом') : 'Пешеход рядом';
+    Events.emit('spatial:shout', { x: p.x, z: p.z, text, type: 'scream', avatar, speaker });
   }
 
-  /* Гуманоид из примитивов: отдельные ноги/руки — анимация ходьбы */
+  /* Построение 3D-модели */
   _buildPed(archetype) {
     return buildPedMesh(archetype);
   }
 
-  /* Анимация ходьбы/бега/ругани/удара ногой */
+  /* Анимация ходьбы/бега/ругани/удара ногой и движения животных */
   _animate(p) {
     const u = p.mesh.userData;
-    if (!u || !u.legs) return;
+    if (!u) return;
+
+    if (p.isAnimal) {
+      // Анимация животного (4 лапы + хвост + голова)
+      const moving = p.knockT <= 0 && p.speed > 0 && (p.mode === 'walk' || p.mode === 'run' || p.mode === 'cross' || p.mode === 'turn' || p.mode === 'flee');
+      const ph = p.walk || 0;
+      if (moving && u.legs && u.legs.length === 4) {
+        const sw = Math.sin(ph * 1.4);
+        // Диагональная рысь
+        u.legs[0].rotation.x = sw * 0.6;   // пп
+        u.legs[1].rotation.x = -sw * 0.6;  // лп
+        u.legs[2].rotation.x = -sw * 0.6;  // пз
+        u.legs[3].rotation.x = sw * 0.6;   // лз
+        if (u.tail) u.tail.rotation.y = Math.sin(ph * 2.0) * 0.35;
+        if (u.head) u.head.rotation.x = Math.sin(ph * 1.4) * 0.08;
+      } else if (u.legs && u.legs.length === 4) {
+        for (let i = 0; i < 4; i++) u.legs[i].rotation.x = 0;
+        if (u.tail) u.tail.rotation.y = 0;
+        if (u.head) u.head.rotation.x = 0;
+      }
+      return;
+    }
+
+    // Анимация человека
+    if (!u.legs) return;
     const moving = p.knockT <= 0 && p.speed > 0 && (p.mode === 'walk' || p.mode === 'run' || p.mode === 'cross' || p.mode === 'turn' || p.mode === 'flee');
     const ph = p.walk || 0;
     let amp = p.mode === 'flee' ? 0.75 : (p.mode === 'run' ? 0.82 : 0.55);
@@ -105,18 +148,24 @@ export class PedestrianManager {
     }
   }
 
-  /* Спавн с поддержкой разных архетипов */
+  /* Спавн с поддержкой разных архетипов людей и животных */
   spawn(count, player) {
-    const archTypes = ['gopnik', 'grandma', 'runner', 'student', 'businessman', 'regular'];
+    const archTypes = [
+      'gopnik', 'grandma', 'runner', 'student', 'businessman', 'tourist', 'child', 'regular',
+      'dog', 'dog', 'cat', 'cat' // Добавляем животных в пул спавна (~25% от состава)
+    ];
     while (this.cars.length < count) {
       const arch = choice(archTypes);
       const mesh = this._buildPed(arch);
       const speechSprite = makeSpeechSprite();
       mesh.add(speechSprite);
 
+      const isAnimal = arch === 'dog' || arch === 'cat';
+
       const ped = {
-        mesh, speechSprite, archetype: arch, alive: true, x: 0, z: 0, axis: 'z', dir: 1,
+        mesh, speechSprite, archetype: arch, isAnimal, alive: true, x: 0, z: 0, axis: 'z', dir: 1,
         speed: 0, baseSpeed: 2.2, side: 1, turnT: 0, mode: 'walk', cross: null, turn: null,
+        targetPos: null, targetIsec: null,
         waitT: 0, fx: 0, fz: 0, fvx: 0, fvz: 0, fleeT: 0, knockT: 0, hitCd: 0,
         angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30)
       };
@@ -148,10 +197,8 @@ export class PedestrianManager {
       const wz = axis === 'z' ? pos : coord + side * PED_SIDE;
       const d = Math.hypot(wx - px, wz - pz);
 
-      // 1. Запрещаем спавн ближе 50м к игроку
       if (d < 50) continue;
 
-      // 2. Запрещаем спавн в зоне видимости камеры перед игроком
       const viewDist = Math.min(145, 115 + pSpeed * 1.6);
       if (isInPlayerView(wx, wz, px, pz, heading, viewDist)) continue;
 
@@ -159,7 +206,6 @@ export class PedestrianManager {
       break;
     }
 
-    // Если все 30 попыток попали в камеру — спавним строго за спиной игрока вне обзора
     if (!place) {
       const backAngle = heading + Math.PI + rand(-0.7, 0.7);
       const backDist = rand(70, 115);
@@ -181,14 +227,19 @@ export class PedestrianManager {
     if (p.archetype === 'runner') p.baseSpeed = rand(4.0, 5.0);
     else if (p.archetype === 'grandma') p.baseSpeed = rand(1.3, 1.7);
     else if (p.archetype === 'gopnik') p.baseSpeed = rand(2.3, 2.9);
+    else if (p.archetype === 'dog') p.baseSpeed = rand(3.0, 4.2);
+    else if (p.archetype === 'cat') p.baseSpeed = rand(2.2, 3.5);
+    else if (p.archetype === 'child') p.baseSpeed = rand(2.0, 2.6);
     else p.baseSpeed = rand(1.8, 2.7);
 
     p.speed = p.baseSpeed;
-    p.mode = p.archetype === 'runner' ? 'run' : 'walk';
+    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
 
     p.turnT = 0;
     p.cross = null;
     p.turn = null;
+    p.targetPos = null;
+    p.targetIsec = null;
     p.waitT = 0;
     p.fx = 0; p.fz = 0; p.fvx = 0; p.fvz = 0;
     p.fleeT = 0; p.knockT = 0; p.hitCd = 0;
@@ -198,6 +249,17 @@ export class PedestrianManager {
     const wp = this._worldPos(p, _tempPedWp);
     p.x = wp.x; p.z = wp.z;
     this._sync(p);
+
+    // Назначаем начальную целевую позицию для осмысленного маршрута
+    this._assignNewTarget(p);
+  }
+
+  /* Назначение целевого пункта для пешехода */
+  _assignNewTarget(p) {
+    const isecStep = CFG.CELL;
+    // Выбираем целевой перекрёсток впереди по вектору или на расстоянии 2-4 блоков
+    const targetIsec = Math.round((p.pos + p.dir * rand(isecStep * 1.5, isecStep * 3.5)) / isecStep) * isecStep;
+    p.targetIsec = clamp(targetIsec, -256, 256);
   }
 
   /* Мировые координаты в зависимости от режима */
@@ -222,8 +284,9 @@ export class PedestrianManager {
     return out;
   }
 
-  /* Поиск светофора, регулирующего переход пешехода через дорогу p.axis на перекрёстке */
+  /* Поиск светофора */
   _getLightForPed(p) {
+    if (p.isAnimal) return null; // Животные игнорируют светофоры!
     if (!this.lightsRef || !this.lightsRef.length) return null;
     const isecVal = Math.round(p.pos / CFG.CELL) * CFG.CELL;
     const targetIsecX = p.axis === 'z' ? p.coord : isecVal;
@@ -254,12 +317,13 @@ export class PedestrianManager {
     } else {
       h = p.axis === 'z' ? (p.dir > 0 ? 0 : Math.PI) : (p.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
     }
-    if (p.walk && p.mode !== 'wait') h += Math.sin(p.walk) * 0.06;
+    if (p.walk && p.mode !== 'wait') h += Math.sin(p.walk) * 0.04;
     return h;
   }
 
   /* Есть ли приближающаяся машина на нашей дороге рядом с переходом */
   _carOnRoad(p, dist) {
+    if (p.isAnimal) return false; // Животные не проверяют машины строго перед переходом (перебегают)
     const safeDist = dist || 32;
     const tr = this.trafficRef;
     if (tr) {
@@ -284,7 +348,7 @@ export class PedestrianManager {
     return false;
   }
 
-  /* Движение по тротуару */
+  /* Осознанное движение по тротуару */
   _updateWalk(p, dt) {
     p.pos += p.speed * dt * p.dir;
     if (p.turnT > 0) { p.turnT -= dt; return; }
@@ -292,31 +356,63 @@ export class PedestrianManager {
       p.dir = -p.dir;
       p.pos = clamp(p.pos, -232, 232);
       p.turnT = 0.5;
+      this._assignNewTarget(p);
       return;
     }
+
     const isec = Math.round(p.pos / CFG.CELL) * CFG.CELL;
-    if (Math.abs(isec) <= 256 && Math.abs(p.pos - isec) < 1.2) this._decide(p, isec);
+    // Корректировка направления согласно цели p.targetIsec
+    if (p.targetIsec !== null) {
+      if ((p.targetIsec > p.pos && p.dir < 0) || (p.targetIsec < p.pos && p.dir > 0)) {
+        p.dir = p.targetIsec >= p.pos ? 1 : -1;
+      }
+    }
+
+    if (Math.abs(isec) <= 256 && Math.abs(p.pos - isec) < 1.2) {
+      this._decide(p, isec);
+    }
   }
 
-  /* Выбор действия на перекрёстке */
+  /* Осознанный выбор действия на перекрёстке */
   _decide(p, isec) {
+    // Если животное — оно часто просто перебегает дорогу или поворачивает
+    if (p.isAnimal) {
+      const animalRoll = Math.random();
+      if (animalRoll < 0.35) { this._startCross(p); return; }
+      if (animalRoll < 0.70) { this._startTurn(p, isec); return; }
+      p.turnT = rand(0.4, 0.9);
+      return;
+    }
+
+    // Для человека: если достиг целевого перекрёстка — выбирает поворот или переход для продолжения пути
+    const reachedTarget = p.targetIsec !== null && Math.abs(isec - p.targetIsec) < CFG.CELL * 0.5;
     const roll = Math.random();
-    if (roll < 0.14) { this._startCross(p); return; }
-    if (roll < 0.42) { this._startTurn(p, isec); return; }
-    if (roll < 0.50) { p.dir = -p.dir; p.turnT = 1.2; return; }
-    p.turnT = rand(0.3, 0.8);
+
+    if (reachedTarget) {
+      this._assignNewTarget(p);
+      if (roll < 0.45) { this._startTurn(p, isec); return; }
+      if (roll < 0.85) { this._startCross(p); return; }
+      p.turnT = 1.0;
+      return;
+    }
+
+    // Проходной перекрёсток — преимущественно идём прямо
+    if (roll < 0.10) { this._startCross(p); return; }
+    if (roll < 0.25) { this._startTurn(p, isec); return; }
+    p.turnT = rand(0.5, 1.2);
   }
 
   /* Начать переход */
   _startCross(p) {
     p.pos = Math.round(p.pos / CFG.CELL) * CFG.CELL;
-    p.mode = 'wait';
+    p.mode = p.isAnimal ? 'cross' : 'wait'; // Животные сразу идут на переход
     p.waitT = 0;
+    const crossSpeed = p.isAnimal ? p.speed * 1.5 : p.speed * 1.3;
     p.cross = {
       from: p.side * PED_SIDE,
       to: -p.side * PED_SIDE,
       t: 0,
-      dur: (PED_SIDE * 2) / (p.speed * 1.3),
+      dur: (PED_SIDE * 2) / crossSpeed,
     };
   }
 
@@ -342,7 +438,7 @@ export class PedestrianManager {
   }
 
   _cancelCross(p) {
-    p.mode = p.archetype === 'runner' ? 'run' : 'walk';
+    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
     p.cross = null;
     p.turnT = 1.5;
   }
@@ -350,7 +446,7 @@ export class PedestrianManager {
   /* Переход через дорогу по зебре */
   _updateCross(p, dt) {
     const c = p.cross;
-    if (!c) { p.mode = p.archetype === 'runner' ? 'run' : 'walk'; return; }
+    if (!c) { p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk'; return; }
 
     const light = this._getLightForPed(p);
     const lightTurnedRed = light && light.state !== 2;
@@ -364,7 +460,7 @@ export class PedestrianManager {
 
     if (c.t >= c.dur) {
       p.side = c.to > 0 ? 1 : -1;
-      p.mode = p.archetype === 'runner' ? 'run' : 'walk';
+      p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
       p.cross = null;
       p.turnT = 2.2;
     }
@@ -395,7 +491,11 @@ export class PedestrianManager {
   _updateTurn(p, dt) {
     const t = p.turn;
     t.t += dt;
-    if (t.t >= t.dur) { p.mode = p.archetype === 'runner' ? 'run' : 'walk'; p.turn = null; p.turnT = 1.0; }
+    if (t.t >= t.dur) {
+      p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+      p.turn = null;
+      p.turnT = 1.0;
+    }
   }
 
   /* Реакция на близкий проезд игрока (Near-Miss) и пинание авто */
@@ -408,7 +508,16 @@ export class PedestrianManager {
 
     if (dist > 12) return;
 
-    // Детекция подрезания / подбегания игрока
+    // Животные пугаются и отбегают
+    if (p.isAnimal) {
+      if (dist < 4.5 && Math.abs(player.speed) > 2.0 && p.fleeT <= 0) {
+        this._startFlee(p, -dx, -dz, 4.0);
+        this.say(p, p.archetype === 'dog' ? choice(ANIMAL_DOG_QUOTES) : choice(ANIMAL_CAT_QUOTES), 2.0);
+      }
+      return;
+    }
+
+    // Детекция подрезания / подбегания игрока к человеку
     if (dist < 3.2 && player.speed > 2.5 && p.hitCd <= 0 && p.angerT <= 0 && p.mode !== 'cross') {
       p.angerT = 4.0;
       p.targetAngle = Math.atan2(dx, dz);
@@ -454,7 +563,11 @@ export class PedestrianManager {
       } else {
         p.chatCd -= dt;
         if (p.chatCd <= 0 && Math.hypot(p.x - player.x, p.z - player.z) < 45) {
-          this.say(p, choice(IDLE_QUOTES), 3.0);
+          if (p.isAnimal) {
+            this.say(p, p.archetype === 'dog' ? choice(ANIMAL_DOG_QUOTES) : choice(ANIMAL_CAT_QUOTES), 2.0);
+          } else {
+            this.say(p, choice(IDLE_QUOTES), 3.0);
+          }
           p.chatCd = rand(16, 36);
         }
       }
@@ -505,7 +618,11 @@ export class PedestrianManager {
     const len = Math.hypot(dx, dz) || 1;
     p.fvx = (dx / len) * sp;
     p.fvz = (dz / len) * sp;
-    this.say(p, "Аааах!!", 2.0);
+    if (p.isAnimal) {
+      this.say(p, p.archetype === 'dog' ? "Уау-гав!" : "Мяу-у-у!", 2.0);
+    } else {
+      this.say(p, "Аааах!!", 2.0);
+    }
   }
 
   /* Свободное убегание */
@@ -516,7 +633,29 @@ export class PedestrianManager {
     p.fvx = (dx / len) * speed;
     p.fvz = (dz / len) * speed;
     p.cross = null; p.turn = null;
-    this.say(p, "Сайгак на колёсах!", 2.5);
+    if (!p.isAnimal) {
+      this.say(p, "Сайгак на колёсах!", 2.5);
+    }
+  }
+
+  /* Превратить готовую модель клиента (отправитель/получатель посылки) в полноценного
+     городского пешехода: он уходит с точки и дальше живёт по общим правилам ИИ */
+  adoptPedestrian(mesh, x, z) {
+    const ped = {
+      mesh,
+      archetype: (mesh.userData && mesh.userData.archetype) || 'regular',
+      isAnimal: false, alive: true, x: 0, z: 0, axis: 'z', dir: Math.random() < 0.5 ? 1 : -1,
+      speed: 0, baseSpeed: rand(1.8, 2.7), side: 1, turnT: 0, mode: 'walk', cross: null, turn: null,
+      targetPos: null, targetIsec: null,
+      waitT: 0, fx: 0, fz: 0, fvx: 0, fvz: 0, fleeT: 0, knockT: 0, hitCd: 0,
+      angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30), walk: 0,
+    };
+    ped.fx = x; ped.fz = z;
+    this._snapToSidewalk(ped);
+    const wp = this._worldPos(ped, _tempPedWpSync);
+    ped.x = wp.x; ped.z = wp.z;
+    this.cars.push(ped);
+    return ped;
   }
 
   /* Вернуть убежавшего на тротуар */
@@ -528,9 +667,10 @@ export class PedestrianManager {
     } else {
       p.axis = 'x'; p.coord = rz; p.pos = clamp(p.fx, -256, 256); p.side = p.fz >= rz ? 1 : -1;
     }
-    p.mode = p.archetype === 'runner' ? 'run' : 'walk';
+    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
     p.turnT = 0.8;
     p.speed = p.baseSpeed;
+    this._assignNewTarget(p);
   }
 
   _sync(p) {

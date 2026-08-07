@@ -140,6 +140,43 @@ export function makeTaxiTexture(colorHex) {
   return t;
 }
 
+/* Текстура плафона "ТАКСИ" на крыше (жёлтый фон, тёмная надпись по центру
+   каждой из 4 граней короба-плафона — один и тот же кадр на map+emissiveMap) */
+export function makeTaxiSignTexture() {
+  const key = 'taxiSign';
+  if (_texCache.has(key)) return _texCache.get(key);
+  const c = makeCanvas(256, 128);
+  const g = c.getContext('2d');
+  g.fillStyle = '#f2c12e'; g.fillRect(0, 0, 256, 128);
+  g.strokeStyle = '#1a1a1a'; g.lineWidth = 5; g.strokeRect(4, 4, 248, 120);
+  g.fillStyle = '#1a1a1a';
+  g.font = 'bold 56px Arial';
+  g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText('ТАКСИ', 128, 66);
+  const t = canvasToTexture(c, key);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/* Клетчатая полоса ливреи такси — тянется по борту повторением (RepeatWrapping),
+   не зависит от длины кузова конкретной машины */
+export function makeCheckerStripTexture() {
+  const key = 'checkerStrip';
+  if (_texCache.has(key)) return _texCache.get(key);
+  const c = makeCanvas(128, 32);
+  const g = c.getContext('2d');
+  g.fillStyle = '#f2c12e'; g.fillRect(0, 0, 128, 32);
+  const cs = 16;
+  for (let i = 0; i < 8; i++) {
+    if (i % 2 === 0) { g.fillStyle = '#1a1a1a'; g.fillRect(i * cs, 0, cs, 32); }
+  }
+  const t = canvasToTexture(c, key);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
+  t.repeat.set(3, 1);
+  return t;
+}
+
 export function makePlateTexture() {
   const key = 'plate';
   if (_texCache.has(key)) return _texCache.get(key);
@@ -293,119 +330,319 @@ export function updateSpeechSprite(sprite, text) {
   sprite.visible = true;
 }
 
-/* Гуманоид-пешеход из примитивов с поддержкой 5 архетипов (гопник, бабушка, бегун, студент, бизнесмен, обычный) */
+/* Вспомогательные материалы для пешеходов и животных (кеш по цвету — общий
+   материал переиспользуется между всеми пешеходами вместо нового на каждый вызов) */
+const _pedMatCache = new Map();
+function getPedMat(color) {
+  if (_pedMatCache.has(color)) return _pedMatCache.get(color);
+  const m = new THREE.MeshLambertMaterial({ color });
+  _pedMatCache.set(color, m);
+  return m;
+}
+
+/* Общий материал с vertexColors для слитой статики пешехода (торс/голова/аксессуары,
+   ноги) — один материал на всех пешеходов, цвет каждой части задаётся через
+   атрибут color в mergeColored (OPT-14) */
+let _pedColoredMat = null;
+function getPedColoredMat() {
+  if (!_pedColoredMat) _pedColoredMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+  return _pedColoredMat;
+}
+
+/* Модель собаки */
+export function buildDogMesh() {
+  const coat = choice([0xc89040, 0x3a2e2b, 0x8a5a2a, 0xe0d0b0, 0x222222, 0x908070]);
+  const mCoat = getPedMat(coat);
+  const mSnout = getPedMat(0x1a1a1a);
+  const mCollar = getPedMat(choice([0xee2222, 0x2288ee, 0xeecc00, 0x22cc44]));
+
+  const g = new THREE.Group();
+
+  // Туловище
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.35, 0.65), mCoat);
+  body.position.y = 0.38;
+  g.add(body);
+
+  // Шея и голова
+  const headGroup = new THREE.Group();
+  headGroup.position.set(0, 0.52, 0.3);
+  
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 0.3), mCoat);
+  head.position.set(0, 0.08, 0.08);
+  headGroup.add(head);
+
+  // Мордочка и нос
+  const snout = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 0.16), mCoat);
+  snout.position.set(0, 0.04, 0.26);
+  headGroup.add(snout);
+
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.06), mSnout);
+  nose.position.set(0, 0.08, 0.33);
+  headGroup.add(nose);
+
+  // Уши (висячие или стоячие)
+  const floppyEars = Math.random() < 0.5;
+  for (const s of [-1, 1]) {
+    const earGeo = floppyEars ? new THREE.BoxGeometry(0.08, 0.16, 0.1) : new THREE.BoxGeometry(0.06, 0.14, 0.06);
+    const ear = new THREE.Mesh(earGeo, mCoat);
+    if (floppyEars) {
+      ear.position.set(s * 0.14, 0.12, 0.04);
+    } else {
+      ear.position.set(s * 0.1, 0.22, 0.04);
+    }
+    headGroup.add(ear);
+  }
+
+  // Ошейник
+  const collar = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.06, 0.26), mCollar);
+  collar.position.set(0, 0.0, 0.02);
+  headGroup.add(collar);
+
+  g.add(headGroup);
+
+  // Хвост
+  const tail = new THREE.Group();
+  const tailMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.05, 0.35, 6), mCoat);
+  tailMesh.position.set(0, 0.15, -0.15);
+  tailMesh.rotation.x = Math.PI / 3;
+  tail.add(tailMesh);
+  tail.position.set(0, 0.42, -0.32);
+  g.add(tail);
+
+  // Ноги
+  const legs = [];
+  const legGeo = new THREE.BoxGeometry(0.1, 0.32, 0.1);
+  legGeo.translate(0, -0.16, 0);
+
+  const legPositions = [
+    [-0.12, 0.32, 0.22],  // пп
+    [0.12, 0.32, 0.22],   // лп
+    [-0.12, 0.32, -0.22], // пз
+    [0.12, 0.32, -0.22]   // лз
+  ];
+
+  for (let i = 0; i < 4; i++) {
+    const leg = new THREE.Group();
+    leg.add(new THREE.Mesh(legGeo, mCoat));
+    leg.position.set(legPositions[i][0], legPositions[i][1], legPositions[i][2]);
+    g.add(leg);
+    legs.push(leg);
+  }
+
+  g.scale.set(1.1, 1.1, 1.1);
+  g.userData = { legs, head: headGroup, tail, archetype: 'dog', isAnimal: true };
+  return g;
+}
+
+/* Модель кошки */
+export function buildCatMesh() {
+  const coat = choice([0x222222, 0xe8e8e8, 0xee8822, 0x888888, 0x554433, 0xd4a359]);
+  const mCoat = getPedMat(coat);
+  const mPink = getPedMat(0xeeaaab);
+  const mEyes = getPedMat(choice([0x22cc44, 0xeecc00, 0x22aacc]));
+
+  const g = new THREE.Group();
+
+  // Туловище
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.24, 0.45), mCoat);
+  body.position.y = 0.26;
+  g.add(body);
+
+  // Голова
+  const headGroup = new THREE.Group();
+  headGroup.position.set(0, 0.36, 0.2);
+
+  const head = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.18, 0.2), mCoat);
+  head.position.set(0, 0.06, 0.04);
+  headGroup.add(head);
+
+  // Глазки
+  for (const s of [-1, 1]) {
+    const eye = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.02), mEyes);
+    eye.position.set(s * 0.06, 0.08, 0.15);
+    headGroup.add(eye);
+
+    // Стоячие острые ушки
+    const ear = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.1, 4), mCoat);
+    ear.position.set(s * 0.07, 0.19, 0.04);
+    ear.rotation.y = Math.PI / 4;
+    headGroup.add(ear);
+  }
+
+  // Носик
+  const nose = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.03, 0.02), mPink);
+  nose.position.set(0, 0.05, 0.15);
+  headGroup.add(nose);
+
+  g.add(headGroup);
+
+  // Длинный изогнутый хвост
+  const tail = new THREE.Group();
+  const tailMesh = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.03, 0.38, 5), mCoat);
+  tailMesh.position.set(0, 0.18, -0.1);
+  tailMesh.rotation.x = Math.PI / 4;
+  tail.add(tailMesh);
+  tail.position.set(0, 0.3, -0.22);
+  g.add(tail);
+
+  // Ножки
+  const legs = [];
+  const legGeo = new THREE.BoxGeometry(0.07, 0.22, 0.07);
+  legGeo.translate(0, -0.11, 0);
+
+  const legPositions = [
+    [-0.08, 0.22, 0.16],
+    [0.08, 0.22, 0.16],
+    [-0.08, 0.22, -0.16],
+    [0.08, 0.22, -0.16]
+  ];
+
+  for (let i = 0; i < 4; i++) {
+    const leg = new THREE.Group();
+    leg.add(new THREE.Mesh(legGeo, mCoat));
+    leg.position.set(legPositions[i][0], legPositions[i][1], legPositions[i][2]);
+    g.add(leg);
+    legs.push(leg);
+  }
+
+  g.scale.set(0.95, 0.95, 0.95);
+  g.userData = { legs, head: headGroup, tail, archetype: 'cat', isAnimal: true };
+  return g;
+}
+
+/* Гуманоид-пешеход из примитивов с повышенной детализацией и разнообразием */
 export function buildPedMesh(archetype) {
-  const types = ['gopnik', 'grandma', 'runner', 'student', 'businessman', 'regular'];
+  if (archetype === 'dog') return buildDogMesh();
+  if (archetype === 'cat') return buildCatMesh();
+
+  const types = ['gopnik', 'grandma', 'runner', 'student', 'businessman', 'tourist', 'child', 'regular'];
   const arch = archetype || choice(types);
 
-  let skin = choice([0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30]);
-  let cloth = choice([0x4060a0, 0xa04040, 0x409060, 0xa08040, 0x604080, 0x888888, 0xc07830, 0x3090a0]);
-  let pants = choice([0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x5a5a5a]);
-  let hairC = choice([0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0xd8c8a8, 0x8a2a2a, 0x2a2a4a]);
+  let skin = choice([0xf5d0b0, 0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30, 0xffdbac]);
+  let cloth = choice([0x4060a0, 0xa04040, 0x409060, 0xa08040, 0x604080, 0x888888, 0xc07830, 0x3090a0, 0xe05566, 0x22aa88]);
+  let pants = choice([0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x5a5a5a, 0x1a2430, 0xd0c0aa]);
+  let hairC = choice([0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0xd8c8a8, 0x8a2a2a, 0x2a2a4a, 0x995522]);
   
   let scaleY = rand(0.92, 1.08);
   let scaleXZ = rand(0.92, 1.08);
 
   if (arch === 'gopnik') {
-    cloth = choice([0x1e222a, 0x1a2e40, 0x2b382b]);
+    cloth = choice([0x1e222a, 0x1a2e40, 0x2b382b, 0x111115]);
     pants = cloth;
     scaleY = rand(0.95, 1.05);
   } else if (arch === 'grandma') {
-    cloth = choice([0x604050, 0x4a5a40, 0x5a4a3a]);
+    cloth = choice([0x604050, 0x4a5a40, 0x5a4a3a, 0x703848]);
     pants = choice([0x3a2a3a, 0x2a2a2a]);
-    scaleY = rand(0.86, 0.94);
-    scaleXZ = rand(1.0, 1.12);
+    scaleY = rand(0.84, 0.92);
+    scaleXZ = rand(1.02, 1.15);
   } else if (arch === 'runner') {
-    cloth = choice([0xee3322, 0x22ee44, 0xeecc00, 0x00ccee]);
+    cloth = choice([0xee3322, 0x22ee44, 0xeecc00, 0x00ccee, 0xff22aa]);
     pants = choice([0x111111, 0x222233]);
     scaleY = rand(1.0, 1.12);
     scaleXZ = rand(0.88, 0.96);
   } else if (arch === 'businessman') {
-    cloth = choice([0x1c2430, 0x2a2e36, 0x383430]);
+    cloth = choice([0x1c2430, 0x2a2e36, 0x383430, 0x151c24]);
     pants = cloth;
-    scaleY = rand(1.0, 1.08);
+    scaleY = rand(1.02, 1.10);
   } else if (arch === 'student') {
-    cloth = choice([0xd86030, 0x3090d8, 0x9040d8]);
-    pants = choice([0x3a4a5a, 0x2a2a3a]);
+    cloth = choice([0xd86030, 0x3090d8, 0x9040d8, 0xe0a020]);
+    pants = choice([0x3a4a5a, 0x2a2a3a, 0x223344]);
+  } else if (arch === 'tourist') {
+    cloth = choice([0xccaa33, 0xdd6633, 0x33aa99, 0x77bb44]);
+    pants = choice([0x998877, 0x445566, 0xaa9988]);
+    scaleY = rand(0.96, 1.06);
+  } else if (arch === 'child') {
+    cloth = choice([0xff5555, 0x33bbff, 0xffcc00, 0x44dd66]);
+    pants = choice([0x224488, 0x882244]);
+    scaleY = rand(0.70, 0.78);
+    scaleXZ = rand(0.72, 0.80);
   }
 
-  const mat = (c) => new THREE.MeshLambertMaterial({ color: c });
+  const mat = (c) => getPedMat(c);
   const g = new THREE.Group();
 
-  // торс
-  const torso = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.68, 0.34), mat(cloth));
-  torso.position.y = 1.05;
-  g.add(torso);
+  // Статичные части (торс, голова, аксессуары) копятся здесь и сливаются одним
+  // vertexColors-мешем в конце (OPT-14) — вместо ~6-10 отдельных мешей на пешехода.
+  const parts = [];
 
-  // голова + волосы
-  const head = new THREE.Mesh(new THREE.SphereGeometry(0.26, 8, 6), mat(skin));
-  head.position.y = 1.62;
-  g.add(head);
+  // Торс
+  parts.push({ g: new THREE.BoxGeometry(0.56, 0.68, 0.34).translate(0, 1.05, 0), c: cloth });
 
-  if (arch !== 'grandma' && arch !== 'gopnik') {
-    if (Math.random() < 0.8) {
-      const hair = new THREE.Mesh(new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55), mat(hairC));
-      hair.position.y = 1.63;
-      g.add(hair);
+  // Жилетка / куртка детализация (полоска куртки)
+  if (Math.random() < 0.6) {
+    parts.push({ g: new THREE.BoxGeometry(0.06, 0.66, 0.02).translate(0, 1.05, 0.175), c: 0xdddddd });
+  }
+
+  // Голова + лицо
+  parts.push({ g: new THREE.SphereGeometry(0.26, 10, 8).translate(0, 1.62, 0), c: skin });
+
+  // Очки / солнцезащитные очки
+  if (Math.random() < 0.35 || arch === 'businessman' || arch === 'tourist') {
+    const glassColor = arch === 'businessman' || Math.random() < 0.6 ? 0x111115 : 0x88ccff;
+    parts.push({ g: new THREE.BoxGeometry(0.36, 0.08, 0.06).translate(0, 1.64, 0.23), c: glassColor });
+  }
+
+  // Волосы / Шляпы
+  if (arch === 'gopnik') {
+    // Кепка-восьмиклинка
+    parts.push({ g: new THREE.CylinderGeometry(0.28, 0.28, 0.08, 8).translate(0, 1.76, 0.02), c: 0x1a1a1c });
+    parts.push({ g: new THREE.BoxGeometry(0.24, 0.02, 0.16).translate(0, 1.74, 0.24), c: 0x1a1a1c });
+  } else if (arch === 'grandma') {
+    // Платок на голову
+    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.7).translate(0, 1.63, 0), c: 0xd8a8a8 });
+    // Сумка в руке
+    parts.push({ g: new THREE.BoxGeometry(0.22, 0.28, 0.14).translate(0.36, 0.88, 0.1), c: 0x4a3a2a });
+  } else if (arch === 'runner') {
+    // Повязка на лоб
+    parts.push({ g: new THREE.CylinderGeometry(0.27, 0.27, 0.06, 8).translate(0, 1.68, 0), c: 0xffffff });
+  } else if (arch === 'student') {
+    // Наушники на ушах
+    parts.push({ g: new THREE.TorusGeometry(0.27, 0.04, 4, 12, Math.PI).rotateX(Math.PI / 2).translate(0, 1.65, 0), c: 0x222222 });
+    // Рюкзак на спине
+    parts.push({ g: new THREE.BoxGeometry(0.38, 0.45, 0.22).translate(0, 1.1, -0.25), c: 0x205080 });
+  } else if (arch === 'businessman') {
+    // Портфель в руке
+    parts.push({ g: new THREE.BoxGeometry(0.1, 0.28, 0.36).translate(0.38, 0.85, 0.05), c: 0x1a1410 });
+    // Причёска бизнесмена
+    parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.64, 0), c: 0x221a14 });
+  } else if (arch === 'tourist') {
+    // Панамка / кепка туриста
+    parts.push({ g: new THREE.CylinderGeometry(0.42, 0.42, 0.02, 10).translate(0, 1.74, 0), c: 0xddccaa });
+    parts.push({ g: new THREE.CylinderGeometry(0.26, 0.27, 0.16, 10).translate(0, 1.83, 0), c: 0xddccaa });
+    // Фотоаппарат на груди
+    parts.push({ g: new THREE.BoxGeometry(0.18, 0.14, 0.12).translate(0, 1.15, 0.22), c: 0x222222 });
+  } else {
+    // Разнообразные причёски для обычных пешеходов
+    const hairStyle = Math.floor(Math.random() * 3);
+    if (hairStyle === 0) {
+      parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 1.63, 0), c: hairC });
+    } else if (hairStyle === 1) {
+      // Пышная причёска / пучок
+      parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.64, 0), c: hairC });
+      parts.push({ g: new THREE.SphereGeometry(0.12, 6, 6).translate(0, 1.82, -0.16), c: hairC });
     }
   }
 
-  // Детали архетипов (аксессуары)
-  if (arch === 'gopnik') {
-    // Кепка-восьмиклинка
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 0.08, 8), mat(0x1a1a1c));
-    cap.position.set(0, 1.76, 0.02);
-    g.add(cap);
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.02, 0.16), mat(0x1a1a1c));
-    visor.position.set(0, 1.74, 0.24);
-    g.add(visor);
-  } else if (arch === 'grandma') {
-    // Платок на голову
-    const scarf = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.7), mat(0xd8a8a8));
-    scarf.position.y = 1.63;
-    g.add(scarf);
-    // Сумка в руке
-    const bag = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.25, 0.12), mat(0x4a3a2a));
-    bag.position.set(0.35, 0.9, 0.1);
-    g.add(bag);
-  } else if (arch === 'runner') {
-    // Повязка на лоб
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.27, 0.06, 8), mat(0xffffff));
-    band.position.y = 1.68;
-    g.add(band);
-  } else if (arch === 'student') {
-    // Наушники на ушах
-    const hp = new THREE.Mesh(new THREE.TorusGeometry(0.27, 0.04, 4, 12, Math.PI), mat(0x222222));
-    hp.rotation.x = Math.PI / 2;
-    hp.position.set(0, 1.65, 0);
-    g.add(hp);
-    // Рюкзак на спине
-    const pack = new THREE.Mesh(new THREE.BoxGeometry(0.38, 0.45, 0.22), mat(0x205080));
-    pack.position.set(0, 1.1, -0.25);
-    g.add(pack);
-  } else if (arch === 'businessman') {
-    // Портфель в руке
-    const caseMesh = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.28, 0.36), mat(0x1a1410));
-    caseMesh.position.set(0.38, 0.85, 0.05);
-    g.add(caseMesh);
-  }
+  const staticMesh = new THREE.Mesh(mergeColored(parts), getPedColoredMat());
+  g.add(staticMesh);
 
-  // ноги
+  // Ноги — legGeo+shoeGeo сливаются в один vertexColors-меш на ногу (OPT-14),
+  // группа-обёртка сохраняется как есть (нужна для rotation.x при ходьбе).
   const legGeo = new THREE.BoxGeometry(0.18, 0.75, 0.2);
   legGeo.translate(0, -0.375, 0);
   const shoeGeo = new THREE.BoxGeometry(0.2, 0.12, 0.32);
   shoeGeo.translate(0, -0.77, 0.04);
+  const legGeoMerged = mergeColored([{ g: legGeo, c: pants }, { g: shoeGeo, c: 0x202020 }]);
   const legs = [];
   for (const s of [-1, 1]) {
     const leg = new THREE.Group();
-    leg.add(new THREE.Mesh(legGeo, mat(pants)));
-    leg.add(new THREE.Mesh(shoeGeo, mat(0x202020)));
+    leg.add(new THREE.Mesh(legGeoMerged, getPedColoredMat()));
     leg.position.set(0.13 * s, 1.05, 0);
     g.add(leg);
     legs.push(leg);
   }
 
-  // руки
+  // Руки
   const armGeo = new THREE.BoxGeometry(0.15, 0.62, 0.15);
   armGeo.translate(0, -0.31, 0);
   const arms = [];
@@ -418,11 +655,60 @@ export function buildPedMesh(archetype) {
   }
 
   g.scale.set(scaleXZ, scaleY, scaleXZ);
-  g.userData = { legs, arms, archetype: arch };
+  g.userData = { legs, arms, archetype: arch, isAnimal: false };
   return g;
 }
 
-/* Коллизия круга с AABB. Возвращает {nx,nz,depth} или null */
+/* Материалы посылки — модульные константы (не создавать заново на каждый attachParcelBox) */
+const _parcelBoxMat = new THREE.MeshLambertMaterial({ color: 0x8a5a2a });
+const _parcelTapeMat = new THREE.MeshLambertMaterial({ color: 0xe0c080 });
+
+/* Прикрепить модель посылки к пешеходу (отправителю или получателю) */
+export function attachParcelBox(pedMesh) {
+  if (!pedMesh) return;
+  const boxMat = _parcelBoxMat;
+  const tapeMat = _parcelTapeMat;
+  
+  const parcelGroup = new THREE.Group();
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.36, 0.28, 0.32), boxMat);
+  box.position.set(0, 1.05, 0.26);
+  parcelGroup.add(box);
+
+  const tape1 = new THREE.Mesh(new THREE.BoxGeometry(0.37, 0.05, 0.05), tapeMat);
+  tape1.position.set(0, 1.18, 0.26);
+  parcelGroup.add(tape1);
+
+  const tape2 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.33), tapeMat);
+  tape2.position.set(0, 1.18, 0.26);
+  parcelGroup.add(tape2);
+
+  pedMesh.add(parcelGroup);
+  pedMesh.userData.parcelBox = parcelGroup;
+  
+  // Согнуть руки вперёд, удерживая коробку
+  if (pedMesh.userData && pedMesh.userData.arms) {
+    pedMesh.userData.arms[0].rotation.x = -0.7;
+    pedMesh.userData.arms[1].rotation.x = -0.7;
+  }
+}
+
+export function detachParcelBox(pedMesh) {
+  if (pedMesh && pedMesh.userData && pedMesh.userData.parcelBox) {
+    pedMesh.remove(pedMesh.userData.parcelBox);
+    pedMesh.userData.parcelBox = null;
+    if (pedMesh.userData.arms) {
+      pedMesh.userData.arms[0].rotation.x = 0;
+      pedMesh.userData.arms[1].rotation.x = 0;
+    }
+  }
+}
+
+/* Переиспользуемый результат circleAABB — вызывающий код потребляет его сразу
+   (this._resolve(c, ...)), не переживает кадр, поэтому одного общего объекта
+   достаточно вместо {nx,nz,depth} на каждый вызов (OPT-18, ~600 раз/кадр). */
+const _circleAABBRes = { nx: 0, nz: 0, depth: 0 };
+
+/* Коллизия круга с AABB. Возвращает _circleAABBRes (мутируется) или null */
 export function circleAABB(px, pz, r, box) {
   const cx = clamp(px, box.x0, box.x1);
   const cz = clamp(pz, box.z0, box.z1);
@@ -430,14 +716,18 @@ export function circleAABB(px, pz, r, box) {
   const d2 = dx * dx + dz * dz;
   if (d2 > r * r) return null;
   const d = Math.sqrt(d2);
-  if (d > 1e-6) return { nx: dx / d, nz: dz / d, depth: r - d };
+  if (d > 1e-6) {
+    _circleAABBRes.nx = dx / d; _circleAABBRes.nz = dz / d; _circleAABBRes.depth = r - d;
+    return _circleAABBRes;
+  }
   // центр внутри бокса — выталкиваем по минимальному проникновению
   const l = px - box.x0, rgt = box.x1 - px, t = pz - box.z0, b = box.z1 - pz;
   const m = Math.min(l, rgt, t, b);
-  if (m === l) return { nx: -1, nz: 0, depth: r + l };
-  if (m === rgt) return { nx: 1, nz: 0, depth: r + rgt };
-  if (m === t) return { nx: 0, nz: -1, depth: r + t };
-  return { nx: 0, nz: 1, depth: r + b };
+  if (m === l) { _circleAABBRes.nx = -1; _circleAABBRes.nz = 0; _circleAABBRes.depth = r + l; }
+  else if (m === rgt) { _circleAABBRes.nx = 1; _circleAABBRes.nz = 0; _circleAABBRes.depth = r + rgt; }
+  else if (m === t) { _circleAABBRes.nx = 0; _circleAABBRes.nz = -1; _circleAABBRes.depth = r + t; }
+  else { _circleAABBRes.nx = 0; _circleAABBRes.nz = 1; _circleAABBRes.depth = r + b; }
+  return _circleAABBRes;
 }
 
 /**

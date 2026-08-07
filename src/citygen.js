@@ -1,6 +1,52 @@
 import * as THREE from 'three';
 import { CFG, DISTRICTS, PALETTES, LANDMARKS, FUEL_STATIONS } from './config.js';
-import { mulberry32, dist2D, rand, clamp, choice, makeCanvas, canvasToTexture, lerp, mergeColored, makePlateTexture, makeTaxiTexture, getWindowMaterial, getRoofMaterial, smin, smax } from './utils.js';
+import { mulberry32, dist2D, rand, clamp, choice, makeCanvas, canvasToTexture, lerp, mergeColored, mergeGeoms, makePlateTexture, makeTaxiTexture, getWindowMaterial, getRoofMaterial, smin, smax } from './utils.js';
+import { taperedBox } from './carmodel.js';
+
+// Цвета ламп светофора (красный/жёлтый/зелёный, вкл/выкл) — общие константы вместо
+// пересоздания массивов на каждый кадр в update() (OPT-18)
+const TRAFFIC_LIGHT_BRIGHT = [0xff4040, 0xffb030, 0x40e040];
+const TRAFFIC_LIGHT_DARK = [0x3a1010, 0x3a2a10, 0x103a10];
+
+/* Палитра поезда у вокзала — общая для _station() и _stationVehicle() (один
+   vertexColors-материал на весь состав, цвета живут в атрибуте вершин) */
+const TRAIN_PAL = {
+  loco: 0x2e7a46,   // кузов тепловоза
+  car: 0x1b5230,    // кузов пассажирского вагона
+  band: 0xe6d9a8,   // светлая полоса ливреи
+  under: 0x26282c,  // рама, тележки, подножки
+  dark: 0x17181b,   // автосцепки, жалюзи, двери
+  wheel: 0x141416,
+  hub: 0x8a8a92,
+  roof: 0x40464e,
+  glass: 0x223040,
+};
+
+/* Палитра рынка «Лира» — вся мелочь рынка живёт в одном vertexColors-буфере */
+const MK = {
+  stall: 0x8a6a44, post: 0x6a6a60, rail: 0x7a6a52, stone: 0xb0a898,
+  crate: 0xb87a3a, crate2: 0xa06a30, sack: 0xd8c8a0, metal: 0x5a5a54,
+  valance: 0xf0f0e8,
+};
+const MK_GOODS = [0xd23b2e, 0xe8a021, 0x9ac13a, 0x7a3f9a, 0xe06a2a, 0xd8d040];
+
+/* Палитра Цветника */
+const PK = { stone: 0xb8b8b0, stoneD: 0xa4a49c, kerb: 0xcac4b6, wood: 0x8a6a44 };
+const PK_FLOWERS = [0xd94f4f, 0xe8b84a, 0xb06ad9, 0x5aa85a, 0xe87a3a, 0x4a7fd9, 0xe86aa0, 0xf0e8d0];
+
+/* Скамья и вазон — общие цвета (материал один на всё: World._vcMat()) */
+const BENCH_WOOD = 0x8a6a44, BENCH_LEG = 0x5a5a54;
+const PLANTER_STONE = 0xbdb4a2, PLANTER_RIM = 0xd2cabb, PLANTER_LEAF = 0x4f8a3f;
+
+/* Ручной тайлинг текстуры через UV конкретной геометрии, а НЕ через texture.repeat:
+   кешированные текстуры (_texCache) общие на всех потребителей ключа — поменять
+   repeat у общего инстанса значит сломать текстуру везде, где он уже используется
+   (так уже задан repeat 8×200 у тротуарной текстуры в _roads()). */
+function uvTile(g, su, sv) {
+  const uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setXY(i, uv.getX(i) * su, uv.getY(i) * sv);
+  return g;
+}
 
 /**
  * Класс игрового мира: процедурная генерация города, дорожной сети, зданий и освещения.
@@ -32,7 +78,6 @@ export class World {
     this.lampHeadMesh = null;
     this.roadMats = [];        // материалы асфальта (для эффекта намокания)
     this.windowMats = new Set(); // уникальные материалы стен с окнами (для ночной подсветки)
-    this._bottomMat = null;    // общий материал днища зданий (создаётся один раз в build())
     this._serp = null;         // ось серпантина (точки, длина, spatial hash)
     this.hill = { x: 0, z: -448, r: 155, hc: 66, top: 58 };   // Машук: центр под башней, плато на вершине
     this.peak2 = { x: 55, z: -500, r: 70, hc: 46, top: 40 };  // вторая вершина
@@ -58,6 +103,7 @@ export class World {
     if (bi === 2 && bj === 1) return 'lake';
     if (bi === 5 && bj === 3) return 'rynok';
     if (bi === 6 && bj === 5) return 'vokzal';
+    if (bi === 3 && bj === 3) return 'narzan'; // купол Нарзанных ванн 28 м — застройку в квартал не пускаем
     return null;
   }
 
@@ -173,7 +219,6 @@ export class World {
 
   /* ================= СТРОИТЕЛЬСТВО ================= */
   build() {
-    this._bottomMat = new THREE.MeshLambertMaterial({ color: 0x555550 });
     this._ground();
     this._roads();
     this._crosswalks();
@@ -188,6 +233,8 @@ export class World {
     this._trafficLights();
     this._cableCar();
     this._signs();
+    this._streetBenches();
+    this._planters();
     this._collectPickupPoints();
   }
 
@@ -198,13 +245,14 @@ export class World {
     );
     g.rotation.x = -Math.PI / 2;
     g.position.y = -0.05;   // чуть ниже сетки горы (_hillMesh) — без щелей и z-fighting на стыке
+    g.receiveShadow = true;
     this.scene.add(g);
   }
 
   _roads() {
     const roadMat = new THREE.MeshStandardMaterial({ color: 0x3a3f46, roughness: 0.82, metalness: 0.05 });
     this.roadMats.push(roadMat);
-    // тротуар — текстура плитки (canvas), repeat под размеры лент
+
     const sideTex = this._pavementTexture();
     const sideTexH = this._pavementTexture('pavement_h');
     sideTexH.repeat.set(200, 8);
@@ -212,100 +260,224 @@ export class World {
     const sideMat = new THREE.MeshLambertMaterial({ map: sideTex });
     const sideMatH = new THREE.MeshLambertMaterial({ map: sideTexH });
     const curbMat = new THREE.MeshLambertMaterial({ color: 0xbcbcb4 });
-    const len = 512 + CFG.GRID_EXT * 2;
+
+    // Длина дорог строго в пределах застройки города (±256 м)
+    const len = 512;
     const C = CFG.CELL, H = CFG.HALF;
+
+    // Сетка перекрёстков
     for (let i = 0; i <= 8; i++) {
-      const c = -256 + i * C;
-      // вертикальная дорога
-      const rv = new THREE.Mesh(new THREE.BoxGeometry(CFG.ROAD_W, 0.1, len), roadMat);
-      rv.position.set(c, 0.05, 0);
-      this.scene.add(rv);
-      this.roadsV.push({ c, from: -292, to: 292 });
-      // горизонтальная
-      const rh = new THREE.Mesh(new THREE.BoxGeometry(len, 0.1, CFG.ROAD_W), roadMat);
-      rh.position.set(0, 0.05, c);
-      this.scene.add(rh);
-      this.roadsH.push({ c, from: -292, to: 292 });
-      // тротуары
-      for (const s of [-1, 1]) {
-        const swV = new THREE.Mesh(new THREE.BoxGeometry(CFG.SIDE, 0.1, len), sideMat);
-        swV.position.set(c + s * (H + CFG.SIDE / 2), 0.1, 0);
-        this.scene.add(swV);
-        const swH = new THREE.Mesh(new THREE.BoxGeometry(len, 0.1, CFG.SIDE), sideMatH);
-        swH.position.set(0, 0.1, c + s * (H + CFG.SIDE / 2));
-        this.scene.add(swH);
-        // бордюры
-        const cbV = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.16, len), curbMat);
-        cbV.position.set(c + s * (H + 0.25), 0.14, 0);
-        this.scene.add(cbV);
-        const cbH = new THREE.Mesh(new THREE.BoxGeometry(len, 0.16, 0.5), curbMat);
-        cbH.position.set(0, 0.14, c + s * (H + 0.25));
-        this.scene.add(cbH);
+      for (let j = 0; j <= 8; j++) {
+        this.intersections.push({ x: -256 + i * C, z: -256 + j * C });
       }
     }
-    // площади-перекрёстки (поверх лент, чтобы не было z-fighting)
-    const isecMat = new THREE.MeshStandardMaterial({ color: 0x3a3f46, roughness: 0.80, metalness: 0.05, polygonOffset: true, polygonOffsetFactor: -1 });
-    this.roadMats.push(isecMat);
-    for (let i = 0; i <= 8; i++) for (let j = 0; j <= 8; j++) {
-      this.intersections.push({ x: -256 + i * CFG.CELL, z: -256 + j * CFG.CELL });
+
+    // Дорожное полотно (асфальтовые полосы)
+    for (let i = 0; i <= 8; i++) {
+      const c = -256 + i * C;
+      // Вертикальная дорога
+      const rv = new THREE.Mesh(new THREE.BoxGeometry(CFG.ROAD_W, 0.1, len), roadMat);
+      rv.position.set(c, 0.05, 0);
+      rv.receiveShadow = true;
+      this.scene.add(rv);
+      this.roadsV.push({ c, from: -256, to: 256 });
+
+      // Горизонтальная дорога
+      const rh = new THREE.Mesh(new THREE.BoxGeometry(len, 0.1, CFG.ROAD_W), roadMat);
+      rh.position.set(0, 0.05, c);
+      rh.receiveShadow = true;
+      this.scene.add(rh);
+      this.roadsH.push({ c, from: -256, to: 256 });
     }
-    const isecGeo = new THREE.BoxGeometry(CFG.ROAD_W, 0.08, CFG.ROAD_W);
-    const isecMesh = new THREE.InstancedMesh(isecGeo, isecMat, this.intersections.length);
-    const m4Isec = new THREE.Matrix4();
-    this.intersections.forEach(({ x, z }, idx) => {
-      m4Isec.makeTranslation(x, 0.055, z);
-      isecMesh.setMatrixAt(idx, m4Isec);
-    });
-    this.scene.add(isecMesh);
-    // разметка — пунктир по центру каждой дороги; для дорог вдоль X геометрия
-    // штриха развёрнута на 90°, иначе пунктир лежит поперёк проезжей части
+
+    // Декоративные барьеры окончания городских дорог (на торцах выездов)
+    this._cityBoundaries();
+    // Тротуары и бордюры — разбиваем по кварталам (МЕЖДУ перекрёстками),
+    // чтобы тротуары НЕ заходили на перекрёстки! Секции копятся по чанкам
+    // 128×128 м × 3 материала (sideV/sideH/curb) и сливаются в конце (OPT-13) —
+    // 576 отдельных мешей → до ~48 (16 чанков × 3 материала), с сохранением
+    // per-chunk frustum culling вместо одного глобального мержа на весь город.
+    const blockLen = C - CFG.ROAD_W; // 44 м длина тротуара на квартал
+    const chunkKey = (x, z) => `${Math.floor(x / 128)}_${Math.floor(z / 128)}`;
+    const chunks = new Map(); // key -> { sideV: [], sideH: [], curb: [] }
+    const pushToChunk = (list, x, z, geo) => {
+      const k = chunkKey(x, z);
+      if (!chunks.has(k)) chunks.set(k, { sideV: [], sideH: [], curb: [] });
+      chunks.get(k)[list].push(geo);
+    };
+    for (let i = 0; i <= 8; i++) {
+      const c = -256 + i * C;
+      for (let j = 0; j < 8; j++) {
+        const segCenter = -256 + j * C + C / 2;
+
+        for (const s of [-1, 1]) {
+          // Вертикальные секции тротуара
+          const swVx = c + s * (H + CFG.SIDE / 2);
+          pushToChunk('sideV', swVx, segCenter,
+            new THREE.BoxGeometry(CFG.SIDE, 0.1, blockLen).translate(swVx, 0.1, segCenter));
+
+          // Боковой бордюр вдоль V-дороги
+          const cbVx = c + s * (H + 0.25);
+          pushToChunk('curb', cbVx, segCenter,
+            new THREE.BoxGeometry(0.5, 0.16, blockLen).translate(cbVx, 0.14, segCenter));
+
+          // Горизонтальные секции тротуара
+          const swHz = c + s * (H + CFG.SIDE / 2);
+          pushToChunk('sideH', segCenter, swHz,
+            new THREE.BoxGeometry(blockLen, 0.1, CFG.SIDE).translate(segCenter, 0.1, swHz));
+
+          // Боковой бордюр вдоль H-дороги
+          const cbHz = c + s * (H + 0.25);
+          pushToChunk('curb', segCenter, cbHz,
+            new THREE.BoxGeometry(blockLen, 0.16, 0.5).translate(segCenter, 0.14, cbHz));
+        }
+      }
+    }
+    for (const { sideV, sideH, curb } of chunks.values()) {
+      if (sideV.length) { const m = new THREE.Mesh(mergeGeoms(sideV), sideMat); m.receiveShadow = true; this.scene.add(m); }
+      if (sideH.length) { const m = new THREE.Mesh(mergeGeoms(sideH), sideMatH); m.receiveShadow = true; this.scene.add(m); }
+      if (curb.length) { const m = new THREE.Mesh(mergeGeoms(curb), curbMat); m.receiveShadow = true; this.scene.add(m); }
+    }
+
+    // Центральная пунктирная разметка полос
     const dashGeo = new THREE.BoxGeometry(0.25, 0.03, 3.2);  // дороги вдоль Z
     const dashGeoH = new THREE.BoxGeometry(3.2, 0.03, 0.25); // дороги вдоль X
-    const dashMat = new THREE.MeshLambertMaterial({ color: 0xe8e8dc });
+    const dashMat = new THREE.MeshLambertMaterial({ color: 0xe8e8dc, polygonOffset: true, polygonOffsetFactor: -3 });
+
+    const isecCoords = this.intersections.map(i => i.x);
+
     const dashesV = [];
     for (const r of this.roadsV) {
-      for (let z = -272; z <= 272; z += 6.4) {
+      for (let z = -288; z <= 288; z += 6.4) {
+        // Пропускаем спавн штриха, если он попадает внутрь зоны перекрёстка (±8.5 м от центра перекрёстка)
+        const insideIsec = isecCoords.some(cz => Math.abs(z - cz) < H + 1.5);
+        if (insideIsec) continue;
+
         const m = new THREE.Matrix4();
-        m.makeTranslation(r.c, 0.09, z);
+        m.makeTranslation(r.c, 0.12, z);
         dashesV.push(m);
       }
     }
+
     const dashesH = [];
     for (const r of this.roadsH) {
-      for (let x = -272; x <= 272; x += 6.4) {
+      for (let x = -288; x <= 288; x += 6.4) {
+        const insideIsec = isecCoords.some(cx => Math.abs(x - cx) < H + 1.5);
+        if (insideIsec) continue;
+
         const m = new THREE.Matrix4();
-        m.makeTranslation(x, 0.09, r.c);
+        m.makeTranslation(x, 0.12, r.c);
         dashesH.push(m);
       }
     }
+
     const dashMeshV = new THREE.InstancedMesh(dashGeo, dashMat, dashesV.length);
     dashesV.forEach((m, i) => dashMeshV.setMatrixAt(i, m));
     this.scene.add(dashMeshV);
+
     const dashMeshH = new THREE.InstancedMesh(dashGeoH, dashMat, dashesH.length);
     dashesH.forEach((m, i) => dashMeshH.setMatrixAt(i, m));
     this.scene.add(dashMeshH);
   }
 
-  _crosswalks() {
-    const stripeGeo = new THREE.BoxGeometry(0.6, 0.03, 3.4);
+  /* --- Красивые барьеры и знаки окончания городской зоны на выездах --- */
+  _cityBoundaries() {
+    const barrierMat = new THREE.MeshLambertMaterial({ color: 0xd84030 }); // Красно-белый барьер
     const stripeMat = new THREE.MeshLambertMaterial({ color: 0xffffff });
-    const spots = [
-      { x: 0, z: 0 }, { x: -64, z: -64 }, { x: 64, z: -64 }, { x: 64, z: 64 },
-      { x: -128, z: 0 }, { x: 0, z: 128 }, { x: 128, z: -128 }, { x: -64, z: 128 },
-    ];
-    const list = [];
-    for (const s of spots) {
-      for (let k = -1; k <= 1; k++) {
-        const m1 = new THREE.Matrix4(); m1.makeTranslation(s.x - k * 1.2, 0.095, s.z + 4.2);
-        const m2 = new THREE.Matrix4(); m2.makeTranslation(s.x - k * 1.2, 0.095, s.z - 4.2);
-        const m3 = new THREE.Matrix4(); m3.makeTranslation(s.x + 4.2, 0.095, s.z - k * 1.2);
-        const m4 = new THREE.Matrix4(); m4.makeTranslation(s.x - 4.2, 0.095, s.z - k * 1.2);
-        list.push(m1, m2, m3, m4);
+    const postMat = new THREE.MeshLambertMaterial({ color: 0x333333 });
+
+    const barrierGeo = new THREE.BoxGeometry(CFG.ROAD_W + 1.0, 1.1, 0.4);
+    const stripeGeo = new THREE.BoxGeometry(0.8, 0.9, 0.42);
+
+    const placeEndBarrier = (x, z, isHorizontal) => {
+      const g = new THREE.Group();
+      const base = new THREE.Mesh(barrierGeo, barrierMat);
+      base.position.y = 0.55;
+      g.add(base);
+
+      // Красно-белые диагональные полосы на барьере
+      for (let s = -4; s <= 4; s += 2) {
+        const str = new THREE.Mesh(stripeGeo, stripeMat);
+        str.position.set(s * 1.2, 0.55, 0);
+        g.add(str);
+      }
+
+      // Дорожный знак "Тупик / Конец зоны" над барьером
+      const post = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 2.2, 6), postMat);
+      post.position.set(0, 1.1, 0);
+      g.add(post);
+
+      const sign = new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.2, 0.08), new THREE.MeshLambertMaterial({ color: 0x2266cc }));
+      sign.position.set(0, 2.0, 0);
+      g.add(sign);
+
+      const innerSquare = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.8, 0.1), new THREE.MeshLambertMaterial({ color: 0xffffff }));
+      innerSquare.position.set(0, 2.0, 0);
+      g.add(innerSquare);
+
+      const redSquare = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.3, 0.11), new THREE.MeshLambertMaterial({ color: 0xee2222 }));
+      redSquare.position.set(0, 2.25, 0);
+      g.add(redSquare);
+
+      g.position.set(x, 0, z);
+      if (isHorizontal) g.rotation.y = Math.PI / 2;
+
+      this.scene.add(g);
+      this.addPropAABB({
+        x0: x - (isHorizontal ? 1.0 : (CFG.ROAD_W / 2 + 1)),
+        z0: z - (isHorizontal ? (CFG.ROAD_W / 2 + 1) : 1.0),
+        x1: x + (isHorizontal ? 1.0 : (CFG.ROAD_W / 2 + 1)),
+        z1: z + (isHorizontal ? (CFG.ROAD_W / 2 + 1) : 1.0),
+      });
+    };
+
+    // Выезды на север (кроме центрального серпантина на Машук), юг, запад и восток
+    for (const r of this.roadsV) {
+      // За исключением центральной дороги на Машук по оси z = -256 (r.c === 0 на севере)
+      if (r.c !== 0) {
+        placeEndBarrier(r.c, -260, false); // Северные тупики
+      }
+      placeEndBarrier(r.c, 260, false);   // Южные тупики
+    }
+
+    for (const r of this.roadsH) {
+      placeEndBarrier(-260, r.c, true);   // Западные тупики
+      placeEndBarrier(260, r.c, true);    // Восточные тупики
+    }
+  }
+
+  _crosswalks() {
+    const stripeGeoV = new THREE.BoxGeometry(0.6, 0.03, 3.4);  // полосы разметки через горизонтальную дорогу (вдоль X)
+    const stripeGeoH = new THREE.BoxGeometry(3.4, 0.03, 0.6);  // полосы разметки через вертикальную дорогу (вдоль Z)
+    const stripeMat = new THREE.MeshLambertMaterial({ color: 0xffffff, polygonOffset: true, polygonOffsetFactor: -2 });
+
+    const listV = [];
+    const listH = [];
+
+    for (const isec of this.intersections) {
+      const sx = isec.x, sz = isec.z;
+      // 4 зебры вокруг каждого перекрёстка
+      for (let k = -2; k <= 2; k++) {
+        const off = k * 1.1;
+        // Верхний и нижний подходы к перекрёстку (полосы вдоль X)
+        const mNorth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz - 6.2);
+        const mSouth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz + 6.2);
+        listV.push(mNorth, mSouth);
+
+        // Левый и правый подходы к перекрёстку (полосы вдоль Z)
+        const mWest = new THREE.Matrix4().makeTranslation(sx - 6.2, 0.11, sz + off);
+        const mEast = new THREE.Matrix4().makeTranslation(sx + 6.2, 0.11, sz + off);
+        listH.push(mWest, mEast);
       }
     }
-    const mesh = new THREE.InstancedMesh(stripeGeo, stripeMat, list.length);
-    list.forEach((m, i) => mesh.setMatrixAt(i, m));
-    this.scene.add(mesh);
+
+    const meshV = new THREE.InstancedMesh(stripeGeoV, stripeMat, listV.length);
+    listV.forEach((m, i) => meshV.setMatrixAt(i, m));
+    this.scene.add(meshV);
+
+    const meshH = new THREE.InstancedMesh(stripeGeoH, stripeMat, listH.length);
+    listH.forEach((m, i) => meshH.setMatrixAt(i, m));
+    this.scene.add(meshH);
   }
 
   _mountains() {
@@ -671,19 +843,47 @@ export class World {
     const sideMat = getWindowMaterial(palette, cols, rows, lit);
     this.windowMats.add(sideMat);
     const roofMat = getRoofMaterial(palette, choice(PALETTES[palette]));
-    const bottomMat = this._bottomMat;
-    const mats = [sideMat, sideMat, roofMat, bottomMat, sideMat, sideMat];
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, dep), mats);
-    mesh.position.set(x + w / 2, 0.15 + h / 2, z + dep / 2);
-    mesh.castShadow = true;
-    this.scene.add(mesh);
+    const cy = 0.15 + h / 2;
+    // Стены — 4 PlaneGeometry слитые в одну геометрию с одним материалом (не массив
+    // материалов, см. OPT-16a) — иначе three.js разворачивает грани BoxGeometry
+    // в 6 отдельных draw calls.
+    // Направления нормалей выверены так, чтобы front-face (winding) каждой стены
+    // смотрел НАРУЖУ от здания — иначе backface culling прячет ближнюю к камере
+    // стену и показывает дальнюю (баг: «вижу заднюю стенку дома, но не переднюю»).
+    const wallGeo = mergeGeoms([
+      new THREE.PlaneGeometry(dep, h).rotateY(-Math.PI / 2).translate(x, cy, z + dep / 2),       // x=x, наружу -X
+      new THREE.PlaneGeometry(dep, h).rotateY(Math.PI / 2).translate(x + w, cy, z + dep / 2),    // x=x+w, наружу +X
+      new THREE.PlaneGeometry(w, h).rotateY(Math.PI).translate(x + w / 2, cy, z),                // z=z, наружу -Z
+      new THREE.PlaneGeometry(w, h).translate(x + w / 2, cy, z + dep),                            // z=z+dep, наружу +Z
+    ]);
+    const roofGeo = new THREE.PlaneGeometry(w, dep).rotateX(-Math.PI / 2).translate(x + w / 2, 0.15 + h, z + dep / 2);
+
+    // Стена и крыша — отдельные меши НА ЗДАНИЕ (не сливаются между зданиями чанком,
+    // см. откат OPT-16b): при слиянии по чанку соседние (в т.ч. пересекающиеся —
+    // генератор кварталов не проверяет здания из разных блоков между собой)
+    // здания разной высоты попадали в один меш, и крыша одного здания «улетала»
+    // на высоту другого — визуально несвязный плавающий кусок. На меш-на-здание
+    // этот баг невозможен: geometry каждого меша строго ограничена своим x/z/w/dep/h.
+    const wallMesh = new THREE.Mesh(wallGeo, sideMat);
+    // castShadow только если здание целиком внутри бокса shadow-камеры (±SHADOW_HALF
+    // вокруг центра карты) — иначе GPU обрезает меш по границе бокса и тень
+    // выглядит «оторванной» от здания.
+    wallGeo.computeBoundingBox();
+    const bb = wallGeo.boundingBox;
+    const half = CFG.SHADOW_HALF;
+    if (bb.min.x >= -half && bb.max.x <= half && bb.min.z >= -half && bb.max.z <= half) {
+      wallMesh.castShadow = true;
+    }
+    this.scene.add(wallMesh);
+    this.scene.add(new THREE.Mesh(roofGeo, roofMat));
+
     if (this.rng() < 0.22) {
       const pyr = new THREE.Mesh(new THREE.ConeGeometry(w * 0.62, h * 0.42, 4), roofMat);
       pyr.rotation.y = Math.PI / 4;
       pyr.position.set(x + w / 2, 0.15 + h + h * 0.21, z + dep / 2);
       this.scene.add(pyr);
     }
-    this.buildings.push({ x0: x, z0: z, x1: x + w, z1: z + dep, h, mesh });
+    this.buildings.push({ x0: x, z0: z, x1: x + w, z1: z + dep, h, mesh: wallMesh });
     // козырёк над входом у части зданий (выступ за фасад)
     if (this.rng() < 0.3 && h > 5) {
       const aw = new THREE.Mesh(new THREE.BoxGeometry(Math.min(w * 0.3, 4), 0.1, 1.1), roofMat);
@@ -759,12 +959,7 @@ export class World {
     const railMat = new THREE.MeshLambertMaterial({ color: 0xc4c4cc });
     const tieMat = new THREE.MeshLambertMaterial({ color: 0x3e342a });
     const bedMat = new THREE.MeshLambertMaterial({ color: 0x48484c });
-    const metalMat = new THREE.MeshLambertMaterial({ color: 0x3a3a3c });
-    const tramBodyMat = new THREE.MeshLambertMaterial({ color: 0xcc2222 });
-    const tramCreamMat = new THREE.MeshLambertMaterial({ color: 0xf4eedc });
     const glassMat = new THREE.MeshLambertMaterial({ color: 0x1c2836, transparent: true, opacity: 0.7 });
-    const doorMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2c });
-    const seatMat = new THREE.MeshLambertMaterial({ color: 0x8a5a3a });
 
     // 1. Межрельсовое мощение / желоб в асфальте (от x = -240 до x = 240)
     const bed = new THREE.Mesh(new THREE.BoxGeometry(480, 0.03, 1.5), bedMat);
@@ -790,99 +985,67 @@ export class World {
 
     // (ПРОВОДА И СТОЛБЫ УБРАНЫ ПО ТРЕБОВАНИЮ ПОЛЬЗОВАТЕЛЯ)
 
-    // 4. Детализированный 3D-трамвайчик КТМ-1 / Татра
+    // 4. Детализированный 3D-трамвайчик КТМ-1 / Татра — статичные непрозрачные
+    // части (рама, бамперы, колёса, кузов, полоса, крыша, вентиляция,
+    // пантограф, двери, сиденья) слиты в один vertexColors-меш вместо ~20
+    // отдельных draw call'ов; стекло/фонари/маршрутный указатель остаются
+    // отдельными мешами (своя прозрачность/emissive).
     const tram = new THREE.Group();
+    const tramMat = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const tp = [];
+    const addTP = (g, c) => tp.push({ g, c });
 
-    // Нижняя рама и тележки
-    const frame = new THREE.Mesh(new THREE.BoxGeometry(10.2, 0.3, 2.2), metalMat);
-    frame.position.y = 0.5; tram.add(frame);
-
-    // Бамперы
+    // рама и тележки
+    addTP(new THREE.BoxGeometry(10.2, 0.3, 2.2).translate(0, 0.5, 0), 0x3a3a3c);
     for (const sx of [-5.15, 5.15]) {
-      const bumper = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.35, 2.3), metalMat);
-      bumper.position.set(sx, 0.5, 0); tram.add(bumper);
-      const coupler = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.6, 6), metalMat);
-      coupler.rotation.z = Math.PI / 2;
-      coupler.position.set(sx + (sx > 0 ? 0.3 : -0.3), 0.45, 0); tram.add(coupler);
+      addTP(new THREE.BoxGeometry(0.2, 0.35, 2.3).translate(sx, 0.5, 0), 0x3a3a3c);
+      addTP(new THREE.CylinderGeometry(0.06, 0.06, 0.6, 6).rotateZ(Math.PI / 2).translate(sx + (sx > 0 ? 0.3 : -0.3), 0.45, 0), 0x3a3a3c);
     }
-
-    // Колёса (4 колесные пары)
-    const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.1, 12);
-    wheelGeo.rotateX(Math.PI / 2);
-    const wheelMat = new THREE.MeshLambertMaterial({ color: 0x222224 });
+    // колёса (4 колёсные пары)
+    const wheelGeo = new THREE.CylinderGeometry(0.35, 0.35, 0.1, 12).rotateX(Math.PI / 2);
     for (const wx of [-2.8, -1.6, 1.6, 2.8]) {
-      for (const wz of [-0.55, 0.55]) {
-        const wh = new THREE.Mesh(wheelGeo, wheelMat);
-        wh.position.set(wx, 0.35, wz); tram.add(wh);
-      }
+      for (const wz of [-0.55, 0.55]) addTP(wheelGeo.clone().translate(wx, 0.35, wz), 0x222224);
     }
-
-    // Основной красный кузов
-    const body = new THREE.Mesh(new THREE.BoxGeometry(10.0, 1.4, 2.36), tramBodyMat);
-    body.position.y = 1.35; tram.add(body);
-
-    // Бежевая верхняя полоса
-    const topStrip = new THREE.Mesh(new THREE.BoxGeometry(10.05, 0.7, 2.38), tramCreamMat);
-    topStrip.position.y = 2.4; tram.add(topStrip);
-
-    // Закруглённая крыша
-    const roof = new THREE.Mesh(new THREE.BoxGeometry(9.8, 0.35, 2.25), tramCreamMat);
-    roof.position.y = 2.9; tram.add(roof);
-
-    // Вентиляционные короба на крыше
-    for (const rx of [-2.5, 0, 2.5]) {
-      const vent = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.12, 0.8), metalMat);
-      vent.position.set(rx, 3.12, 0); tram.add(vent);
-    }
-
-    // Пантограф на крыше
-    const pantoFrame = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.08, 1.2), metalMat);
-    pantoFrame.position.set(-0.5, 3.12, 0); tram.add(pantoFrame);
-    const pantoLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.4, 5), metalMat);
-    pantoLeg.rotation.z = Math.PI / 4;
-    pantoLeg.position.set(-0.5, 3.7, 0); tram.add(pantoLeg);
-    const pantoHead = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.06, 1.6), metalMat);
-    pantoHead.position.set(-0.1, 4.2, 0); tram.add(pantoHead);
-
-    // Остекление (боковые и лобовые стёкла)
-    const glass = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.85, 2.42), glassMat);
-    glass.position.y = 2.15; tram.add(glass);
-
-    // Пассажирские двери (3 двустворчатые двери сбоку)
-    for (const dx of [-3.2, 0, 3.2]) {
-      const door = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.8, 0.08), doorMat);
-      door.position.set(dx, 1.55, 1.16); tram.add(door);
-      const doorGlass = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.8, 0.1), glassMat);
-      doorGlass.position.set(dx, 1.9, 1.16); tram.add(doorGlass);
-    }
-
-    // Салон: Сиденья внутри вагона
+    // основной красный кузов — скруглённые (тапередные) торцы вместо плоских
+    // граней: ось капота/кормы трамвая вдоль X, поэтому 90°-поворот меняет
+    // местами "длину"(d) и "ширину"(w) у taperedBox
+    addTP(taperedBox(2.3, 1.4, 9.9, { frontRise: -0.55, backRise: -0.55, topW: 2.12 }).rotateY(Math.PI / 2).translate(0, 1.35, 0), 0xcc2222);
+    // бежевая верхняя полоса + крыша
+    addTP(new THREE.BoxGeometry(10.05, 0.7, 2.38).translate(0, 2.4, 0), 0xf4eedc);
+    addTP(new THREE.BoxGeometry(9.8, 0.35, 2.25).translate(0, 2.9, 0), 0xf4eedc);
+    // вентиляционные короба на крыше
+    for (const rx of [-2.5, 0, 2.5]) addTP(new THREE.BoxGeometry(1.2, 0.12, 0.8).translate(rx, 3.12, 0), 0x3a3a3c);
+    // пантограф
+    addTP(new THREE.BoxGeometry(1.6, 0.08, 1.2).translate(-0.5, 3.12, 0), 0x3a3a3c);
+    addTP(new THREE.CylinderGeometry(0.03, 0.03, 1.4, 5).rotateZ(Math.PI / 4).translate(-0.5, 3.7, 0), 0x3a3a3c);
+    addTP(new THREE.BoxGeometry(0.1, 0.06, 1.6).translate(-0.1, 4.2, 0), 0x3a3a3c);
+    // двери (панель, без стекла)
+    for (const dx of [-3.2, 0, 3.2]) addTP(new THREE.BoxGeometry(1.1, 1.8, 0.08).translate(dx, 1.55, 1.16), 0x2a2a2c);
+    // сиденья салона (видны через остекление)
     for (let sx = -3.8; sx <= 3.8; sx += 1.2) {
-      for (const sz of [-0.7, 0.7]) {
-        const seat = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.4, 0.45), seatMat);
-        seat.position.set(sx, 1.0, sz); tram.add(seat);
-      }
+      for (const sz of [-0.7, 0.7]) addTP(new THREE.BoxGeometry(0.45, 0.4, 0.45).translate(sx, 1.0, sz), 0x8a5a3a);
     }
+    // маршрутный софит (тёмный короб, светящаяся табличка — отдельным мешом ниже)
+    addTP(new THREE.BoxGeometry(0.15, 0.35, 1.2).translate(-5.02, 2.55, 0), 0x111111);
 
-    // Передние фары (яркий тёплый свет)
+    tram.add(new THREE.Mesh(mergeColored(tp), tramMat));
+
+    // Остекление (боковые/лобовые стёкла + дверные, один прозрачный меш)
+    const glassParts = [new THREE.BoxGeometry(9.6, 0.85, 2.42).translate(0, 2.15, 0)];
+    for (const dx of [-3.2, 0, 3.2]) glassParts.push(new THREE.BoxGeometry(0.9, 0.8, 0.1).translate(dx, 1.9, 1.16));
+    tram.add(new THREE.Mesh(mergeGeoms(glassParts), glassMat));
+
+    // Передние фары (яркий тёплый свет) — один меш
     const headlightMat = new THREE.MeshBasicMaterial({ color: 0xfff0aa });
-    for (const hz of [-0.6, 0.6]) {
-      const hl = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.1, 10), headlightMat);
-      hl.rotation.z = Math.PI / 2;
-      hl.position.set(-5.06, 1.1, hz); tram.add(hl);
-    }
+    const headGeo = [-0.6, 0.6].map((hz) => new THREE.CylinderGeometry(0.16, 0.16, 0.1, 10).rotateZ(Math.PI / 2).translate(-5.06, 1.1, hz));
+    tram.add(new THREE.Mesh(mergeGeoms(headGeo), headlightMat));
 
-    // Задние красные габариты
+    // Задние красные габариты — один меш
     const tailMat = new THREE.MeshBasicMaterial({ color: 0xff2222 });
-    for (const tz of [-0.7, 0.7]) {
-      const tl = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8), tailMat);
-      tl.rotation.z = Math.PI / 2;
-      tl.position.set(5.06, 1.1, tz); tram.add(tl);
-    }
+    const tailGeo = [-0.7, 0.7].map((tz) => new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8).rotateZ(Math.PI / 2).translate(5.06, 1.1, tz));
+    tram.add(new THREE.Mesh(mergeGeoms(tailGeo), tailMat));
 
-    // Маршрутный софит / Маршрутоуказатель «№ 1 ЦВЕТНИК — ВОКЗАЛ» над лобовым стеклом
-    const routeBox = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.35, 1.2), new THREE.MeshLambertMaterial({ color: 0x111111 }));
-    routeBox.position.set(-5.02, 2.55, 0); tram.add(routeBox);
+    // Маршрутоуказатель «№ 1 ЦВЕТНИК — ВОКЗАЛ» — светящаяся табличка над лобовым стеклом
     const routeSign = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.28, 1.1), new THREE.MeshBasicMaterial({ color: 0xffdf66 }));
     routeSign.position.set(-5.1, 2.55, 0); tram.add(routeSign);
 
@@ -918,7 +1081,12 @@ export class World {
 
   /* Памятник Остапу Бендеру у входа в Провал */
   _ostapBenderStatue() {
-    const cx = -96, cz = -140;
+    // Северо-восточный угол квартала (2,1), у перекрёстка (−64,−128). Старая
+    // точка (−96,−140) лежала в 20 м от центра озера — ВНУТРИ circleCollider
+    // {x:−96,z:−160,r:26}, машина упиралась в невидимую стену за 8 м до
+    // памятника. Ближний угол AABB новой точки — 30.1 м от центра озера
+    // (нужно больше 26 + 2.0 радиуса машины).
+    const cx = -74, cz = -137;
     const g = new THREE.Group();
     const bronzeMat = new THREE.MeshLambertMaterial({ color: 0x7a6a4a });
     const woodMat = new THREE.MeshLambertMaterial({ color: 0x6a4a2a });
@@ -990,56 +1158,146 @@ export class World {
     this.addPropAABB({ x0: cx - 4, z0: cz - 1, x1: cx + 4, z1: cz + 1 });
   }
 
-  /* Цветник: фонтан, клумбы, скамейки */
+  /* Цветник — квартал bi=3,bj=4 (x −54..−10, z 10..54).
+     Draw calls: мощение 1 + слитая статика 1 + вода 1 = 3 (было 34).
+     Памятник Орлу (−38,20) стоит почти на радиусе колец, поэтому его сектор
+     исключается предикатом free() — сам монумент (позиция/AABB) не трогается. */
   _parkCvetnik() {
-    const cx = -32, cz = 32;
-    const mat = new THREE.MeshLambertMaterial({ color: 0xb8b8b0 });
-    const basin = new THREE.Mesh(new THREE.CylinderGeometry(6, 6.6, 0.9, 12), mat);
-    basin.position.set(cx, 0.55, cz);
-    this.scene.add(basin);
-    const water = new THREE.Mesh(new THREE.CircleGeometry(5.6, 16), new THREE.MeshPhongMaterial({ color: 0x66ccff, transparent: true, opacity: 0.85, shininess: 60 }));
-    water.rotation.x = -Math.PI / 2;
-    water.position.set(cx, 1.05, cz);
-    this.scene.add(water);
-    const pillar = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.8, 2.4, 8), mat);
-    pillar.position.set(cx, 2.2, cz);
-    this.scene.add(pillar);
-    const topDisc = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 0.8, 0.35, 8), mat);
-    topDisc.position.set(cx, 3.4, cz);
-    this.scene.add(topDisc);
-    this.addPropAABB({ x0: cx - 6.6, z0: cz - 6.6, x1: cx + 6.6, z1: cz + 6.6 });
-    // клумбы
-    const bedColors = [0xd94f4f, 0xe8b84a, 0xb06ad9, 0x5aa85a, 0xe87a3a, 0x4a7fd9];
-    for (let i = 0; i < 6; i++) {
-      const a = (i / 6) * Math.PI * 2;
-      const b = new THREE.Mesh(new THREE.BoxGeometry(5, 0.45, 1.6), new THREE.MeshLambertMaterial({ color: bedColors[i] }));
-      b.position.set(cx + Math.cos(a) * 11, 0.32, cz + Math.sin(a) * 11);
-      this.scene.add(b);
-      this.addPropAABB({ x0: b.position.x - 2.5, z0: b.position.z - 0.8, x1: b.position.x + 2.5, z1: b.position.z + 0.8 });
+    const CX = -32, CZ = 32;
+    const EGX = -38, EGZ = 20, EGR = 6.8;
+    const free = (x, z) => dist2D(x, z, EGX, EGZ) > EGR;
+    const p = [], wat = [], pave = [];
+    const bx = (w, h, d, c, x, y, z) => p.push({ g: new THREE.BoxGeometry(w, h, d).translate(x, y, z), c });
+    const cyl = (r1, r2, h, seg, c, x, y, z) => p.push({ g: new THREE.CylinderGeometry(r1, r2, h, seg).translate(x, y, z), c });
+    const water = (r, y) => wat.push({ g: new THREE.CircleGeometry(r, 24).rotateX(-Math.PI / 2).translate(CX, y, CZ), c: '#ffffff' });
+
+    /* 1. Мощение: круглая площадь + 4 радиальные дорожки до краёв квартала +
+       входные «карманы». Плиты — коробки высотой 0.2 (верх 0.15, вровень
+       с тротуарами, blockRect совпадает с их внешними краями). */
+    const RP = 10.9;
+    pave.push(uvTile(new THREE.CylinderGeometry(RP, RP, 0.2, 40).translate(CX, 0.05, CZ), RP, RP));
+    for (let k = 0; k < 4; k++) {
+      const ux = Math.round(Math.cos(k * Math.PI / 2)), uz = Math.round(Math.sin(k * Math.PI / 2));
+      const alongX = k % 2 === 0;
+      const path = alongX ? new THREE.BoxGeometry(11.4, 0.2, 2.8) : new THREE.BoxGeometry(2.8, 0.2, 11.4);
+      pave.push(uvTile(path.translate(CX + ux * 16.3, 0.05, CZ + uz * 16.3),
+        alongX ? 5.7 : 1.4, alongX ? 1.4 : 5.7));
+      for (const s of [-1, 1]) {                      // карманы по бокам входа (не перекрывают дорожку)
+        const lobe = alongX ? new THREE.BoxGeometry(3.4, 0.2, 2.0) : new THREE.BoxGeometry(2.0, 0.2, 3.4);
+        pave.push(uvTile(lobe.translate(CX + ux * 20.3 - uz * s * 2.4, 0.05, CZ + uz * 20.3 + ux * s * 2.4),
+          alongX ? 1.7 : 1.0, alongX ? 1.0 : 1.7));
+      }
     }
-    this._bench(cx + 13, cz - 4, Math.PI / 2);
-    this._bench(cx + 13, cz + 4, Math.PI / 2);
-    this._bench(cx - 13, cz - 4, -Math.PI / 2);
-    this._bench(cx - 13, cz + 4, -Math.PI / 2);
-    this._bench(cx - 4, cz + 13, 0);
-    this._bench(cx + 4, cz + 13, 0);
+
+    /* 2. Фонтан: ступень, чаша, тумба, две тарелки, шар. Вода лежит НАД
+       верхом каждой чаши/тарелки (иначе диск прячется внутри цилиндра). */
+    cyl(7.90, 8.20, 0.34, 28, PK.kerb,  CX, 0.32, CZ);   // ступень 0.15..0.49
+    cyl(6.90, 7.20, 0.80, 28, PK.stone, CX, 0.89, CZ);   // борт чаши 0.49..1.29
+    cyl(1.05, 1.50, 1.20, 12, PK.stone, CX, 1.89, CZ);   // тумба 1.29..2.49
+    cyl(3.00, 1.30, 0.40, 18, PK.stone, CX, 2.69, CZ);   // нижняя тарелка 2.49..2.89
+    cyl(0.50, 0.70, 1.40, 10, PK.stone, CX, 3.59, CZ);   // колонна 2.89..4.29
+    cyl(1.60, 0.75, 0.34, 14, PK.stone, CX, 4.46, CZ);   // верхняя тарелка 4.29..4.63
+    p.push({ g: new THREE.SphereGeometry(0.36, 10, 8).translate(CX, 4.95, CZ), c: PK.stoneD });
+    water(6.50, 1.31); water(2.85, 2.91); water(1.45, 4.65);
+    wat.push({ g: new THREE.CylinderGeometry(0.10, 0.18, 1.5, 6).translate(CX, 5.55, CZ), c: '#ffffff' });
+    this.addPropAABB({ x0: CX - 8.2, z0: CZ - 8.2, x1: CX + 8.2, z1: CZ + 8.2 });
+
+    /* 3. Клумбы: 8 секторов, длинная ось ПО КАСАТЕЛЬНОЙ (раньше все коробки
+       смотрели одинаково и кольцо не читалось). Сектор Орла пропускаем. */
+    const RB = 12.8;
+    for (let k = 0; k < 8; k++) {
+      const a = (22.5 + k * 45) * Math.PI / 180;
+      const fx = CX + Math.cos(a) * RB, fz = CZ + Math.sin(a) * RB;
+      if (!free(fx, fz)) continue;
+      const rot = -a - Math.PI / 2;
+      p.push({ g: new THREE.BoxGeometry(5.2, 0.7, 1.9).rotateY(rot).translate(fx, 0.30, fz), c: PK.kerb });
+      p.push({ g: new THREE.BoxGeometry(4.6, 0.24, 1.34).rotateY(rot).translate(fx, 0.72, fz),
+               c: PK_FLOWERS[k % PK_FLOWERS.length] });
+      for (const t of [-1.5, 0, 1.5]) {
+        p.push({ g: new THREE.SphereGeometry(0.5, 8, 5).scale(1, 0.6, 1)
+          .translate(fx + Math.cos(rot) * t, 0.88, fz - Math.sin(rot) * t),
+          c: PK_FLOWERS[(k + 3) % PK_FLOWERS.length] });
+      }
+      this.addPropAABB(this._rotRect(fx, fz, rot, 5.2, 1.9));
+    }
+
+    /* 4. Скамьи кольцом — ЛИЦОМ к фонтану, со всех сторон, включая южную
+       (раньше 6 скамей стояли к фонтану спиной, юга не было вовсе). */
+    for (let k = 0; k < 8; k++) {
+      const a = (22.5 + k * 45) * Math.PI / 180;
+      const sx = CX + Math.cos(a) * 15.8, sz = CZ + Math.sin(a) * 15.8;
+      if (!free(sx, sz)) continue;
+      this._bench(sx, sz, -a - Math.PI / 2, 0, p);
+    }
+
+    /* 5. Вазоны у четырёх входов в парк (стоят на карманах мощения) */
+    for (let k = 0; k < 4; k++) {
+      const ux = Math.round(Math.cos(k * Math.PI / 2)), uz = Math.round(Math.sin(k * Math.PI / 2));
+      for (const s of [-1, 1]) {
+        const vx = CX + ux * 20.3 - uz * s * 2.4, vz = CZ + uz * 20.3 + ux * s * 2.4;
+        if (!free(vx, vz)) continue;
+        this._planter(p, vx, vz, (k * 2 + s) * 0.35, PK_FLOWERS[(k * 2 + (s + 1) / 2) % PK_FLOWERS.length]);
+      }
+    }
+
+    /* 6. Пергола в дальнем углу (пустой угол квартала, вне колец и вне Орла) */
+    const GX = -46, GZ = 45.5;
+    for (const gx of [-2.6, 0, 2.6]) for (const gz of [-1.5, 1.5]) bx(0.26, 3.0, 0.26, PK.wood, GX + gx, 1.40, GZ + gz);
+    for (const gz of [-1.5, 1.5]) bx(6.0, 0.22, 0.30, PK.wood, GX, 3.01, GZ + gz);
+    for (let k = 0; k <= 8; k++) bx(0.12, 0.14, 3.5, PK.wood, GX - 2.8 + k * 0.7, 3.19, GZ);
+    this._bench(GX, GZ, -Math.atan2(GZ - CZ, GX - CX) - Math.PI / 2, 0, p);
+    this.addPropAABB({ x0: GX - 3.0, z0: GZ - 1.9, x1: GX + 3.0, z1: GZ + 1.9 });
+
+    /* 7. Меши */
+    this.scene.add(new THREE.Mesh(mergeGeoms(pave),
+      new THREE.MeshLambertMaterial({ map: this._pavementTexture('pavement_park') })));
+    this.scene.add(new THREE.Mesh(mergeColored(p), this._vcMat()));
+    this.scene.add(new THREE.Mesh(mergeColored(wat),
+      new THREE.MeshPhongMaterial({ color: 0x66ccff, transparent: true, opacity: 0.85, shininess: 60 })));
   }
 
-  _bench(x, z, rotY) {
-    const group = new THREE.Group();
-    const p1 = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.1, 0.55), new THREE.MeshLambertMaterial({ color: 0x8a6a44 }));
-    p1.position.y = 0.55; group.add(p1);
-    const p2 = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.55, 0.1), new THREE.MeshLambertMaterial({ color: 0x8a6a44 }));
-    p2.position.set(0, 0.8, -0.26); group.add(p2);
+  /* Один MeshLambertMaterial({vertexColors}) на всю слитую мелочь города:
+     меши разные, но материал общий — нет лишних переключений программы. */
+  _vcMat() {
+    if (!this._vcMatCache) this._vcMatCache = new THREE.MeshLambertMaterial({ vertexColors: true });
+    return this._vcMatCache;
+  }
+
+  /**
+   * Скамья. Если передан parts — геометрия пишется в общий merge-буфер вызывающего
+   * (как _stationVehicle), иначе строится отдельный слитый меш. Раньше каждая скамья
+   * = 4 меша + 3 новых материала; теперь 1 меш на партию (или 1 на скамью).
+   * Спинка в локальных координатах на z=-0.26 ⇒ сидящий смотрит в локальный +z,
+   * то есть в мир по (sin rotY, cos rotY).
+   */
+  _bench(x, z, rotY, y = 0.12, parts = null) {
+    const out = parts || [];
+    const put = (g, c) => out.push({ g: g.rotateY(rotY).translate(x, y, z), c });
+    put(new THREE.BoxGeometry(1.8, 0.1, 0.55).translate(0, 0.55, 0), BENCH_WOOD);
+    put(new THREE.BoxGeometry(1.8, 0.55, 0.1).translate(0, 0.8, -0.26), BENCH_WOOD);
     for (const s of [-0.78, 0.78]) {
-      const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.5, 0.42), new THREE.MeshLambertMaterial({ color: 0x5a5a54 }));
-      leg.position.set(s, 0.25, 0); group.add(leg);
+      put(new THREE.BoxGeometry(0.12, 0.5, 0.42).translate(s, 0.25, 0), BENCH_LEG);
     }
-    group.position.set(x, 0.12, z);
-    group.rotation.y = rotY;
-    this.scene.add(group);
-    const bx = this._rotRect(x, z, rotY, 1.9, 0.7);
-    this.addPropAABB(bx);
+    this.addPropAABB(this._rotRect(x, z, rotY, 1.9, 0.7));
+    if (!parts) this.scene.add(new THREE.Mesh(mergeColored(out), this._vcMat()));
+  }
+
+  /**
+   * Вазон с цветами (первый экземпляр такого хелпера в проекте). Пишет геометрию
+   * в общий буфер parts — вазоны всего города укладываются в один draw call.
+   * Регистрирует свой AABB сам, как _bench().
+   */
+  _planter(parts, x, z, rotY = 0, color = 0xd94f4f, y = 0.1) {
+    const put = (g, c) => parts.push({ g: g.rotateY(rotY).translate(x, y, z), c });
+    put(new THREE.CylinderGeometry(0.28, 0.34, 0.14, 8).translate(0, 0.07, 0), PLANTER_STONE);
+    put(new THREE.CylinderGeometry(0.46, 0.30, 0.46, 8).translate(0, 0.37, 0), PLANTER_STONE);
+    put(new THREE.CylinderGeometry(0.52, 0.48, 0.13, 8).translate(0, 0.66, 0), PLANTER_RIM);
+    put(new THREE.SphereGeometry(0.44, 8, 5).scale(1, 0.5, 1).translate(0, 0.74, 0), PLANTER_LEAF);
+    for (let k = 0; k < 4; k++) {
+      const a = k * Math.PI / 2 + 0.4;
+      put(new THREE.SphereGeometry(0.15, 6, 4).translate(Math.cos(a) * 0.24, 0.84, Math.sin(a) * 0.24), color);
+    }
+    this.addPropAABB({ x0: x - 0.6, z0: z - 0.6, x1: x + 0.6, z1: z + 0.6 });
   }
 
   _rotRect(x, z, rot, w, d) {
@@ -1078,47 +1336,127 @@ export class World {
     this.circleColliders.push({ x: cx, z: cz, r: 26 });
   }
 
-  /* Рынок «Лира» */
+  /* Рынок «Лира» — квартал bi=5,bj=3 (x 74..118, z −54..−10).
+     Средний интервал колонн раздвинут: получился центральный проезд ровно
+     по оси x=96 — это и есть центр квартала и точка высадки заказа «Рынок
+     Лира» (config.js LANDMARKS + orders.js). Раньше эта точка лежала внутри
+     AABB палатки (98,−34), а ящики (cz = −10 + rng()*8) сыпались на дорогу z=0.
+     Draw calls: мощение 1 + слитая мелочь 1 + навесы 1 + вывеска 1 = 4 (было 4). */
   _market() {
-    const x0 = 80, z0 = -48;
-    const stripeTex = this._stripedTexture('#c0392b', '#f0f0e8');
-    const postsGeo = new THREE.BoxGeometry(8, 0.8, 4.6);
-    const canopyGeo = new THREE.BoxGeometry(8.4, 0.24, 5);
-    const legGeo = new THREE.CylinderGeometry(0.16, 0.18, 2.8, 5);
-    const crateGeo = new THREE.BoxGeometry(1.1, 0.7, 1.1);
+    const BX = 96, BZ = -32;                                   // центр квартала = точка высадки
+    const COLS = [79, 88, 104, 113], ROWS = [-48, -34, -20];
+    const FX0 = 74.4, FX1 = 117.6, FZ0 = -53.6, FZ1 = -11.2;   // линия ограды
+    const p = [], can = [];                                    // p — vertexColors, can — навесы
+    const bx = (arr, w, h, d, c, x, y, z) =>
+      arr.push({ g: new THREE.BoxGeometry(w, h, d).translate(x, y, z), c });
+    const cyl = (r1, r2, h, seg, c, x, y, z) =>
+      p.push({ g: new THREE.CylinderGeometry(r1, r2, h, seg).translate(x, y, z), c });
 
-    const postsM = [], canopyM = [], legM = [], crateM = [];
+    /* 1. Мощение всего квартала. Плита 44×44 высотой 0.2 — верх 0.15, вровень
+       с тротуарами (blockRect совпадает с их внешними краями). Свой ключ
+       текстуры + uvTile: repeat общего инстанса 'pavement' не трогаем. */
+    this.scene.add(new THREE.Mesh(
+      uvTile(new THREE.BoxGeometry(44, 0.2, 44).translate(BX, 0.05, BZ), 22, 22),
+      new THREE.MeshLambertMaterial({ map: this._pavementTexture('pavement_market') })));
+    bx(p, 7.2, 0.02, 7.2, 0xc8c2b2, BX, 0.16, BZ);   // площадка высадки (без AABB — по ней ездят)
 
-    for (let ri = 0; ri < 3; ri++) for (let ci = 0; ci < 4; ci++) {
-      const x = x0 + ci * 9, z = z0 + ri * 14;
-      postsM.push(new THREE.Matrix4().makeTranslation(x, 1.4, z));
-      canopyM.push(new THREE.Matrix4().makeTranslation(x, 3.1, z));
-      for (const sx of [-3, 3]) {
-        legM.push(new THREE.Matrix4().makeTranslation(x + sx, 1.5, z));
+    /* 2. Двенадцать палаток. Ноги 0.15..3.25 упираются в навес 3.23..3.47 —
+       раньше навес висел в 0.2 м над ногами. Подзор по краям навеса и лотки
+       с товаром на прилавке дают силуэт вместо «парящих плит». */
+    for (let ri = 0; ri < ROWS.length; ri++) for (let ci = 0; ci < COLS.length; ci++) {
+      const x = COLS[ci], z = ROWS[ri];
+      bx(p, 8.0, 0.8, 4.6, MK.stall, x, 1.55, z);                       // прилавок 1.15..1.95
+      for (const sx of [-3.6, 3.6]) for (const sz of [-1.9, 1.9]) {
+        cyl(0.14, 0.17, 3.1, 5, MK.post, x + sx, 1.70, z + sz);          // 4 стойки (было 2)
       }
+      bx(can, 8.4, 0.24, 5.0, 0xffffff, x, 3.35, z);                     // навес
+      for (const sz of [-2.56, 2.56]) bx(p, 8.4, 0.36, 0.12, MK.valance, x, 3.05, z + sz);
+      for (let k = 0; k < 4; k++) {
+        bx(p, 1.5, 0.3, 1.2, MK_GOODS[(k + ci + ri * 2) % MK_GOODS.length], x - 2.7 + k * 1.8, 2.10, z);
+      }
+      for (const sx of [-3.1, 3.1]) bx(p, 1.0, 0.62, 1.0, MK.crate, x + sx, 0.46, z + (sx > 0 ? 1.4 : -1.4));
       this.addPropAABB({ x0: x - 4.4, z0: z - 2.6, x1: x + 4.4, z1: z + 2.6 });
     }
-    for (let i = 0; i < 8; i++) {
-      const cx = 79 + this.rng() * 34, cz = -10 + this.rng() * 8;
-      crateM.push(new THREE.Matrix4().makeTranslation(cx, 0.5, cz));
-      this.addPropAABB({ x0: cx - 0.6, z0: cz - 0.6, x1: cx + 0.6, z1: cz + 0.6 });
+
+    /* 3. Ограда по периметру. AABB — один на прогон (5 штук), а не на столб:
+       player.js перебирает propsAABB линейно каждый кадр. */
+    const fence = (x0, z0, x1, z1) => {
+      const alongX = Math.abs(x1 - x0) > Math.abs(z1 - z0);
+      const len = alongX ? x1 - x0 : z1 - z0;
+      const mx = (x0 + x1) / 2, mz = (z0 + z1) / 2;
+      for (const y of [0.62, 1.08]) {
+        if (alongX) bx(p, len, 0.08, 0.06, MK.rail, mx, y, mz);
+        else bx(p, 0.06, 0.08, len, MK.rail, mx, y, mz);
+      }
+      const n = Math.max(1, Math.round(len / 2.4));
+      for (let i = 0; i <= n; i++) {
+        cyl(0.09, 0.11, 1.3, 5, MK.post, x0 + (x1 - x0) * (i / n), 0.80, z0 + (z1 - z0) * (i / n));
+      }
+      this.addPropAABB(alongX ? { x0, z0: mz - 0.3, x1, z1: mz + 0.3 }
+                              : { x0: mx - 0.3, z0, x1: mx + 0.3, z1 });
+    };
+    fence(FX0, FZ0, FX0, FZ1);      // запад
+    fence(FX1, FZ0, FX1, FZ1);      // восток
+    fence(FX0, FZ0, FX1, FZ0);      // юг
+    fence(FX0, FZ1, 90.2, FZ1);     // север, левое крыло
+    fence(101.8, FZ1, FX1, FZ1);    // север, правое крыло  (створ 8.4 м над проездом)
+
+    /* 4. Ворота с вывеской. Просвет 91.8..100.2 — машина (радиус 2) проходит. */
+    for (const gx of [91, 101]) {
+      bx(p, 1.5, 3.5, 1.5, MK.stone, gx, 1.90, FZ1);       // тумба 0.15..3.65
+      bx(p, 1.8, 0.22, 1.8, MK.stone, gx, 3.76, FZ1);      // навершие
+      this.addPropAABB({ x0: gx - 0.85, z0: FZ1 - 0.85, x1: gx + 0.85, z1: FZ1 + 0.85 });
+    }
+    bx(p, 11.6, 0.55, 1.0, MK.post, BX, 4.15, FZ1);        // перекладина 3.87..4.42
+    for (let k = 0; k < 9; k++) {                           // флажки под перекладиной
+      bx(p, 0.36, 0.44, 0.04, MK_GOODS[k % MK_GOODS.length], BX - 4 + k, 3.64, FZ1);
+    }
+    const signTex = this._signTexture('РЫНОК «ЛИРА»', 'sign_rynok', '#7c1f18', '#f4e2b8');
+    this.scene.add(new THREE.Mesh(mergeGeoms([
+      new THREE.PlaneGeometry(9.6, 1.35).translate(BX, 4.15, FZ1 + 0.54),
+      new THREE.PlaneGeometry(9.6, 1.35).rotateY(Math.PI).translate(BX, 4.15, FZ1 - 0.54),
+    ]), new THREE.MeshLambertMaterial({
+      map: signTex, emissive: 0xffffff, emissiveMap: signTex, emissiveIntensity: 0.2 })));
+
+    /* 5. Водоразборная колонка (северная полоса) и весы (проход между рядами) */
+    cyl(1.05, 1.15, 0.90, 12, MK.stone, 85, 0.60, -14.5);
+    cyl(1.05, 1.05, 0.14, 12, MK.stone, 85, 1.12, -14.5);
+    for (const sx of [-0.95, 0.95]) bx(p, 0.16, 1.55, 0.16, MK.post, 85 + sx, 1.92, -14.5);
+    bx(p, 2.5, 0.16, 1.2, MK.post, 85, 2.78, -14.5);
+    p.push({ g: new THREE.CylinderGeometry(0.09, 0.09, 1.7, 6).rotateZ(Math.PI / 2).translate(85, 2.45, -14.5), c: MK.metal });
+    cyl(0.24, 0.20, 0.34, 8, MK.metal, 85, 1.40, -14.5);   // ведро
+    this.addPropAABB({ x0: 83.6, z0: -15.9, x1: 86.4, z1: -13.1 });
+
+    bx(p, 1.7, 0.70, 1.3, MK.stall, 108, 0.50, -27);
+    bx(p, 1.4, 0.10, 1.1, MK.metal, 108, 0.90, -27);
+    cyl(0.07, 0.07, 1.10, 6, MK.metal, 108, 1.50, -27);
+    p.push({ g: new THREE.CylinderGeometry(0.42, 0.42, 0.10, 12).rotateX(Math.PI / 2).translate(108, 2.10, -27), c: 0xf0ece0 });
+    this.addPropAABB({ x0: 106.9, z0: -28.1, x1: 109.1, z1: -25.9 });
+
+    /* 6. Ящики и мешки — валидированный разброс вместо cz = −10 + rng()*8
+       (половина ящиков падала на асфальт дороги z=0). isPositionValid уже знает
+       про дорогу, палатки, ограду и ворота; проезд исключаем явно. */
+    for (let i = 0; i < 30; i++) {
+      const cx = 75.5 + this.rng() * 41, cz = -52.5 + this.rng() * 40;
+      if (Math.abs(cx - BX) < 5.0) continue;                 // центральный проезд — свободен
+      if (!this.isPositionValid(cx, cz, 0.8)) continue;
+      if (this.rng() < 0.35) {
+        cyl(0.34, 0.50, 0.86, 8, MK.sack, cx, 0.58, cz);
+      } else {
+        const rot = (this.rng() - 0.5) * 0.9;
+        const n = this.rng() < 0.4 ? 2 : 1;
+        for (let k = 0; k < n; k++) {
+          p.push({ g: new THREE.BoxGeometry(1.05, 0.62, 1.05).rotateY(rot + k * 0.3)
+            .translate(cx, 0.46 + k * 0.62, cz), c: k ? MK.crate2 : MK.crate });
+        }
+      }
+      this.addPropAABB({ x0: cx - 0.7, z0: cz - 0.7, x1: cx + 0.7, z1: cz + 0.7 });
     }
 
-    const postsMesh = new THREE.InstancedMesh(postsGeo, new THREE.MeshLambertMaterial({ color: 0x6a6a60 }), postsM.length);
-    postsM.forEach((m, i) => postsMesh.setMatrixAt(i, m));
-    this.scene.add(postsMesh);
-
-    const canopyMesh = new THREE.InstancedMesh(canopyGeo, new THREE.MeshLambertMaterial({ map: stripeTex }), canopyM.length);
-    canopyM.forEach((m, i) => canopyMesh.setMatrixAt(i, m));
-    this.scene.add(canopyMesh);
-
-    const legMesh = new THREE.InstancedMesh(legGeo, new THREE.MeshLambertMaterial({ color: 0x4a4a44 }), legM.length);
-    legM.forEach((m, i) => legMesh.setMatrixAt(i, m));
-    this.scene.add(legMesh);
-
-    const crateMesh = new THREE.InstancedMesh(crateGeo, new THREE.MeshLambertMaterial({ color: 0xb87a3a }), crateM.length);
-    crateM.forEach((m, i) => crateMesh.setMatrixAt(i, m));
-    this.scene.add(crateMesh);
+    /* 7. Меши */
+    this.scene.add(new THREE.Mesh(mergeColored(p), this._vcMat()));
+    this.scene.add(new THREE.Mesh(mergeColored(can),
+      new THREE.MeshLambertMaterial({ map: this._stripedTexture('#c0392b', '#f0f0e8') })));
   }
 
   /* Текстура тротуарной плитки (canvas, швы по краям) */
@@ -1153,47 +1491,352 @@ export class World {
     return t;
   }
 
-  /* Вокзал */
-  _station() {
-    const mat = new THREE.MeshLambertMaterial({ color: 0xc8b898 });
-    const b = new THREE.Mesh(new THREE.BoxGeometry(56, 14, 18), mat);
-    b.position.set(160, 0.15 + 7, 82);
-    b.castShadow = true;
-    this.scene.add(b);
-    const tower = new THREE.Mesh(new THREE.BoxGeometry(9, 26, 9), new THREE.MeshLambertMaterial({ color: 0xd8c8a8 }));
-    tower.position.set(160, 0.15 + 13, 82);
-    this.scene.add(tower);
-    const clock = new THREE.Mesh(new THREE.CircleGeometry(2.6, 14), new THREE.MeshBasicMaterial({ color: 0xf5f5ee }));
-    clock.position.set(164.6, 0.15 + 20, 82);
-    clock.rotation.y = Math.PI / 2;
-    this.scene.add(clock);
-    const troof = new THREE.Mesh(new THREE.ConeGeometry(7.5, 6, 4), new THREE.MeshLambertMaterial({ color: 0x6a4a2a }));
-    troof.rotation.y = Math.PI / 4;
-    troof.position.set(160, 0.15 + 26 + 3, 82);
-    this.scene.add(troof);
-    this.buildings.push({ x0: 132, z0: 73, x1: 188, z1: 91, h: 14, mesh: b });
-    this.buildings.push({ x0: 155.5, z0: 77.5, x1: 164.5, z1: 86.5, h: 26, mesh: tower });
-    // платформа и пути
-    const plat = new THREE.Mesh(new THREE.BoxGeometry(46, 0.6, 5), new THREE.MeshLambertMaterial({ color: 0xb0b0a8 }));
-    plat.position.set(160, 0.32, 100);
-    this.scene.add(plat);
-    const trackMat = new THREE.MeshLambertMaterial({ color: 0x3a3a3a });
-    for (let i = 0; i < 3; i++) {
-      const t = new THREE.Mesh(new THREE.BoxGeometry(90, 0.25, 1.2), trackMat);
-      t.position.set(160, 0.16, 106 + i * 4.5);
-      this.scene.add(t);
+  /* Циферблат вокзальных часов: белый диск, риски, стрелки на 10:10 */
+  _clockTexture() {
+    const key = 'station_clock';
+    if (_texCache.has(key)) return _texCache.get(key);
+    const c = makeCanvas(256, 256);
+    const g = c.getContext('2d');
+    g.fillStyle = '#f4f1e6';
+    g.beginPath(); g.arc(128, 128, 120, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#2a2a26'; g.lineWidth = 8; g.stroke();
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const big = i % 3 === 0;
+      g.lineWidth = big ? 12 : 5;
+      const r0 = big ? 82 : 94;
+      g.beginPath();
+      g.moveTo(128 + Math.sin(a) * r0, 128 - Math.cos(a) * r0);
+      g.lineTo(128 + Math.sin(a) * 108, 128 - Math.cos(a) * 108);
+      g.stroke();
     }
-    // поезд
-    const train = mergeColored([
-      { g: new THREE.BoxGeometry(38, 3.4, 2.9), c: 0x2e8a4e },
-      { g: new THREE.BoxGeometry(5, 3.6, 2.9), c: 0x1f6a3a },
-      { g: new THREE.BoxGeometry(5, 3.6, 2.9), c: 0x1f6a3a },
-      { g: new THREE.BoxGeometry(1, 1.2, 0.4), c: 0xeeeeee },
-    ]);
-    const tm = new THREE.Mesh(train, new THREE.MeshLambertMaterial({ vertexColors: true }));
-    tm.position.set(140, 0.4 + 1.7, 106);
-    this.scene.add(tm);
-    this.addPropAABB({ x0: 137, z0: 102.5, x1: 159, z1: 109.5 });
+    g.lineCap = 'round'; g.strokeStyle = '#1a1a18';
+    const hand = (ang, len, w) => {
+      g.lineWidth = w;
+      g.beginPath(); g.moveTo(128, 128);
+      g.lineTo(128 + Math.sin(ang) * len, 128 - Math.cos(ang) * len); g.stroke();
+    };
+    hand((10 + 10 / 60) / 12 * Math.PI * 2, 60, 14);  // часовая
+    hand((10 / 60) * Math.PI * 2, 92, 8);             // минутная
+    g.fillStyle = '#b03028';
+    g.beginPath(); g.arc(128, 128, 8, 0, Math.PI * 2); g.fill();
+    const t = canvasToTexture(c, key);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  /* Текстура вывески: тёмная доска с рамкой и текстом (по образцу таблички АЗС) */
+  _signTexture(text, key, bg = '#1b2a3a', fg = '#f2ead6') {
+    if (_texCache.has(key)) return _texCache.get(key);
+    const c = makeCanvas(512, 96);
+    const g = c.getContext('2d');
+    g.fillStyle = bg; g.fillRect(0, 0, 512, 96);
+    g.strokeStyle = fg; g.lineWidth = 4; g.strokeRect(6, 6, 500, 84);
+    g.fillStyle = fg; g.font = 'bold 54px Arial'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(text, 256, 51);
+    const t = canvasToTexture(c, key);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  }
+
+  /**
+   * Один экипаж стоящего у перрона состава. Вся статика пишется в общие
+   * merged-буферы вызывающего кода, поэтому экипаж не добавляет draw call'ов.
+   * Колёса статичны (поезд декоративный и не едет) — сливаются вместе с кузовом,
+   * как колёса машин в traffic.js. Ось состава — X, поэтому цилиндры колёс
+   * разворачиваются rotateX(PI/2) (ось Z), а не rotateZ, как у машин.
+   * @param {{body: Array, glow: Array, head: Array, red: Array}} bufs буферы геометрии
+   * @param {number} cx центр экипажа по X (мировые координаты)
+   * @param {number} tz ось пути по Z
+   * @param {number} y0 уровень головки рельса
+   * @param {number} len длина экипажа
+   * @param {'loco'|'car'|'tail'} kind локомотив / вагон / последний вагон (с красными огнями)
+   */
+  _stationVehicle(bufs, cx, tz, y0, len, kind) {
+    const P = TRAIN_PAL;
+    const half = len / 2;
+    const bx = (w, h, d, c, x, y, z) =>
+      bufs.body.push({ g: new THREE.BoxGeometry(w, h, d).translate(cx + x, y0 + y, tz + z), c });
+    const gl = (w, h, d, x, y, z) =>
+      bufs.glow.push({ g: new THREE.BoxGeometry(w, h, d).translate(cx + x, y0 + y, tz + z), c: P.glass });
+    const cylZ = (r, h, seg, c, x, y, z) =>
+      bufs.body.push({ g: new THREE.CylinderGeometry(r, r, h, seg).rotateX(Math.PI / 2).translate(cx + x, y0 + y, tz + z), c });
+    const cylY = (r, h, seg, c, x, y, z) =>
+      bufs.body.push({ g: new THREE.CylinderGeometry(r, r, h, seg).translate(cx + x, y0 + y, tz + z), c });
+
+    /* --- Ходовая часть: две двухосные тележки --- */
+    for (const s of [-1, 1]) {
+      const bogie = s * (half - 2.5);
+      bx(4.9, 0.6, 2.15, P.under, bogie, 0.9, 0);
+      for (const a of [-1.2, 1.2]) {
+        for (const wz of [-0.6, 0.6]) {
+          cylZ(0.5, 0.22, 12, P.wheel, bogie + a, 0.5, wz);
+          cylZ(0.24, 0.24, 8, P.hub, bogie + a, 0.5, wz);
+        }
+      }
+    }
+
+    /* --- Рама и автосцепки СА-3 --- */
+    bx(len - 0.4, 0.45, 2.6, P.under, 0, 1.32, 0);
+    for (const s of [-1, 1]) {
+      bx(0.3, 0.55, 2.5, P.dark, s * (half - 0.12), 1.3, 0);   // буферный брус
+      bx(0.5, 0.42, 0.5, P.dark, s * (half + 0.2), 1.15, 0);   // автосцепка
+    }
+
+    if (kind === 'loco') {
+      /* --- Тепловоз: капот, ливрея, кабины по обоим концам --- */
+      bx(len - 0.5, 2.7, 2.9, P.loco, 0, 2.85, 0);             // кузов 1.5..4.2
+      bx(len - 0.4, 0.32, 2.96, P.band, 0, 1.74, 0);           // нижняя полоса
+      bx(len - 0.4, 0.18, 2.96, P.band, 0, 3.98, 0);           // подкрышевая полоса
+      bx(len - 1.1, 0.42, 2.72, P.roof, 0, 4.41, 0);           // крыша 4.2..4.62
+      for (let k = 0; k < 5; k++) for (const sz of [-1, 1]) {  // жалюзи машинного отделения
+        bx(1.0, 1.25, 0.1, P.dark, -3.2 + k * 1.6, 2.8, sz * 1.47);
+      }
+      for (const s of [-1, 1]) {
+        bx(0.14, 1.5, 2.62, P.dark, s * (half - 0.32), 3.42, 0);        // маска лобовой части
+        gl(0.16, 0.95, 2.05, s * (half - 0.24), 3.45, 0);               // лобовое стекло
+        for (const sz of [-1, 1]) {
+          gl(1.2, 0.85, 0.1, s * (half - 1.6), 3.45, sz * 1.47);        // боковое окно кабины
+          bx(0.9, 2.0, 0.1, P.dark, s * (half - 2.6), 2.5, sz * 1.47);  // дверь кабины
+        }
+        bx(1.0, 0.14, 0.55, P.under, s * (half - 0.6), 1.05, 0);        // подножка
+      }
+      for (const fx of [1.6, 3.4]) cylY(0.55, 0.18, 10, P.roof, fx, 4.71, 0);  // вентиляторы холодильника
+      cylY(0.26, 0.55, 8, P.dark, -1.4, 4.9, 0.6);                              // выхлопная труба
+      bx(0.6, 0.16, 0.16, P.dark, -3.6, 4.7, -0.5);                             // тифон
+      /* Фары — отдельным emissive-мешем: свечение теряется при слиянии в vertexColors */
+      for (const sz of [-0.95, 0.95]) {
+        bufs.head.push(new THREE.BoxGeometry(0.2, 0.3, 0.34).translate(cx - (half - 0.18), y0 + 2.1, tz + sz));
+      }
+      bufs.head.push(new THREE.BoxGeometry(0.2, 0.26, 0.4).translate(cx - (half - 0.18), y0 + 4.1, tz));
+    } else {
+      /* --- Пассажирский вагон --- */
+      bx(len - 0.4, 2.45, 2.9, P.car, 0, 2.72, 0);             // кузов 1.5..3.95
+      bx(len - 0.3, 0.26, 2.96, P.band, 0, 1.7, 0);            // светлая юбка
+      bx(len - 1.0, 0.3, 2.8, P.roof, 0, 4.08, 0);             // крыша
+      bx(len - 1.6, 0.22, 2.2, P.roof, 0, 4.32, 0);            // конёк
+      for (let k = 0; k < 6; k++) for (const sz of [-1, 1]) {  // окна салона
+        gl(1.0, 0.95, 0.1, -4.25 + k * 1.7, 3.15, sz * 1.47);
+      }
+      for (const s of [-1, 1]) for (const sz of [-1, 1]) {     // тамбурные двери
+        bx(0.95, 2.05, 0.1, P.dark, s * (half - 1.4), 2.52, sz * 1.47);
+        gl(0.6, 0.5, 0.12, s * (half - 1.4), 3.15, sz * 1.47);
+        bx(1.1, 0.12, 0.5, P.under, s * (half - 1.4), 1.05, sz * 1.3);  // подножка
+      }
+      for (const s of [-1, 1]) bx(0.4, 2.2, 1.7, P.dark, s * (half - 0.05), 2.6, 0);  // межвагонный переход
+      for (const sz of [-1, 1]) bx(2.6, 0.4, 0.08, P.band, 0, 1.98, sz * 1.47);       // маршрутная табличка
+      for (const rx of [-4, -1.3, 1.4, 4.1]) bx(0.45, 0.14, 0.6, P.under, rx, 4.5, 0); // дефлекторы
+      if (kind === 'tail') {
+        for (const sz of [-1.1, 1.1]) {
+          bufs.red.push(new THREE.BoxGeometry(0.18, 0.26, 0.3).translate(cx + (half - 0.12), y0 + 2.1, tz + sz));
+        }
+      }
+    }
+  }
+
+  /* Вокзал: здание с башней и часами, крытый перрон, три пути и стоящий состав */
+  _station() {
+    const CX = 160, CZ = 82;              // центр здания
+    const PLAT_TOP = 1.0;                 // верх платформы
+    const RAIL_Y = 0.45;                  // головка рельса
+    const TRACK_Z = [106, 110.5, 115];    // оси трёх путей (как было)
+    const PLAT_Z = 101;                   // ось платформы (глубина 7 м: 97.5..104.5)
+
+    /* Палитра (все константы локальны — _station() вызывается ровно один раз) */
+    const C_WALL = 0xc8b898, C_TRIM = 0xe8dcc4, C_BASE = 0x9a8c70;
+    const C_ROOF = 0x6a4a2a, C_DOOR = 0x4a3423, C_GLASS = 0x2a3442;
+    const C_MET = 0x6a6a66, C_PAVE = 0xb0b0a8, C_EDGE = 0xe8c840;
+    const C_BALLAST = 0x3a3733, C_SLEEP = 0x4a3a2c, C_RAIL = 0xa8a8b0;
+
+    /* Материалы: ОДИН vertexColors на все merged-меши вокзала, ОДИН «светящийся»
+       на все окна (регистрируется в windowMats — ночная подсветка из update()) */
+    const matVC = new THREE.MeshLambertMaterial({ vertexColors: true });
+    const matGlow = new THREE.MeshLambertMaterial({ vertexColors: true, emissive: 0xffd070, emissiveIntensity: 0.04 });
+    this.windowMats.add(matGlow);
+    const matHead = new THREE.MeshLambertMaterial({ color: 0xfff4cc, emissive: 0xfff0aa, emissiveIntensity: 0.9 });
+    const matRed = new THREE.MeshLambertMaterial({ color: 0x8e1f1f, emissive: 0xff2a2a, emissiveIntensity: 0.8 });
+
+    /* Буферы геометрии: st — камень здания, yd — перрон и пути, gw — окна,
+       hd/rd — emissive-огни (сливаются отдельно, свечение теряется в vertexColors) */
+    const st = [], yd = [], gw = [], hd = [], rd = [];
+    const bx = (arr, w, h, d, c, x, y, z) => arr.push({ g: new THREE.BoxGeometry(w, h, d).translate(x, y, z), c });
+
+    /* ================= 1. Здание ================= */
+    const mat = new THREE.MeshLambertMaterial({ color: C_WALL });
+    const b = new THREE.Mesh(new THREE.BoxGeometry(56, 14, 18), mat);
+    b.position.set(CX, 0.15 + 7, CZ);
+    this.scene.add(b);                         // castShadow не нужен: x=160 вне SHADOW_HALF=90
+    const tower = new THREE.Mesh(new THREE.BoxGeometry(9, 26, 9), new THREE.MeshLambertMaterial({ color: 0xd8c8a8 }));
+    tower.position.set(CX, 0.15 + 13, CZ);
+    this.scene.add(tower);
+    const troof = new THREE.Mesh(new THREE.ConeGeometry(7.5, 6, 4), new THREE.MeshLambertMaterial({ color: C_ROOF }));
+    troof.rotation.y = Math.PI / 4;
+    troof.position.set(CX, 0.15 + 26 + 3, CZ);
+    this.scene.add(troof);
+
+    /* Цоколь, междуэтажный пояс, карниз, аттик */
+    bx(st, 56.6, 1.6, 18.6, C_BASE, CX, 0.75, CZ);      // -0.05..1.55
+    bx(st, 56.6, 0.45, 18.6, C_TRIM, CX, 7.6, CZ);      // пояс 7.375..7.825
+    bx(st, 58.0, 0.8, 20.0, C_TRIM, CX, 13.75, CZ);     // карниз 13.35..14.15
+    bx(st, 56.8, 1.2, 18.8, C_WALL, CX, 14.75, CZ);     // аттик 14.15..15.35
+    bx(st, 57.4, 0.35, 19.4, C_TRIM, CX, 15.52, CZ);    // отлив аттика
+
+    /* Окно: наличник + подоконник в буфер камня, стекло — в «светящийся» буфер.
+       Наличник 0.34 выступает на 0.17, стекло 0.4 — на 0.2, поэтому стекло
+       читается как панель внутри рамки (тот же приём «слоёных плит», что в traffic.js). */
+    const addWin = (x, y, z, w, h, alongX) => {
+      const fw = alongX ? w + 0.55 : 0.34, fd = alongX ? 0.34 : w + 0.55;
+      const gwd = alongX ? 0.4 : w, gww = alongX ? w : 0.4;
+      bx(st, fw, h + 0.55, fd, C_TRIM, x, y, z);
+      bx(gw, gww, h, gwd, C_GLASS, x, y, z);
+      bx(st, fw + 0.3, 0.18, fd + 0.3, C_TRIM, x, y - h / 2 - 0.42, z);  // подоконник
+    };
+    const winX = [-23.4, -18.1, -12.8, -7.5, 7.5, 12.8, 18.1, 23.4];
+    for (const dx of winX) for (const wz of [91, 73]) {
+      addWin(CX + dx, 5.0, wz, 2.4, 4.0, true);      // 1-й этаж: 3.0..7.0
+      addWin(CX + dx, 10.4, wz, 2.0, 2.4, true);     // 2-й этаж: 9.2..11.6
+    }
+    for (const wx of [132, 188]) for (const dz of [-4.6, 4.6]) {
+      addWin(wx, 5.0, CZ + dz, 2.4, 4.0, false);
+      addWin(wx, 10.4, CZ + dz, 2.0, 2.4, false);
+    }
+
+    /* Порталы входов с двух сторон: со двора (z=73) и с перрона (z=91) */
+    for (const s of [1, -1]) {
+      const wz = s > 0 ? 91 : 73;                    // s = наружная нормаль по Z
+      bx(st, 11, 7.3, 0.6, C_TRIM, CX, 3.65, wz);
+      for (const dx of [-1.05, 1.05]) bx(st, 1.9, 4.4, 0.5, C_DOOR, CX + dx, 2.35, wz + s * 0.25);
+      bx(gw, 6.4, 1.4, 0.5, C_GLASS, CX, 5.5, wz + s * 0.25);              // фрамуга
+      for (const dx of [-4.7, 4.7]) {
+        st.push({ g: new THREE.CylinderGeometry(0.45, 0.5, 6.9, 10).translate(CX + dx, 3.45, wz + s * 0.4), c: C_TRIM });
+      }
+      bx(st, 13, 0.22, 2.0, C_BASE, CX, 0.26, wz + s * 1.0);               // стилобат, 2 ступени
+      bx(st, 11.5, 0.22, 1.4, C_BASE, CX, 0.48, wz + s * 0.7);
+    }
+
+    /* Башня: угловые лопатки, пояса, проёмы звонницы, шпиль-навершие */
+    for (const sx of [-4.2, 4.2]) for (const sz of [-4.2, 4.2]) {
+      bx(st, 1.2, 26, 1.2, C_TRIM, CX + sx, 13.15, CZ + sz);
+    }
+    bx(st, 10.4, 0.5, 10.4, C_TRIM, CX, 15.6, CZ);
+    bx(st, 10.8, 0.65, 10.8, C_TRIM, CX, 25.8, CZ);
+    for (const s of [-1, 1]) {
+      bx(st, 2.4, 3.4, 0.3, 0x1e2228, CX, 23.4, CZ + s * 4.55);           // проёмы звонницы
+      bx(st, 0.3, 3.4, 2.4, 0x1e2228, CX + s * 4.55, 23.4, CZ);
+    }
+    st.push({ g: new THREE.CylinderGeometry(0.12, 0.12, 2.8, 6).translate(CX, 33.5, CZ), c: 0x7a6a4a });
+    st.push({ g: new THREE.SphereGeometry(0.5, 8, 6).translate(CX, 35.2, CZ), c: 0xd8b83a });
+
+    /* Основания четырёх циферблатов */
+    for (const [dx, dz] of [[0, 4.62], [0, -4.62], [4.62, 0], [-4.62, 0]]) {
+      const g = new THREE.CylinderGeometry(3.05, 3.05, 0.36, 16);
+      if (dz !== 0) g.rotateX(Math.PI / 2); else g.rotateZ(Math.PI / 2);
+      st.push({ g: g.translate(CX + dx, 19.0, CZ + dz), c: C_TRIM });
+    }
+
+    /* ================= 2. Перрон, навес, пути ================= */
+    bx(yd, 46, 1.05, 7, C_PAVE, CX, 0.475, PLAT_Z);                        // платформа -0.05..1.0
+    bx(yd, 45, 0.05, 6.6, 0xbdb9ad, CX, PLAT_TOP + 0.01, PLAT_Z);          // мощение
+    bx(yd, 46, 0.16, 0.9, 0xa8a49c, CX, PLAT_TOP - 0.04, 104.1);           // краевой камень
+    bx(yd, 46, 0.06, 0.45, C_EDGE, CX, PLAT_TOP + 0.04, 104.1);            // жёлтая линия безопасности
+    for (const sx of [143, 177]) {                                          // лестницы на платформу
+      bx(yd, 6, 0.35, 0.9, C_PAVE, sx, 0.125, 96.15);
+      bx(yd, 6, 0.70, 0.9, C_PAVE, sx, 0.30, 97.05);
+    }
+    /* Навес: 6 колонн + кровля с фризом. Колонны слиты в общий буфер —
+       для разовой статики merge дешевле InstancedMesh (0 доп. draw call вместо 1). */
+    for (let k = 0; k < 6; k++) {
+      const x = CX - 19 + k * 7.6;
+      yd.push({ g: new THREE.CylinderGeometry(0.2, 0.26, 4.3, 8).translate(x, PLAT_TOP + 2.15, PLAT_Z), c: C_MET });
+    }
+    bx(yd, 40, 0.35, 7.2, C_MET, CX, 5.475, PLAT_Z);
+    for (const sz of [-3.6, 3.6]) bx(yd, 40, 0.5, 0.2, C_TRIM, CX, 5.2, PLAT_Z + sz);
+    for (let k = 0; k < 5; k++) bx(gw, 0.6, 0.22, 0.6, 0xffeec0, CX - 18 + k * 9, 5.2, PLAT_Z);  // плафоны
+    /* Касса и багаж на перроне */
+    bx(yd, 3.2, 2.6, 2.4, 0xd0c4a4, 170, PLAT_TOP + 1.3, 100.6);
+    bx(yd, 0.1, 1.0, 1.4, C_GLASS, 168.35, PLAT_TOP + 1.7, 100.6);
+    bx(yd, 3.6, 0.2, 2.8, C_ROOF, 170, PLAT_TOP + 2.7, 100.6);
+    for (const [lx, lz, lh] of [[164, 99.4, 0.5], [164.9, 99.6, 0.35], [151, 102.8, 0.45]]) {
+      bx(yd, 0.9, lh, 0.6, 0x8a6a44, lx, PLAT_TOP + lh / 2, lz);
+    }
+    /* Три пути: балласт + шпалы + рельсовые нити (было 3 плоские плиты = 3 draw call) */
+    for (const tz of TRACK_Z) {
+      bx(yd, 90, 0.30, 3.0, C_BALLAST, CX, 0.10, tz);                      // -0.05..0.25
+      for (let x = 118; x <= 202; x += 2.2) {
+        if (Math.abs(x - 128) < 7.5 || Math.abs(x - 192) < 7.5) continue;  // проезжая часть — шпал нет
+        bx(yd, 0.32, 0.10, 2.5, C_SLEEP, x, 0.30, tz);                     // 0.25..0.35
+      }
+      for (const off of [-0.6, 0.6]) bx(yd, 90, 0.10, 0.12, C_RAIL, CX, 0.40, tz + off);  // 0.35..0.45
+    }
+    /* Выходной светофор у первого пути */
+    yd.push({ g: new THREE.CylinderGeometry(0.16, 0.2, 5.0, 6).translate(184.5, 2.5, 105.0), c: C_MET });
+    bx(yd, 0.55, 1.6, 0.45, 0x2a2c30, 184.5, 5.6, 105.0);
+    bx(yd, 0.34, 0.34, 0.12, 0x1a1c20, 184.5, 5.15, 104.78);               // погашенная линза
+    rd.push(new THREE.CylinderGeometry(0.2, 0.2, 0.12, 8).rotateX(Math.PI / 2).translate(184.5, 5.95, 104.78));
+
+    /* ================= 3. Состав: тепловоз + 2 вагона ================= */
+    const bufs = { body: [], glow: gw, head: hd, red: rd };
+    this._stationVehicle(bufs, 145, TRACK_Z[0], RAIL_Y, 14, 'loco');
+    this._stationVehicle(bufs, 160, TRACK_Z[0], RAIL_Y, 14, 'car');
+    this._stationVehicle(bufs, 175, TRACK_Z[0], RAIL_Y, 14, 'tail');
+
+    /* ================= 4. Меши ================= */
+    this.scene.add(new THREE.Mesh(mergeColored(st), matVC));
+    this.scene.add(new THREE.Mesh(mergeColored(yd), matVC));
+    this.scene.add(new THREE.Mesh(mergeColored(bufs.body), matVC));
+    this.scene.add(new THREE.Mesh(mergeColored(gw), matGlow));
+    this.scene.add(new THREE.Mesh(mergeGeoms(hd), matHead));
+    this.scene.add(new THREE.Mesh(mergeGeoms(rd), matRed));
+
+    /* Четыре циферблата — InstancedMesh (текстуру нельзя слить в vertexColors-буфер) */
+    const clockTex = this._clockTexture();
+    const clockMesh = new THREE.InstancedMesh(
+      new THREE.CircleGeometry(2.6, 20),
+      new THREE.MeshBasicMaterial({ map: clockTex }), 4);
+    const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler();
+    const one = new THREE.Vector3(1, 1, 1), pv = new THREE.Vector3();
+    [[CX, CZ + 4.85, 0], [CX, CZ - 4.85, Math.PI],
+     [CX + 4.85, CZ, Math.PI / 2], [CX - 4.85, CZ, -Math.PI / 2]].forEach((f, i) => {
+      e.set(0, f[2], 0); q.setFromEuler(e);
+      pv.set(f[0], 19.0, f[1]);
+      m4.compose(pv, q, one);
+      clockMesh.setMatrixAt(i, m4);
+    });
+    this.scene.add(clockMesh);
+
+    /* Вывески: «ПЯТИГОРСК» на перрон, «ВОКЗАЛ» на город */
+    const signMat = (text, key) => {
+      const tex = this._signTexture(text, key);
+      return new THREE.MeshLambertMaterial({ map: tex, emissive: 0xffffff, emissiveMap: tex, emissiveIntensity: 0.25 });
+    };
+    const signPlat = new THREE.Mesh(new THREE.PlaneGeometry(11, 1.5), signMat('ПЯТИГОРСК', 'sign_pyatigorsk'));
+    signPlat.position.set(CX, 8.7, 91.12);
+    this.scene.add(signPlat);
+    const signStreet = new THREE.Mesh(new THREE.PlaneGeometry(11, 1.5), signMat('ВОКЗАЛ', 'sign_vokzal'));
+    signStreet.position.set(CX, 8.7, 72.88);
+    signStreet.rotation.y = Math.PI;
+    this.scene.add(signStreet);
+
+    /* Полосатый козырёк над городским входом (тот же хелпер, что у рынка) */
+    const awn = new THREE.Mesh(new THREE.BoxGeometry(10, 0.3, 2.8),
+      new THREE.MeshLambertMaterial({ map: this._stripedTexture('#2c6e49', '#f0efe4') }));
+    awn.position.set(CX, 5.6, 71.5);
+    this.scene.add(awn);
+
+    /* Скамьи на перроне — переиспользуем _bench() (4-й аргумент: высота платформы) */
+    this._bench(148, 99.6, 0, PLAT_TOP);
+    this._bench(160, 99.6, 0, PLAT_TOP);
+    this._bench(172, 99.6, 0, PLAT_TOP);
+
+    /* ================= 5. Коллизии и миникарта ================= */
+    this.buildings.push({ x0: 132, z0: 73, x1: 188, z1: 91, h: 15.4, mesh: b });
+    this.buildings.push({ x0: 155.5, z0: 77.5, x1: 164.5, z1: 86.5, h: 26, mesh: tower });
+    // Перрон под навесом — единый AABB (дешевле, чем 6 AABB под колонны:
+    // player.js перебирает propsAABB линейно каждый кадр).
+    // Северная граница 97.4 — точка высадки заказа (160, 96) остаётся доступной.
+    this.addPropAABB({ x0: 137, z0: 97.4, x1: 183, z1: 104.6 });
+    // Состав: тепловоз 138..152, вагоны 153..167 и 168..182 (+ автосцепки и фары)
+    this.addPropAABB({ x0: 137.5, z0: 104.4, x1: 182.5, z1: 107.6 });
   }
 
   /* Нарзанные ванны — купол */
@@ -1251,13 +1894,15 @@ export class World {
       const dist = this.blockDistrict(bi, bj);
       const sp = this.blockSpecial(bi, bj);
       const r = this.blockRect(bi, bj);
+      if (sp === 'rynok') continue; // рынок теперь мощён и обнесён оградой — деревьям там не место
       let n = { center: 1, kurort: 3, prigorod: 2, sanatorii: 4, mashuk: 3, proval: 8, rynok: 2, vokzal: 3 }[dist] || 2;
       if (sp === 'park') n = 12;
       for (let k = 0; k < n; k++) {
         const x = rng() * 44 + r.x0, z = rng() * 44 + r.z0;
         if (sp === 'park') {
           const dc = dist2D(x, z, -32, 32);
-          if (dc < 15) continue; // не в фонтане
+          if (dc < 18) continue;                                            // площадь, клумбы, скамьи
+          if (Math.abs(x + 32) < 3.4 || Math.abs(z - 32) < 3.4) continue;   // радиальные дорожки
         }
         tryAddTree(x, z, rng() < 0.75 ? 0 : 1);
       }
@@ -1267,10 +1912,11 @@ export class World {
       const x = (rng() - 0.5) * 320, z = -300 - rng() * 200;
       tryAddTree(x, z, rng() < 0.35 ? 0 : 1);
     }
-    // окраины
-    for (let k = 0; k < 60; k++) {
-      const a = rng() * Math.PI * 2, dd = 320 + rng() * 300;
-      tryAddTree(Math.cos(a) * dd, Math.sin(a) * dd, rng() < 0.7 ? 0 : 1);
+    // Окраины и зеленое кольцо за пределами застройки города (создает естественный лес вокруг)
+    for (let k = 0; k < 280; k++) {
+      const a = rng() * Math.PI * 2, dd = 265 + rng() * 140;
+      const tx = Math.cos(a) * dd, tz = Math.sin(a) * dd;
+      tryAddTree(tx, tz, rng() < 0.65 ? 0 : 1);
     }
 
     const dMesh = new THREE.InstancedMesh(deciduous, dMat, spots.filter((s) => s.type === 0).length);
@@ -1463,8 +2109,6 @@ export class World {
     const housGeo = new THREE.BoxGeometry(0.56, 0.14, 0.7);
     housGeo.translate(0, 5.0, 0);
     const lampGeo = new THREE.SphereGeometry(0.2, 8, 6);
-    const bright = [0xff4040, 0xffb030, 0x40e040];
-    const dark = [0x3a1010, 0x3a2a10, 0x103a10];
     for (let i = 1; i < 8; i += 2) for (let j = 1; j < 8; j += 2) {
       const x = -256 + i * CFG.CELL, z = -256 + j * CFG.CELL;
       // 4 светофора по углам перекрёстка (на тротуаре, не на проезжей части):
@@ -1484,7 +2128,7 @@ export class World {
         g.add(housing);
         const lamps = [];
         for (let k = 0; k < 3; k++) {
-          const lamp = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({ color: dark[k] }));
+          const lamp = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({ color: TRAFFIC_LIGHT_DARK[k] }));
           lamp.position.set(0, 4.7 - k * 0.5, 0);
           lamp.userData.i = k;
           g.add(lamp);
@@ -1572,6 +2216,63 @@ export class World {
     this.scene.add(mesh);
   }
 
+  /* --- Скамьи на тротуарах курортных/центральных районов ---
+     Оффсет 9.2, а не 8.5 (как у фонарей/урн): пешеходы ходят по 8.0
+     (см. peds.js), край тротуара — 10.0, так скамья не режет полосу
+     пешеходов и не съезжает на газон. Вызывается после _signs() —
+     фонари/урны/знаки/светофоры уже в propsAABB и учтены isPositionValid. */
+  _streetBenches() {
+    const OFF = 9.2;
+    const OK = { kurort: 1, sanatorii: 1, vokzal: 1, center: 1 };
+    const parts = [];
+    const put = (x, z, rot) => {
+      const bi = clamp(Math.floor((x + 256) / CFG.CELL), 0, 7);
+      const bj = clamp(Math.floor((z + 256) / CFG.CELL), 0, 7);
+      if (!OK[this.blockDistrict(bi, bj)]) return;
+      if (this.rng() > 0.45) return;
+      if (!this.isPositionValid(x, z, 1.4)) return;
+      this._bench(x, z, rot, 0.12, parts);          // AABB регистрирует сам _bench()
+    };
+    let side = 1;
+    // шаг 64 от −184: точки не совпадают с pickupPoints (те кратны 48 от −208)
+    for (const r of this.roadsV) {
+      for (let z = -184; z <= 184; z += 64) {
+        side = -side;
+        put(r.c + OFF * side, z, -side * Math.PI / 2);   // лицом (локальный +z) к дороге
+      }
+    }
+    for (const r of this.roadsH) {
+      for (let x = -184; x <= 184; x += 64) {
+        side = -side;
+        put(x, r.c + OFF * side, side > 0 ? Math.PI : 0);
+      }
+    }
+    if (parts.length) this.scene.add(new THREE.Mesh(mergeColored(parts), this._vcMat()));
+  }
+
+  /* --- Вазоны с цветами на тротуарах --- */
+  _planters() {
+    const OFF = 9.2;
+    const DENS = { kurort: 0.45, sanatorii: 0.40, center: 0.35, vokzal: 0.25,
+                   rynok: 0.20, proval: 0.15, prigorod: 0.08, mashuk: 0 };
+    const parts = [];
+    const put = (x, z, rot) => {
+      const bi = clamp(Math.floor((x + 256) / CFG.CELL), 0, 7);
+      const bj = clamp(Math.floor((z + 256) / CFG.CELL), 0, 7);
+      if (this.rng() > (DENS[this.blockDistrict(bi, bj)] || 0)) return;
+      if (!this.isPositionValid(x, z, 0.7)) return;
+      this._planter(parts, x, z, rot, PK_FLOWERS[(this.rng() * PK_FLOWERS.length) | 0]);
+    };
+    let side = 1;
+    for (const r of this.roadsV) {
+      for (let z = -190; z <= 190; z += 40) { side = -side; put(r.c + OFF * side, z, this.rng() * 0.8); }
+    }
+    for (const r of this.roadsH) {
+      for (let x = -190; x <= 190; x += 40) { side = -side; put(x, r.c + OFF * side, this.rng() * 0.8); }
+    }
+    if (parts.length) this.scene.add(new THREE.Mesh(mergeColored(parts), this._vcMat()));
+  }
+
   /* --- Светофоры на перекрёстках (каждый второй: 1,3,5,7) --- */
   _trafficLights() {
     const poleMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
@@ -1604,7 +2305,6 @@ export class World {
     const lampsMesh = new THREE.InstancedMesh(lampGeo, new THREE.MeshBasicMaterial({ color: 0xffffff }), corners.length * 3);
 
     const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(1, 1, 1);
-    const dark = [0x3a1010, 0x3a2a10, 0x103a10];
 
     corners.forEach((sp, idx) => {
       const rotY = sp.axis === 'z' ? 0 : Math.PI / 2;
@@ -1617,7 +2317,7 @@ export class World {
         const lampIdx = idx * 3 + k;
         m4.makeTranslation(sp.x, 4.7 - k * 0.5, sp.z);
         lampsMesh.setMatrixAt(lampIdx, m4);
-        lampsMesh.setColorAt(lampIdx, new THREE.Color(dark[k]));
+        lampsMesh.setColorAt(lampIdx, new THREE.Color(TRAFFIC_LIGHT_DARK[k]));
       }
 
       this.lights.push({
@@ -1698,8 +2398,6 @@ export class World {
     }
 
     let lampsUpdated = false;
-    const bright = [0xff4040, 0xffb030, 0x40e040];
-    const dark = [0x3a1010, 0x3a2a10, 0x103a10];
     const tempColor = new THREE.Color();
 
     for (const l of this.lights) {
@@ -1715,7 +2413,7 @@ export class World {
         for (let k = 0; k < 3; k++) {
           const lampIdx = l.idx * 3 + k;
           const isOn = (k === 0 && l.state === 2) || (k === 1 && l.state === 1) || (k === 2 && l.state === 0);
-          const colHex = isOn ? bright[k] : dark[k];
+          const colHex = isOn ? TRAFFIC_LIGHT_BRIGHT[k] : TRAFFIC_LIGHT_DARK[k];
           this.trafficLampMesh.setColorAt(lampIdx, tempColor.setHex(colHex));
         }
       }

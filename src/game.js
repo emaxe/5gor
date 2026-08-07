@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CFG, WEATHER_DEFS } from './config.js';
+import { CFG, CFG_GFX_PRESETS, WEATHER_DEFS } from './config.js';
 import { clamp, lerp, pickWeighted, showError } from './utils.js';
 import { Events } from './eventbus.js';
 import { World } from './citygen.js';
@@ -12,6 +12,18 @@ import { UpgradeSystem } from './upgrades.js';
 import { UIManager } from './ui.js';
 import { AudioManager } from './audio.js';
 import { InputManager } from './input.js';
+
+// Таблица цвета неба по часу суток + переиспользуемые Color-объекты для
+// _updateTime (каждый кадр) — вместо new THREE.Color(...) на каждый вызов (OPT-18)
+const SKY_TABLE = [
+  { h: 4, c: [13, 18, 30] }, { h: 6, c: [96, 118, 148] }, { h: 9, c: [135, 176, 216] },
+  { h: 13, c: [156, 200, 232] }, { h: 17, c: [150, 160, 180] }, { h: 19, c: [206, 132, 84] },
+  { h: 21, c: [62, 50, 78] }, { h: 24, c: [13, 18, 30] },
+];
+const SKY_TINT_RAIN = new THREE.Color(0x3a4856);
+const SKY_TINT_FOG = new THREE.Color(0x8a95a2);
+const _tmpSky = new THREE.Color();
+const _tmpFogColor = new THREE.Color();
 
 const RAIN_VERT = `
 uniform float uTime;
@@ -92,6 +104,7 @@ export class Game {
     this._initScene();
     this._initWorld();
     this._initManagers();
+    this.audio._gamePlayer = this.player;
     this._initEvents();
 
     if (save) {
@@ -102,11 +115,12 @@ export class Game {
       this.weather = save.weather || this.weather;
       this.player.applyUpgrades(this.upgrades.stats());
       this.player.setTuning(this.upgrades.tuningForCar());
-      this.ui.syncSettings(this.soundOn, this.musicOn, CFG.quality);
+      this.ui.syncSettings(this.soundOn, this.musicOn);
       this.ui.$('btn-continue').classList.remove('hidden');
       this.ui.toast('Есть сохранение — можно продолжить', '#7ee787');
     } else {
       this.stats = { orders: 0, earned: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+      this.ui.syncSettings(this.soundOn, this.musicOn);
     }
 
     // звук — только после жеста пользователя
@@ -126,9 +140,9 @@ export class Game {
     const gl = probe.getContext('webgl2') || probe.getContext('webgl');
     if (!gl) throw new Error('WebGL не поддерживается вашим браузером');
     this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, CFG.quality === 'high' ? 1.75 : 1.25));
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, CFG.gfx.pixelRatio));
     this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.shadowMap.enabled = CFG.quality === 'high';
+    this.renderer.shadowMap.enabled = CFG.gfx.shadows !== 'off';
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.outputEncoding = THREE.sRGBEncoding;
@@ -144,18 +158,18 @@ export class Game {
   _initScene() {
     this.scene = new THREE.Scene();
     this.scene.fog = new THREE.Fog(0x9cc8e8, 350, 1400);
-    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, 1800);
+    this.camera = new THREE.PerspectiveCamera(62, window.innerWidth / window.innerHeight, 0.5, CFG.gfx.drawDistance);
     this.camera.position.set(0, 40, 90);
 
     this.hemi = new THREE.HemisphereLight(0xbfd8ff, 0x6f8f5f, 0.9);
     this.scene.add(this.hemi);
     this.sun = new THREE.DirectionalLight(0xfff0d8, 1.2);
     this.sun.position.set(60, 90, 40);
-    this.sun.castShadow = CFG.quality === 'high';
-    const initShadowRes = CFG.quality === 'high' ? 1024 : 512;
+    this.sun.castShadow = CFG.gfx.shadows !== 'off';
+    const initShadowRes = CFG.gfx.shadows === 'high' ? 1024 : 512;
     this.sun.shadow.mapSize.set(initShadowRes, initShadowRes);
-    this.sun.shadow.camera.left = -90; this.sun.shadow.camera.right = 90;
-    this.sun.shadow.camera.top = 90; this.sun.shadow.camera.bottom = -90;
+    this.sun.shadow.camera.left = -CFG.SHADOW_HALF; this.sun.shadow.camera.right = CFG.SHADOW_HALF;
+    this.sun.shadow.camera.top = CFG.SHADOW_HALF; this.sun.shadow.camera.bottom = -CFG.SHADOW_HALF;
     this.sun.shadow.camera.far = 400;
     this.scene.add(this.sun);
     this.scene.add(this.sun.target);
@@ -226,6 +240,7 @@ export class Game {
     this.peds.lightsRef = this.world.lights;
     this.peds.world = this.world;
     this.world.peds = this.peds;
+    this.world.gameRef = this;
 
     this.orders = new PassengerManager(this.world);
 
@@ -269,7 +284,8 @@ export class Game {
       this.addMoney(-300);
       this.audio.crash(0.5);
       this.shakeT = 0.3; this.shakeAmp = 0.4;
-      if (this.orders.active) this.orders.fail(this.orders.active, 'ped');
+      // Посылка не прерывается при сбитии пешехода — пассажира в машине нет
+      if (this.orders.active && this.orders.active.type !== 'package') this.orders.fail(this.orders.active, 'ped');
       this.ui.toast('Вы сбили пешехода! -300 ₽, рейтинг -15', '#ff6b6b');
       // сам пешеход (отлёт/лежание) обрабатывается в peds._knockDown
     });
@@ -301,7 +317,8 @@ export class Game {
       if (d.text && this.player) {
         const dist = Math.hypot(d.x - this.player.x, d.z - this.player.z);
         if (dist < 38) {
-          const speaker = d.type === 'driver' ? 'Водитель рядом' : 'Пешеход рядом';
+          const defaultSpeaker = d.type === 'driver' ? 'Водитель рядом' : 'Пешеход рядом';
+          const speaker = d.speaker || defaultSpeaker;
           this.ui.showDialogue(speaker, d.text, d.avatar || '🗣️', d.color || '#ffab70');
         }
       }
@@ -395,6 +412,7 @@ export class Game {
     ]);
     if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
     Events.emit('weather:changed', { weather: this.weather });
+    this._applyDensity();
     this.orders.reset();
     this.player.applyUpgrades(this.upgrades.stats());
     this.player.setTuning(this.upgrades.tuningForCar());
@@ -452,21 +470,67 @@ export class Game {
   setSound(on) { this.soundOn = on; this.audio.setMaster(on); }
   setMusic(on) { this.musicOn = on; this.audio.setMusic(on); }
 
-  setQuality(q) {
-    CFG.quality = q;
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, q === 'high' ? 1.75 : 1.25));
+  /* Применить именованный пресет графики (low|medium|high) целиком */
+  applyGfxPreset(name) {
+    const preset = CFG_GFX_PRESETS[name];
+    if (!preset) return;
+    this.applyGfx({ ...preset, preset: name });
+  }
+
+  /* Точечно применить часть настроек графики (остальные поля CFG.gfx не трогаются).
+     Тени полностью выключаются/включаются (не просто прячутся): shadowMap.enabled,
+     castShadow, dispose текущей shadow map — а не косметическое сокрытие результата. */
+  applyGfx(partial) {
+    CFG.gfx = { ...CFG.gfx, ...partial };
+    const g = CFG.gfx;
+    const shadowsOn = g.shadows !== 'off';
+
+    this.renderer.shadowMap.enabled = shadowsOn;
+    this.sun.castShadow = shadowsOn;
+    const shadowRes = g.shadows === 'high' ? 1024 : 512;
+    this.sun.shadow.mapSize.set(shadowRes, shadowRes);
+    this.sun.shadow.map?.dispose();
+    this.sun.shadow.map = null;
+    if (shadowsOn) this.renderer.shadowMap.needsUpdate = true;
+    this._setActorShadow(shadowsOn && g.shadowActors);
+
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, g.pixelRatio));
     if (this.rainUniforms) {
       this.rainUniforms.uSize.value = 0.3 * this.renderer.getPixelRatio();
       this.rainUniforms.uScale.value = window.innerHeight * 0.5;
     }
-    this.renderer.shadowMap.enabled = q === 'high';
-    this.sun.castShadow = q === 'high';
-    const shadowRes = q === 'high' ? 1024 : 512;
-    this.sun.shadow.mapSize.set(shadowRes, shadowRes);
-    this.sun.shadow.map?.dispose();
-    this.sun.shadow.map = null;
-    if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
-    this.ui.toast('Качество: ' + (q === 'high' ? 'высокое' : 'низкое'), '#7ee787');
+
+    this.camera.far = g.drawDistance;
+    this.camera.updateProjectionMatrix();
+
+    // Старый алиас CFG.quality — держится ради обратной совместимости сохранений
+    CFG.quality = (g.shadows === 'high' && g.pixelRatio >= 1.75) ? 'high' : 'low';
+
+    const presetNames = { low: 'низкое', medium: 'среднее', high: 'высокое', custom: 'своё' };
+    this.ui.toast('Графика: ' + (presetNames[g.preset] || 'своё'), '#7ee787');
+  }
+
+  /* castShadow на мешах пешеходов/машин — включается только под «Своё» + «Тени: высокие»,
+     не бесплатно (лишние ~600 draw calls в shadow-проходе), поэтому не в дефолтных пресетах */
+  _setActorShadow(on) {
+    for (const car of this.traffic.cars) car.mesh.traverse((o) => { if (o.isMesh) o.castShadow = on; });
+    for (const p of this.peds.cars) p.mesh.traverse((o) => { if (o.isMesh) o.castShadow = on; });
+  }
+
+  /* Плотность трафика/пешеходов — применяется с новой смены (см. _startShift), не мгновенно:
+     дорастить пул через spawn(), затем скрыть избыток через mesh.visible вместо
+     удаления/пересоздания сущностей (безопаснее относительно логики trafic/peds AI) */
+  _applyDensity() {
+    const g = CFG.gfx;
+    const tCount = Math.max(1, Math.round(CFG.trafficCount * g.trafficDensity));
+    const pCount = Math.max(1, Math.round(CFG.pedCount * g.pedDensity));
+    this.traffic.spawn(Math.max(CFG.trafficCount, tCount), this.player);
+    this.peds.spawn(Math.max(CFG.pedCount, pCount), this.player);
+    this.traffic.cars.forEach((c, i) => { c.mesh.visible = i < tCount; });
+    this.peds.cars.forEach((p, i) => {
+      p.mesh.visible = i < pCount;
+      if (p.speechSprite) p.speechSprite.visible = p.speechSprite.visible && i < pCount;
+    });
   }
 
   /* ---------- Действия игрока ---------- */
@@ -479,6 +543,11 @@ export class Game {
   toggleLights() {
     if (this.stateName !== 'driving') return;
     this.player.toggleLights();
+  }
+
+  toggleRadio() {
+    const st = this.audio.nextStation();
+    this.audio.click();
   }
 
   evacuate() {
@@ -587,16 +656,11 @@ export class Game {
 
   /* ---------- Время и погода ---------- */
   _skyColor(hour) {
-    const SKY = [
-      { h: 4, c: [13, 18, 30] }, { h: 6, c: [96, 118, 148] }, { h: 9, c: [135, 176, 216] },
-      { h: 13, c: [156, 200, 232] }, { h: 17, c: [150, 160, 180] }, { h: 19, c: [206, 132, 84] },
-      { h: 21, c: [62, 50, 78] }, { h: 24, c: [13, 18, 30] },
-    ];
     let i = 0;
-    while (i < SKY.length - 2 && SKY[i + 1].h <= hour) i++;
-    const a = SKY[i], b = SKY[Math.min(i + 1, SKY.length - 1)];
+    while (i < SKY_TABLE.length - 2 && SKY_TABLE[i + 1].h <= hour) i++;
+    const a = SKY_TABLE[i], b = SKY_TABLE[Math.min(i + 1, SKY_TABLE.length - 1)];
     const t = clamp((hour - a.h) / Math.max(0.001, b.h - a.h), 0, 1);
-    return new THREE.Color(
+    return _tmpSky.setRGB(
       lerp(a.c[0], b.c[0], t) / 255,
       lerp(a.c[1], b.c[1], t) / 255,
       lerp(a.c[2], b.c[2], t) / 255
@@ -620,12 +684,12 @@ export class Game {
 
     // Цвет неба с учетом пасмурности и тумана
     const sky = this._skyColor(this.hour);
-    if (this._rainFactor > 0.001) sky.lerp(new THREE.Color(0x3a4856), this._rainFactor * 0.72);
-    if (this._fogFactor > 0.001) sky.lerp(new THREE.Color(0x8a95a2), this._fogFactor * 0.78);
+    if (this._rainFactor > 0.001) sky.lerp(SKY_TINT_RAIN, this._rainFactor * 0.72);
+    if (this._fogFactor > 0.001) sky.lerp(SKY_TINT_FOG, this._fogFactor * 0.78);
     this.scene.background = sky;
 
     // Цвет и дистанция тумана
-    const fogC = sky.clone().multiplyScalar(1 - nf * 0.35);
+    const fogC = _tmpFogColor.copy(sky).multiplyScalar(1 - nf * 0.35);
     this.scene.fog.color.copy(fogC);
     const w = WEATHER_DEFS[this.weather];
     const targetNear = w.fogNear * (this.weather === 'fog' ? 1 : 1 - nf * 0.25);
@@ -649,8 +713,9 @@ export class Game {
     this.stars.material.opacity = nf * (1 - this._rainFactor * 0.8 - this._fogFactor * 0.8);
     this.stars.visible = nf > 0.05 && this._rainFactor < 0.9 && this._fogFactor < 0.9;
 
-    // Система частиц дождя с ветром (анимация на GPU через uTime)
-    this.rain.visible = this._rainFactor > 0.02;
+    // Система частиц дождя с ветром (анимация на GPU через uTime) — CFG.gfx.rain=false
+    // полностью выключает частицы (и апдейт uniform-ов) даже при weather==='rain'
+    this.rain.visible = CFG.gfx.rain && this._rainFactor > 0.02;
     if (this.rain.visible) {
       this.rainUniforms.uTime.value += dt;
       this.rainUniforms.uOpacity.value = 0.65 * this._rainFactor;
@@ -780,6 +845,7 @@ export class Game {
     }
     if (this.input.take('horn')) this.pressHorn();
     if (this.input.take('lights')) this.toggleLights();
+    if (this.input.take('radio')) this.toggleRadio();
     if (this.input.take('map')) this.toggleMap();
     if (this.input.take('pause')) this.togglePause();
     if (this.input.take('garage')) this.openGarage(this.stateName === 'menu' ? 'menu' : 'pause');
@@ -794,7 +860,10 @@ export class Game {
     this.audio.setEngine(rpm, input.throttle, this.player.engineDead);
     this.audio.setSkid(this.player.slip);
     if (this.player.hornTimer > 0) {
-      if (!this._hornActive) { this.audio.horn(); this._hornActive = true; }
+      if (!this._hornActive) {
+        this.audio.horn({ type: 'player', dur: 0.65 });
+        this._hornActive = true;
+      }
     } else {
       this._hornActive = false;
     }
