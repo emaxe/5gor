@@ -3406,15 +3406,18 @@ class World {
 
     for (const isec of this.intersections) {
       const sx = isec.x, sz = isec.z;
-      // 4 зебры вокруг каждого перекрёстка, центрированные на нём — там же,
-      // где _startCross кладёт пешехода при переходе (см. Task 6, Step 2)
-      for (let k = -5; k <= 5; k++) {
+      // 4 зебры вокруг каждого перекрёстка
+      for (let k = -2; k <= 2; k++) {
         const off = k * 1.1;
-        const mNorth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz);
-        listV.push(mNorth);
+        // Верхний и нижний подходы к перекрёстку (полосы вдоль X)
+        const mNorth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz - 6.2);
+        const mSouth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz + 6.2);
+        listV.push(mNorth, mSouth);
 
-        const mWest = new THREE.Matrix4().makeTranslation(sx, 0.11, sz + off);
-        listH.push(mWest);
+        // Левый и правый подходы к перекрёстку (полосы вдоль Z)
+        const mWest = new THREE.Matrix4().makeTranslation(sx - 6.2, 0.11, sz + off);
+        const mEast = new THREE.Matrix4().makeTranslation(sx + 6.2, 0.11, sz + off);
+        listH.push(mWest, mEast);
       }
     }
 

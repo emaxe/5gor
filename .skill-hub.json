@@ -12,6 +12,27 @@
       "name": "bro",
       "version": "1.0.0",
       "scope": "project"
+    },
+    {
+      "type": "skill",
+      "name": "tonejs",
+      "version": "ed0b0c9302c0700136fdbafd2197121e9a99a4b6c139e4289fae731d1f7e84b8",
+      "scope": "project",
+      "source": "skillssh:plyght/tonejs-skill@tonejs"
+    },
+    {
+      "type": "skill",
+      "name": "web-audio-api",
+      "version": "81409113db5ab78e2489ffb2d28c7d930632be34da07c2fd1769783c152b01b0",
+      "scope": "project",
+      "source": "skillssh:martinholovsky/claude-skills-generator@web-audio-api"
+    },
+    {
+      "type": "skill",
+      "name": "threejs-audio-generator",
+      "version": "ac84d722970d23bc47cf241a1394865a018bc81b3b663d9a74e808e3dce25a89",
+      "scope": "project",
+      "source": "skillssh:majidmanzarpour/threejs-game-skills@threejs-audio-generator"
     }
   ],
   "gitignoreAgentDirs": true
