@@ -3,7 +3,7 @@ import { CFG, CFG_GFX_PRESETS, UPGRADES, CARS, TUNING } from './config.js';
 export class UpgradeSystem {
   constructor() {
     this.levels = { engine: 0, suspension: 0, brakes: 0, armor: 0, tank: 0, capacity: 0 };
-    this.tuning = { color: '#f2c12e', rims: 0, spoiler: false };
+    this.tuning = { color: '#f2c12e', rims: 0, spoiler: false, bodyKit: 0 };
     this.carId = 'taxi';
     this.ownedCars = ['taxi'];
   }
@@ -46,11 +46,13 @@ export class UpgradeSystem {
 
   tuningForCar() {
     const rims = TUNING.rims[this.tuning.rims];
+    const kit = TUNING.bodyKits[this.tuning.bodyKit];
     return {
       color: parseInt(this.tuning.color.replace('#', ''), 16),
       rims: parseInt(rims.c.replace('#', ''), 16),
       rimStyle: rims.style || 'disc',
       spoiler: this.tuning.spoiler,
+      bodyKit: (kit && kit.id) || 'stock',
     };
   }
 

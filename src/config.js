@@ -52,10 +52,17 @@
  */
 
 /**
+ * @typedef {Object} TuningBodyKit
+ * @property {string} name - Название боди-кита
+ * @property {string} id - 'stock'|'sport' — см. carmodel.js buildCarModel spec.bodyKit
+ */
+
+/**
  * @typedef {Object} Tuning
  * @property {TuningColor[]} colors - Доступные цвета кузова
  * @property {TuningRim[]} rims - Доступные варианты дисков
  * @property {boolean} spoiler - Установлен ли спойлер
+ * @property {TuningBodyKit[]} bodyKits - Доступные боди-киты
  */
 
 /**
@@ -232,6 +239,10 @@ export const TUNING = {
     { name: 'Хром',     c: '#e8ecf0', style: 'chrome' },
   ],
   spoiler: false,
+  bodyKits: [
+    { name: 'Стандарт', id: 'stock' },
+    { name: 'Спорт',    id: 'sport' },
+  ],
 };
 
 /* Достопримечательности (экскурсионные заказы) */

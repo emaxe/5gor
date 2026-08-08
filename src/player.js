@@ -49,7 +49,7 @@ export class PlayerCar {
     this.offroadTimer = 0;
     this.passengerCount = 0;
     /** @type {import('./config.js').Tuning} параметры тюнинга */
-    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false };
+    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false, bodyKit: 'stock' };
     this.groundY = 0.5;
     this._builtCarType = null;
     this._roll = 0; this._pitch = 0;
@@ -92,7 +92,7 @@ export class PlayerCar {
       matHead: this.matHead, matStop: this.matStop, matTurnA: this.matTurnA, matTurnB: this.matTurnB,
       matReverse: this.matReverse, matRim: this.matRim, matPlate: this.matPlate,
       matSign: this.matSign, matLivery: this.matLivery,
-      rimStyle: this.tuning.rimStyle || 'disc',
+      rimStyle: this.tuning.rimStyle || 'disc', bodyKit: this.tuning.bodyKit || 'stock',
       hasPlate: true, hasSign: !!this.stats.isTaxi, hasLivery: !!this.stats.isTaxi,
     });
 
@@ -117,6 +117,9 @@ export class PlayerCar {
     this.steerPivots = built.steerPivots;
     this.lampRefs = built.refs;
     this.wheelR = built.wheelR;
+    // боди-кит (сплиттер+пороги) приходит уже собранным из carmodel.js как
+    // отдельная скрываемая группа — _applyTuning() переключает её visible
+    this.bodyKitGroup = built.refs.bodyKit || null;
 
     this.scene.add(this.group);
     if (this.headSpot) this.group.add(this.headSpot, this.headTarget); // переносим фонарь-прожектор при пересборке
@@ -139,6 +142,7 @@ export class PlayerCar {
       for (const key in w.rimVariants) w.rimVariants[key].visible = key === rimStyle;
     }
     if (this.spoilerGroup) this.spoilerGroup.visible = !!tuning.spoiler;
+    if (this.bodyKitGroup) this.bodyKitGroup.visible = (tuning.bodyKit || 'stock') === 'sport';
   }
 
   _disposeGroup(g) {

@@ -582,10 +582,17 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
  */
 
 /**
+ * @typedef {Object} TuningBodyKit
+ * @property {string} name - Название боди-кита
+ * @property {string} id - 'stock'|'sport' — см. carmodel.js buildCarModel spec.bodyKit
+ */
+
+/**
  * @typedef {Object} Tuning
  * @property {TuningColor[]} colors - Доступные цвета кузова
  * @property {TuningRim[]} rims - Доступные варианты дисков
  * @property {boolean} spoiler - Установлен ли спойлер
+ * @property {TuningBodyKit[]} bodyKits - Доступные боди-киты
  */
 
 /**
@@ -761,6 +768,10 @@ const TUNING = {
     { name: 'Хром',     c: '#e8ecf0', style: 'chrome' },
   ],
   spoiler: false,
+  bodyKits: [
+    { name: 'Стандарт', id: 'stock' },
+    { name: 'Спорт',    id: 'sport' },
+  ],
 };
 
 /* Достопримечательности (экскурсионные заказы) */
@@ -1631,6 +1642,30 @@ function buildStaticRimGeo(style, r, tw, seg) {
   return mergeGeoms([disc, ...rimSpokeBars(r, tw).map((g) => g.rotateZ(Math.PI / 2))]);
 }
 
+/* --- Боди-кит (bodyKit: 'stock'|'sport') ---------------------------------
+   Работает поверх любого силуэта (CAR_SHAPES) — не завязан на конкретные
+   пропорции threeBoxCar/boxVanCar, поэтому размеры считаются от dims (w/len)
+   и радиуса колеса (даёт разумную высоту от земли для любого типа кузова).
+   'stock' — обвеса нет (пустой массив). 'sport' — тонкий передний сплиттер
+   под бампером + пороги вдоль порогов по обеим сторонам. Возвращает parts
+   в том же формате {g,role}, что и CAR_SHAPES — buildCarModel раскладывает
+   их по той же логике (animated: отдельные меши в скрываемой группе,
+   НЕ-animated: сливаются в staticColored вместе с кузовом). */
+function bodyKitParts(dims, kit) {
+  if (kit !== 'sport') return [];
+  const { w, len, wheelR = 0.38 } = dims;
+  const y = wheelR * 0.5;
+  const parts = [
+    // передний сплиттер
+    { g: new THREE.BoxGeometry(w * 1.06, wheelR * 0.22, 0.22).translate(0, y, len / 2 + 0.06), role: 'dark' },
+  ];
+  // пороги
+  for (const s of [-1, 1]) {
+    parts.push({ g: new THREE.BoxGeometry(0.12, wheelR * 0.3, len * 0.52).translate(s * (w / 2 + 0.03), y, 0), role: 'dark' });
+  }
+  return parts;
+}
+
 const insetAnchor = (a) => ({
   x: a.x - Math.sign(a.x) * a.w * 0.55, y: a.y, z: a.z, w: a.w * 0.46, h: a.h * 0.68, d: a.d,
 });
@@ -1821,6 +1856,11 @@ const CAR_SHAPES = {
  *   переключение между ними без пересборки идёт через player.js:_applyTuning().
  *   Для НЕ-animated (трафик) строится только один вариант, спицы (если есть)
  *   запекаются в staticColored вместе с кузовом (без лишнего draw call).
+ * @param {string} [spec.bodyKit='stock'] - 'stock'|'sport' — обвес кузова (см. bodyKitParts).
+ *   Для animated (игрок) sport-детали строятся всегда как отдельная скрываемая группа
+ *   (built.refs.bodyKit), spec.bodyKit задаёт только начальную видимость — переключение
+ *   без пересборки идёт через player.js:_applyTuning(). Для НЕ-animated (трафик) детали
+ *   строятся только если spec.bodyKit==='sport' и сразу сливаются в staticColored.
  * @param {boolean} [spec.hasPlate=true]
  * @param {boolean} [spec.hasSign=false] - плафон "ТАКСИ"
  * @param {boolean} [spec.hasLivery=false] - шашечки по бортам
@@ -1834,7 +1874,7 @@ function buildCarModel(spec) {
     matRim, matHub, matPlate, matSign, matLivery,
     matBeaconRed, matBeaconBlue,
     bodyColor = 0xcccccc, darkColor = 0x22262c, chromeColor = 0xc8c8c8, tireColor = 0x18181a, rimColor = 0xc4c8cc,
-    rimStyle = 'disc',
+    rimStyle = 'disc', bodyKit = 'stock',
     hasPlate = true, hasSign = false, hasLivery = false, beacon = null,
   } = spec;
 
@@ -1927,6 +1967,28 @@ function buildCarModel(spec) {
     bodyGroup.add(refs.beaconRed, refs.beaconBlue);
   }
 
+  // --- боди-кит (сплиттер + пороги, bodyKit: 'stock'|'sport') ---
+  if (animated) {
+    // в отличие от rimVariants (3 стиля) тут всего 2 состояния (пусто/полный
+    // обвес) — строим сразу "полный" sport-вариант как отдельную группу и
+    // переключаем видимость всей группы целиком; player.js:_applyTuning()
+    // читает refs.bodyKit и не требует пересборки геометрии кузова.
+    const kitParts = bodyKitParts({ w, len, wheelR: built.wheel.r }, 'sport');
+    if (kitParts.length) {
+      const kitGroup = new THREE.Group();
+      for (const { g } of kitParts) kitGroup.add(new THREE.Mesh(g, matDark));
+      kitGroup.visible = bodyKit === 'sport';
+      bodyGroup.add(kitGroup);
+      refs.bodyKit = kitGroup;
+    }
+  } else {
+    // трафик: детали (если bodyKit==='sport') сразу сливаются в staticColored
+    // вместе с кузовом/колёсами — mergeColored() ниже даёт единственный draw call
+    for (const { g } of bodyKitParts({ w, len, wheelR: built.wheel.r }, bodyKit)) {
+      staticColored.push({ g, c: darkColor });
+    }
+  }
+
   // --- колёса ---
   const wheels = [];
   const steerPivots = [];
@@ -1989,7 +2051,7 @@ function buildCarModel(spec) {
       staticColored.push({ g: wheelGeo(wr, wtw, 10).translate(sx, wr, sz), c: tireColor });
       staticColored.push({ g: buildStaticRimGeo(rimStyle, wr * 0.58, wtw + 0.035, 8).translate(sx, wr, sz), c: rimBakedColor });
     }
-    const cacheKey = spec.cacheKey || `${shape}|${w}|${len}|${bodyColor}|${darkColor}|${chromeColor}|${tireColor}|${rimColor}|${rimStyle}`;
+    const cacheKey = spec.cacheKey || `${shape}|${w}|${len}|${bodyColor}|${darkColor}|${chromeColor}|${tireColor}|${rimColor}|${rimStyle}|${bodyKit}`;
     const mergedGeo = getBodyGeometry(cacheKey, () => mergeColored(staticColored));
     bodyGroup.add(new THREE.Mesh(mergedGeo, matBody));
   }
@@ -5741,7 +5803,7 @@ class PlayerCar {
     this.offroadTimer = 0;
     this.passengerCount = 0;
     /** @type {import('./config.js').Tuning} параметры тюнинга */
-    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false };
+    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false, bodyKit: 'stock' };
     this.groundY = 0.5;
     this._builtCarType = null;
     this._roll = 0; this._pitch = 0;
@@ -5784,7 +5846,7 @@ class PlayerCar {
       matHead: this.matHead, matStop: this.matStop, matTurnA: this.matTurnA, matTurnB: this.matTurnB,
       matReverse: this.matReverse, matRim: this.matRim, matPlate: this.matPlate,
       matSign: this.matSign, matLivery: this.matLivery,
-      rimStyle: this.tuning.rimStyle || 'disc',
+      rimStyle: this.tuning.rimStyle || 'disc', bodyKit: this.tuning.bodyKit || 'stock',
       hasPlate: true, hasSign: !!this.stats.isTaxi, hasLivery: !!this.stats.isTaxi,
     });
 
@@ -5809,6 +5871,9 @@ class PlayerCar {
     this.steerPivots = built.steerPivots;
     this.lampRefs = built.refs;
     this.wheelR = built.wheelR;
+    // боди-кит (сплиттер+пороги) приходит уже собранным из carmodel.js как
+    // отдельная скрываемая группа — _applyTuning() переключает её visible
+    this.bodyKitGroup = built.refs.bodyKit || null;
 
     this.scene.add(this.group);
     if (this.headSpot) this.group.add(this.headSpot, this.headTarget); // переносим фонарь-прожектор при пересборке
@@ -5831,6 +5896,7 @@ class PlayerCar {
       for (const key in w.rimVariants) w.rimVariants[key].visible = key === rimStyle;
     }
     if (this.spoilerGroup) this.spoilerGroup.visible = !!tuning.spoiler;
+    if (this.bodyKitGroup) this.bodyKitGroup.visible = (tuning.bodyKit || 'stock') === 'sport';
   }
 
   _disposeGroup(g) {
@@ -8850,7 +8916,7 @@ const OrdersManager = PassengerManager;
 class UpgradeSystem {
   constructor() {
     this.levels = { engine: 0, suspension: 0, brakes: 0, armor: 0, tank: 0, capacity: 0 };
-    this.tuning = { color: '#f2c12e', rims: 0, spoiler: false };
+    this.tuning = { color: '#f2c12e', rims: 0, spoiler: false, bodyKit: 0 };
     this.carId = 'taxi';
     this.ownedCars = ['taxi'];
   }
@@ -8893,11 +8959,13 @@ class UpgradeSystem {
 
   tuningForCar() {
     const rims = TUNING.rims[this.tuning.rims];
+    const kit = TUNING.bodyKits[this.tuning.bodyKit];
     return {
       color: parseInt(this.tuning.color.replace('#', ''), 16),
       rims: parseInt(rims.c.replace('#', ''), 16),
       rimStyle: rims.style || 'disc',
       spoiler: this.tuning.spoiler,
+      bodyKit: (kit && kit.id) || 'stock',
     };
   }
 
@@ -9457,6 +9525,20 @@ class UIManager {
       row3.innerHTML = '<b style="font-size:13px">Спойлер:</b> <input type="checkbox" ' + (tune.spoiler ? 'checked' : '') + ' id="chk-spoiler">';
       list.appendChild(row3);
       this.$('chk-spoiler').addEventListener('change', (e) => { upgrades.tuning.spoiler = e.target.checked; this.game.applyTuning(); });
+      const row4 = document.createElement('div');
+      row4.className = 'tune-row';
+      row4.innerHTML = '<b style="font-size:13px">Обвес:</b>';
+      TUNING.bodyKits.forEach((bk, i) => {
+        const active = tune.bodyKit === i;
+        const b = document.createElement('button');
+        b.textContent = bk.name;
+        b.style.cssText = 'padding:6px 12px;font-size:12.5px;border-radius:8px;cursor:pointer;' +
+          (active ? 'background:#f2c12e;color:#1a1a1a;border:1px solid #f2c12e;font-weight:700'
+                  : 'background:rgba(255,255,255,0.05);color:#9aa4b0;border:1px solid rgba(255,255,255,0.12)');
+        b.addEventListener('click', () => { upgrades.tuning.bodyKit = i; this.game.applyTuning(); this.renderGarage(upgrades, money, player); });
+        row4.appendChild(b);
+      });
+      list.appendChild(row4);
     } else if (this._garageTab === 'cars') {
       for (const key in CARS) {
         const cc = CARS[key];

@@ -89,6 +89,30 @@ function buildStaticRimGeo(style, r, tw, seg) {
   return mergeGeoms([disc, ...rimSpokeBars(r, tw).map((g) => g.rotateZ(Math.PI / 2))]);
 }
 
+/* --- Боди-кит (bodyKit: 'stock'|'sport') ---------------------------------
+   Работает поверх любого силуэта (CAR_SHAPES) — не завязан на конкретные
+   пропорции threeBoxCar/boxVanCar, поэтому размеры считаются от dims (w/len)
+   и радиуса колеса (даёт разумную высоту от земли для любого типа кузова).
+   'stock' — обвеса нет (пустой массив). 'sport' — тонкий передний сплиттер
+   под бампером + пороги вдоль порогов по обеим сторонам. Возвращает parts
+   в том же формате {g,role}, что и CAR_SHAPES — buildCarModel раскладывает
+   их по той же логике (animated: отдельные меши в скрываемой группе,
+   НЕ-animated: сливаются в staticColored вместе с кузовом). */
+function bodyKitParts(dims, kit) {
+  if (kit !== 'sport') return [];
+  const { w, len, wheelR = 0.38 } = dims;
+  const y = wheelR * 0.5;
+  const parts = [
+    // передний сплиттер
+    { g: new THREE.BoxGeometry(w * 1.06, wheelR * 0.22, 0.22).translate(0, y, len / 2 + 0.06), role: 'dark' },
+  ];
+  // пороги
+  for (const s of [-1, 1]) {
+    parts.push({ g: new THREE.BoxGeometry(0.12, wheelR * 0.3, len * 0.52).translate(s * (w / 2 + 0.03), y, 0), role: 'dark' });
+  }
+  return parts;
+}
+
 const insetAnchor = (a) => ({
   x: a.x - Math.sign(a.x) * a.w * 0.55, y: a.y, z: a.z, w: a.w * 0.46, h: a.h * 0.68, d: a.d,
 });
@@ -280,6 +304,11 @@ export const CAR_SHAPES = {
  *   переключение между ними без пересборки идёт через player.js:_applyTuning().
  *   Для НЕ-animated (трафик) строится только один вариант, спицы (если есть)
  *   запекаются в staticColored вместе с кузовом (без лишнего draw call).
+ * @param {string} [spec.bodyKit='stock'] - 'stock'|'sport' — обвес кузова (см. bodyKitParts).
+ *   Для animated (игрок) sport-детали строятся всегда как отдельная скрываемая группа
+ *   (built.refs.bodyKit), spec.bodyKit задаёт только начальную видимость — переключение
+ *   без пересборки идёт через player.js:_applyTuning(). Для НЕ-animated (трафик) детали
+ *   строятся только если spec.bodyKit==='sport' и сразу сливаются в staticColored.
  * @param {boolean} [spec.hasPlate=true]
  * @param {boolean} [spec.hasSign=false] - плафон "ТАКСИ"
  * @param {boolean} [spec.hasLivery=false] - шашечки по бортам
@@ -293,7 +322,7 @@ export function buildCarModel(spec) {
     matRim, matHub, matPlate, matSign, matLivery,
     matBeaconRed, matBeaconBlue,
     bodyColor = 0xcccccc, darkColor = 0x22262c, chromeColor = 0xc8c8c8, tireColor = 0x18181a, rimColor = 0xc4c8cc,
-    rimStyle = 'disc',
+    rimStyle = 'disc', bodyKit = 'stock',
     hasPlate = true, hasSign = false, hasLivery = false, beacon = null,
   } = spec;
 
@@ -386,6 +415,28 @@ export function buildCarModel(spec) {
     bodyGroup.add(refs.beaconRed, refs.beaconBlue);
   }
 
+  // --- боди-кит (сплиттер + пороги, bodyKit: 'stock'|'sport') ---
+  if (animated) {
+    // в отличие от rimVariants (3 стиля) тут всего 2 состояния (пусто/полный
+    // обвес) — строим сразу "полный" sport-вариант как отдельную группу и
+    // переключаем видимость всей группы целиком; player.js:_applyTuning()
+    // читает refs.bodyKit и не требует пересборки геометрии кузова.
+    const kitParts = bodyKitParts({ w, len, wheelR: built.wheel.r }, 'sport');
+    if (kitParts.length) {
+      const kitGroup = new THREE.Group();
+      for (const { g } of kitParts) kitGroup.add(new THREE.Mesh(g, matDark));
+      kitGroup.visible = bodyKit === 'sport';
+      bodyGroup.add(kitGroup);
+      refs.bodyKit = kitGroup;
+    }
+  } else {
+    // трафик: детали (если bodyKit==='sport') сразу сливаются в staticColored
+    // вместе с кузовом/колёсами — mergeColored() ниже даёт единственный draw call
+    for (const { g } of bodyKitParts({ w, len, wheelR: built.wheel.r }, bodyKit)) {
+      staticColored.push({ g, c: darkColor });
+    }
+  }
+
   // --- колёса ---
   const wheels = [];
   const steerPivots = [];
@@ -448,7 +499,7 @@ export function buildCarModel(spec) {
       staticColored.push({ g: wheelGeo(wr, wtw, 10).translate(sx, wr, sz), c: tireColor });
       staticColored.push({ g: buildStaticRimGeo(rimStyle, wr * 0.58, wtw + 0.035, 8).translate(sx, wr, sz), c: rimBakedColor });
     }
-    const cacheKey = spec.cacheKey || `${shape}|${w}|${len}|${bodyColor}|${darkColor}|${chromeColor}|${tireColor}|${rimColor}|${rimStyle}`;
+    const cacheKey = spec.cacheKey || `${shape}|${w}|${len}|${bodyColor}|${darkColor}|${chromeColor}|${tireColor}|${rimColor}|${rimStyle}|${bodyKit}`;
     const mergedGeo = getBodyGeometry(cacheKey, () => mergeColored(staticColored));
     bodyGroup.add(new THREE.Mesh(mergedGeo, matBody));
   }
