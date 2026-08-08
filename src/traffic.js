@@ -45,14 +45,21 @@ const PED_REPLY_QUOTES = [
    спавна (относительный, не обязан суммироваться в 100 — см. pickTrafficType).
    forceColor — у машины фиксированный "служебный" цвет (полиция/такси/маршрутка),
    не выбирается случайно из палитры. beacon — маячок на крыше. livery —
-   шашечки по бортам + плафон "ТАКСИ" (только у самого такси). */
+   шашечки по бортам + плафон "ТАКСИ" (только у самого такси). bodyKit —
+   'sport'|'stock' (см. carmodel.js bodyKitParts), по умолчанию 'stock'
+   (см. _buildCar). */
 export const TRAFFIC_TYPES = [
   // --- легковые ---
   { name: 'sedan', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 16, colors: [0xe8e8e8, 0x9aa0a8, 0x5060a0, 0xb03030, 0x2a2a2a, 0xc0a070] },
   { name: 'hatch', shape: 'hatch', r: 1.9, len: 4.0, w: 1.85, weight: 12, colors: [0xd0d0d0, 0x3a5aa0, 0xc03030, 0x2a2a2a, 0xe0c040] },
   { name: 'wagon', shape: 'wagon', r: 2.1, len: 4.6, w: 1.9, weight: 8, colors: [0x4a5a4a, 0x8a8a90, 0x2a2a2a, 0xa0703a] },
   { name: 'coupe', shape: 'coupe', r: 1.9, len: 4.3, w: 1.88, weight: 5, colors: [0xc02030, 0x1a1a1a, 0xd8d8d8, 0x2050a0] },
+  { name: 'coupe_sport', shape: 'coupe', r: 1.95, len: 4.35, w: 1.92, weight: 3, colors: [0xe8c000, 0x141414, 0xf0f0f0, 0xc02030], bodyKit: 'sport' },
   { name: 'suv', shape: 'suv', r: 2.3, len: 4.8, w: 2.0, weight: 10, colors: [0x3a4a3a, 0x505860, 0x8a7050, 0x2a2a2a] },
+  { name: 'suv_sport', shape: 'suv', r: 2.35, len: 4.75, w: 2.05, weight: 3, colors: [0x141414, 0xf4f4f4, 0xb02020], bodyKit: 'sport' },
+  // --- бизнес/премиум ---
+  { name: 'cab_black', shape: 'sedan', r: 2.05, len: 4.6, w: 1.92, weight: 4, colors: [0x141414, 0x1c2438, 0x2a2a2a, 0x203020] },
+  { name: 'limo', shape: 'sedan', r: 2.2, len: 6.2, w: 1.95, weight: 0.6, colors: [0x101010, 0xf0f0f0] },
   // --- коммерческий транспорт ---
   { name: 'van', shape: 'van', r: 2.3, len: 5.2, w: 2.1, weight: 7, colors: [0xd8d8d0, 0xa8b8a0, 0xc8a060, 0xe8e0d0] },
   { name: 'pickup', shape: 'pickup', r: 2.2, len: 5.0, w: 1.95, weight: 4, colors: [0x5a5a5a, 0xa03030, 0x2a2a2a, 0xc8c8c0] },
@@ -127,7 +134,7 @@ export class TrafficManager {
       matHead: this.matHead, matStop: this.matStop,
       matPlate: this.matPlate, matSign: this.matSign, matLivery: this.matLivery,
       matBeaconRed: this.matBeaconRed, matBeaconBlue: this.matBeaconBlue,
-      bodyColor, darkColor, chromeColor,
+      bodyColor, darkColor, chromeColor, bodyKit: def.bodyKit || 'stock',
       hasPlate: true, hasSign: !!def.livery, hasLivery: !!def.livery, beacon: def.beacon || null,
       cacheKey: `${def.name}|${bodyColor}`,
     });
