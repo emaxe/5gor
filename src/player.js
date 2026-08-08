@@ -22,6 +22,8 @@ const CAR_TYPE_SHAPE = {
   comfort:  { shape: 'hatch', w: 1.92, len: 4.25 },
   minivan:  { shape: 'van',   w: 2.05, len: 4.7 },
   business: { shape: 'premium', w: 1.95, len: 4.6 },
+  sport:    { shape: 'coupe', w: 1.9,  len: 4.35 },
+  offroad:  { shape: 'suv',   w: 2.05, len: 4.8 },
 };
 
 /**
