@@ -185,6 +185,13 @@ export class PedestrianManager {
 
   /* Размещение пешехода с гарантированной защитой от появления в зоне видимости игрока */
   _randPlace(p, player) {
+    // Оба живых вызывающих (реплейс на >210 м в update(), и spawn() при
+    // старте новой смены через _applyDensity) могут получить пешехода, ещё
+    // активного с живым маршрутом — маршрут описывает совсем другую часть
+    // города и после телепортации ниже стал бы протухшим (см. находка 3
+    // финального ревью). Разбираем AI-состояние маршрута централизованно
+    // ДО применения новой позиции.
+    this._deactivate(p);
     const px = player && player.x !== undefined ? player.x : 0;
     const pz = player && player.z !== undefined ? player.z : 0;
     const heading = player && player.heading !== undefined ? player.heading : 0;
@@ -434,11 +441,26 @@ export class PedestrianManager {
     this._startEdge(p);
   }
 
+  /* Режим "отдыха" (не задействован в маршруте) по архетипу — единая точка,
+     чтобы новые/изменённые места (_deactivate, восстановление после kick) не
+     расходились между собой (см. финальное ревью: восстановление после kick
+     раньше не учитывало archetype === 'dog'). */
+  _restMode(p) {
+    return (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+  }
+
+  /* Централизованный разбор жизненного цикла активного маршрута. Помимо
+     active/route/routeIdx/laneOff сбрасывает и _edgeKind/edgeEnd — без этого
+     пешеход, чей маршрут разобран здесь (наезд/пинок игрока, реплейс на
+     >210 м, старт новой смены), но у которого следующий тик почему-то опять
+     попадёт в активную walk-ветку _updateActive, увидит protухший _edgeKind
+     от старого маршрута (см. находки финального ревью по kick/_randPlace). */
   _deactivate(p) {
     p.active = false;
     p.route = null; p.routeIdx = 0;
     p.laneOff = 0;
-    if (p.mode === 'idle') p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+    p._edgeKind = null; p.edgeEnd = 0;
+    if (p.mode === 'idle') p.mode = this._restMode(p);
   }
 
   /* Выбор цели: гибрид POI (по архетипу, взвешенно) + случайная — всё в
@@ -901,6 +923,13 @@ export class PedestrianManager {
       if (p.idleT <= 0) this._activate(p);
       return;
     }
+    // Защита от рассинхронизации: p.active=true, mode уже не 'idle', но
+    // маршрут отсутствует (например, idle-пешехода толкнула/сбила машина —
+    // _checkNearMissAndKick восстанавливает mode в walk/run, не зная про
+    // route=null, выставленный _arrive). Без этой проверки walk-хвост ниже
+    // мог дойти до _finishEdge -> _startEdge -> `p.route.length` на null и
+    // уронить update() КАЖДЫЙ кадр (см. находка 1 финального ревью).
+    if (!p.route) { this._deactivate(p); return; }
     if (p.mode === 'wait') {
       this._updateWait(p, dt);
       return;
@@ -983,7 +1012,26 @@ export class PedestrianManager {
     if (p.kickCd > 0) p.kickCd -= dt;
     if (p.kickT > 0) {
       p.kickT -= dt;
-      if (p.kickT <= 0 && p.mode === 'kick') p.mode = p.archetype === 'runner' ? 'run' : 'walk';
+      if (p.kickT <= 0 && p.mode === 'kick') {
+        // Пинок мог застать пешехода посреди cross/wait/turn маршрута — mode
+        // здесь безусловно перезаписывался в 'walk'/'run', оставляя p.turn/
+        // p.route/_edgeKind от прерванного шага рассинхронизированными
+        // (см. находка 2 финального ревью). Для АКТИВНЫХ пешеходов не
+        // восстанавливаем mode напрямую, а полностью разбираем маршрут через
+        // _deactivate — на следующем тике _classify реактивирует пешехода с
+        // чистого листа. Для неактивных (обычная прогулка по тротуару)
+        // поведение не меняем.
+        const wasActive = p.active;
+        p.mode = this._restMode(p);
+        if (wasActive) {
+          // Разбираем и turn/cross-состояние прерванного шага маршрута —
+          // _deactivate само их не трогает (используется и из мест, где
+          // mode гарантированно не turn/cross), а здесь mode только что был
+          // 'kick' поверх любого из них.
+          p.turn = null; p.cross = null;
+          this._deactivate(p);
+        }
+      }
     }
   }
 

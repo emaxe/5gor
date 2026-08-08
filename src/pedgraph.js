@@ -1,10 +1,14 @@
 import { CFG } from './config.js';
 
 const PG_PED_SIDE = CFG.HALF + CFG.SIDE / 2; // 8 — центр тротуара от оси дороги
-const EDGE = CFG.CELL;
 const POI_MAX_DIST = 40; // POI дальше этого от ближайшего узла — вне сетки (напр. Машук), отбрасываем
 
-function mulberry32(seed) {
+// Локальная копия (не импортируем из utils.js — pedgraph.js намеренно зависит
+// только от config.js, см. архитектурное решение фичи «интеллектуальные
+// пешеходы»). Имя отличается от utils.js::mulberry32, чтобы при слиянии
+// модулей в один bundle (build.py) не порождать молчаливую коллизию верхнеуровневых
+// function-деклараций.
+function pgMulberry32(seed) {
   let a = seed >>> 0;
   return function () {
     a |= 0; a = (a + 0x6D2B79F5) | 0;
@@ -63,7 +67,7 @@ export class PedGraph {
 
   build(intersections) {
     this._intersections = intersections;
-    const rng = mulberry32(20260807);
+    const rng = pgMulberry32(20260807);
     const roadsX = [...new Set(intersections.map(i => i.x))].sort((a, b) => a - b); // вертикальные дороги
     const roadsZ = [...new Set(intersections.map(i => i.z))].sort((a, b) => a - b); // горизонтальные
 
