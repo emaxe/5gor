@@ -2223,7 +2223,7 @@ function buildCarModel(spec) {
 
   // --- багажник на крыше (wagon/suv/van, spec.hasRoofRack) ---
   // built.roofRack !== null только когда силуэт разрешает багажник
-  // (roofRackOk в CAR_SHAPES) — hasRoofRack на прочих силуэтах не эффекта
+  // (roofRackOk в CAR_SHAPES) — hasRoofRack на прочих силуэтах не даёт эффекта
   if (hasRoofRack && built.roofRack) {
     const rackParts = roofRackParts(built.roofRack, w);
     if (animated) {
