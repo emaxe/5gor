@@ -15,6 +15,10 @@ MODULES = [
     "utils.js",
     "carmodel.js",
     "eventbus.js",
+    "audiocore.js",
+    "audiosfx.js",
+    "audioloops.js",
+    "audiomusic.js",
     "audio.js",
     "input.js",
     "citygen.js",
@@ -65,6 +69,7 @@ html = f"""<!DOCTYPE html>
 <body>
 {BODY}
 <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+<script src="https://unpkg.com/tone@14.7.77/build/Tone.js" onerror="window.__toneFailed=1"></script>
 <script>
 "use strict";
 {chr(10).join(js_parts)}

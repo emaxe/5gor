@@ -108,9 +108,19 @@
 <div id="settings" class="screen hidden">
   <div class="card">
     <h2>⚙ Настройки</h2>
+    <div class="settings-group">Звук</div>
     <label><input type="checkbox" id="chk-sound" checked> Звук</label>
     <label><input type="checkbox" id="chk-music" checked> Музыка</label>
+    <label class="vol-row">Общая<input type="range" id="rng-vol-master" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-master">80%</span></label>
+    <label class="vol-row">Радио<input type="range" id="rng-vol-music" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-music">32%</span></label>
+    <label class="vol-row">Эффекты<input type="range" id="rng-vol-sfx" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-sfx">85%</span></label>
+    <label class="vol-row">Двигатель<input type="range" id="rng-vol-engine" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-engine">55%</span></label>
+    <label class="vol-row">Окружение<input type="range" id="rng-vol-ambient" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-ambient">45%</span></label>
+    <label>Радиостанция:
+      <select id="sel-radio-station"></select>
+    </label>
 
+    <div class="settings-group">Графика</div>
     <label>Пресет графики:
       <select id="sel-gfx-preset">
         <option value="low">Низкое</option>

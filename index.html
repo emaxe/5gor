@@ -224,6 +224,23 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 .card select { background: #1c2430; color: #e8e8e8; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 6px; }
 .card label:has(select) { justify-content: space-between; }
 .settings-hint { font-size: 12px; color: #6e7681; text-align: center; margin: 2px 0 4px; line-height: 1.4; }
+.settings-group {
+  font-size: 12px; color: #f2c12e; text-transform: uppercase; letter-spacing: 1px;
+  margin: 10px 0 2px; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 4px;
+}
+.card label.vol-row { display: grid; grid-template-columns: 92px 1fr 42px; align-items: center; gap: 10px; }
+.card input[type=range] {
+  -webkit-appearance: none; appearance: none; height: 4px; border-radius: 2px;
+  background: rgba(255,255,255,0.14); outline: none; cursor: pointer;
+}
+.card input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%;
+  background: #f2c12e; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.5);
+}
+.card input[type=range]::-moz-range-thumb {
+  width: 16px; height: 16px; border: none; border-radius: 50%; background: #f2c12e; cursor: pointer;
+}
+.vol-val { font-size: 12px; color: #8b949e; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---------- Гараж ---------- */
 #garage .card { width: 520px; max-width: 94vw; }
@@ -444,9 +461,19 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 <div id="settings" class="screen hidden">
   <div class="card">
     <h2>⚙ Настройки</h2>
+    <div class="settings-group">Звук</div>
     <label><input type="checkbox" id="chk-sound" checked> Звук</label>
     <label><input type="checkbox" id="chk-music" checked> Музыка</label>
+    <label class="vol-row">Общая<input type="range" id="rng-vol-master" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-master">80%</span></label>
+    <label class="vol-row">Радио<input type="range" id="rng-vol-music" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-music">32%</span></label>
+    <label class="vol-row">Эффекты<input type="range" id="rng-vol-sfx" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-sfx">85%</span></label>
+    <label class="vol-row">Двигатель<input type="range" id="rng-vol-engine" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-engine">55%</span></label>
+    <label class="vol-row">Окружение<input type="range" id="rng-vol-ambient" min="0" max="100" step="5"><span class="vol-val" data-for="rng-vol-ambient">45%</span></label>
+    <label>Радиостанция:
+      <select id="sel-radio-station"></select>
+    </label>
 
+    <div class="settings-group">Графика</div>
     <label>Пресет графики:
       <select id="sel-gfx-preset">
         <option value="low">Низкое</option>
@@ -525,6 +552,7 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 </div>
 
 <script src="https://unpkg.com/three@0.152.2/build/three.min.js"></script>
+<script src="https://unpkg.com/tone@14.7.77/build/Tone.js" onerror="window.__toneFailed=1"></script>
 <script>
 "use strict";
 /* ===== config.js ===== */
@@ -1706,9 +1734,10 @@ function buildStaticRimGeo(style, r, tw, seg) {
    и радиуса колеса (даёт разумную высоту от земли для любого типа кузова).
    'stock' — обвеса нет (пустой массив). 'sport' — тонкий передний сплиттер
    под бампером + пороги вдоль порогов по обеим сторонам. Возвращает parts
-   в том же формате {g,role}, что и CAR_SHAPES — buildCarModel раскладывает
-   их по той же логике (animated: отдельные меши в скрываемой группе,
-   НЕ-animated: сливаются в staticColored вместе с кузовом). */
+   как [{g}] (без role — все детали здесь всегда красятся в 'dark', см.
+   consumption sites в buildCarModel; roleParts-диспетчер используют только
+   CAR_SHAPES-детали): animated — отдельные меши в скрываемой группе,
+   НЕ-animated — сливаются в staticColored вместе с кузовом. */
 /* --- Багажник на крыше (roofRack) ----------------------------------------
    Строится в buildCarModel (не в threeBoxCar/boxVanCar), потому что нужен
    ОДИН приём геометрии для обеих фабрик — зависит только от anchor'а
@@ -1721,10 +1750,10 @@ function roofRackParts(rr, w) {
   const railW = w * 0.72;
   const parts = [];
   for (const s of [-1, 1]) {
-    parts.push({ g: new THREE.BoxGeometry(0.04, 0.035, rr.len).translate(rr.x + s * railW / 2, rr.y, rr.z), role: 'dark' });
+    parts.push({ g: new THREE.BoxGeometry(0.04, 0.035, rr.len).translate(rr.x + s * railW / 2, rr.y, rr.z) });
   }
   for (const s of [-1, 1]) {
-    parts.push({ g: new THREE.BoxGeometry(railW + 0.04, 0.03, 0.04).translate(rr.x, rr.y, rr.z + s * rr.len * 0.32), role: 'dark' });
+    parts.push({ g: new THREE.BoxGeometry(railW + 0.04, 0.03, 0.04).translate(rr.x, rr.y, rr.z + s * rr.len * 0.32) });
   }
   return parts;
 }
@@ -1735,11 +1764,11 @@ function bodyKitParts(dims, kit) {
   const y = wheelR * 0.5;
   const parts = [
     // передний сплиттер
-    { g: new THREE.BoxGeometry(w * 1.06, wheelR * 0.22, 0.22).translate(0, y, len / 2 + 0.06), role: 'dark' },
+    { g: new THREE.BoxGeometry(w * 1.06, wheelR * 0.22, 0.22).translate(0, y, len / 2 + 0.06) },
   ];
   // пороги
   for (const s of [-1, 1]) {
-    parts.push({ g: new THREE.BoxGeometry(0.12, wheelR * 0.3, len * 0.52).translate(s * (w / 2 + 0.03), y, 0), role: 'dark' });
+    parts.push({ g: new THREE.BoxGeometry(0.12, wheelR * 0.3, len * 0.52).translate(s * (w / 2 + 0.03), y, 0) });
   }
   return parts;
 }
@@ -2412,104 +2441,146 @@ const Events = events;
 window.events = events;
 window.Events = events;
 
-/* ===== audio.js ===== */
-class AudioManager {
+/* ===== audiocore.js ===== */
+/* Ядро звуковой системы: AudioContext, шины/микшер, лимитер, реверб,
+   кеш шумовых буферов, пул панеров, voice-limiting. Не зависит от THREE
+   и DOM — тестируется в node на заглушке AudioContext. */
+const AU_DEFAULT_VOL = { master: 0.8, music: 0.32, sfx: 0.85, engine: 0.55, ambient: 0.45, ui: 0.7, voice: 0.85 };
+const AU_BUDGET = { total: 28, horn: 3, crash: 2, ped: 3, voice: 3, click: 4, siren: 2 };
+const AU_COOLDOWN = { horn: 140, crash: 80, pedHit: 120, thud: 90, click: 40, step: 60 };
+const AU_NOISE_LENGTHS = [0.25, 1, 2, 3];
+class AudioEngine {
   constructor() {
     this.ctx = null;
-    this.master = null;
-    this.sfxGain = null;
-    this.musicGain = null;
+    this.buses = null;
+    this.ready = false;
     this.enabled = true;
-    this.musicOn = true;
-
-    this.engineNodes = null;
-    this.skidNodes = null;
-    this.ambNodes = null;
-    this.rainNodes = null;
-
-    this._musicTimer = null;
-    this._birdTimer = null;
-    this._staticTimer = null;
-
-    this.hornUntil = 0;
-    this._ready = false;
-
-    // ----- Радиостанции -----
-    this.stations = [
-      { id: 'off', name: 'Радио ВЫКЛ', genre: 'Тишина', icon: '🔇' },
-      { id: 'pyatigorsk', name: 'Пятигорск FM', genre: 'Лоу-фай Чилл', icon: '📻' },
-      { id: 'synth', name: 'Машук Synth 80s', genre: 'Ретровейв / Синт', icon: '🌆' },
-      { id: 'kavkaz', name: 'Кавказ Beat', genre: 'Динамичный Этно-бит', icon: '⛰️' },
-      { id: 'chanson', name: 'Кавказ Шансон', genre: 'Душевный Блатняк', icon: '🪕' },
-      { id: 'chilled', name: 'Ночной Курорт', genre: 'Эмбиент Дезерт', icon: '🌙' },
-    ];
-    this.currentStationIndex = 1; // По умолчанию Пятигорск FM
-    this.isTuning = false;
-    this._stepCounter = 0;
+    this._volumes = { ...AU_DEFAULT_VOL };
+    this._noiseCache = null;
+    this._panners = null;
+    this._pannerIdx = { sfx: 0, voice: 0 };
+    this._voiceTotal = 0;
+    this._voiceByTag = {};
+    this._lastPlay = {};
   }
 
-  /* Вызывать по первому жесту пользователя */
-  unlock() {
-    if (this._ready) {
-      if (this.ctx && this.ctx.state === 'suspended') this.ctx.resume();
-      return;
-    }
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      if (!AC) return;
-      this.ctx = new AC();
+  init() {
+    if (this.ready) return;
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return;
+    const c = this.ctx = new AC();
 
-      this.master = this.ctx.createGain();
-      this.master.gain.value = 0.85;
-      this.master.connect(this.ctx.destination);
+    // master chain: шины -> masterGain -> лимитер -> safety-clip -> destination
+    const safetyClip = c.createWaveShaper();
+    safetyClip.curve = this._makeClipCurve();
+    safetyClip.oversample = '2x';
+    safetyClip.connect(c.destination);
 
-      this.sfxGain = this.ctx.createGain();
-      this.sfxGain.gain.value = 0.9;
-      this.sfxGain.connect(this.master);
+    const limiter = c.createDynamicsCompressor();
+    limiter.threshold.value = -3; limiter.knee.value = 0; limiter.ratio.value = 20;
+    limiter.attack.value = 0.002; limiter.release.value = 0.18;
+    limiter.connect(safetyClip);
 
-      this.musicGain = this.ctx.createGain();
-      this.musicGain.gain.value = 0.28;
-      this.musicGain.connect(this.master);
+    const masterGain = c.createGain();
+    masterGain.gain.value = this._volumes.master;
+    masterGain.connect(limiter);
 
-      this._buildEngine();
-      this._buildSkid();
-      this._buildAmbient();
-      this._ready = true;
-      this.startMusic();
+    const mkBus = (key) => {
+      const g = c.createGain();
+      g.gain.value = this._volumes[key] !== undefined ? this._volumes[key] : 1;
+      g.connect(masterGain);
+      return g;
+    };
+    const music = mkBus('music');
+    const sfx = mkBus('sfx');
+    const engine = mkBus('engine');
+    const ambient = mkBus('ambient');
+    const voice = mkBus('voice');
+    const ui = mkBus('ui'); // сухая шина, без реверб-сенда и даккинга
 
-      Events.on('crash', (d) => this.crash(d ? d.impact || 20 : 20));
-      Events.on('money', (d) => this.cash(d ? d.amount || 100 : 100));
-      Events.on('pickup', () => this.pickup());
-      Events.on('order:accepted', () => this.pickup());
-      Events.on('order:completed', (r) => this.cash(r ? r.tips > 40 : true));
-      Events.on('fail', () => this.fail());
-      Events.on('order:failed', () => this.fail());
-      Events.on('hitPed', (d) => {
-        if (d && d.byPlayer === false) return;
-        this.pedHit();
-      });
-      Events.on('ped:kick', () => this.thud());
-      Events.on('horn', (d = {}) => {
-        if (d.sourceX !== undefined && this._gamePlayer) {
-          d.playerX = this._gamePlayer.x;
-          d.playerZ = this._gamePlayer.z;
-          d.playerHeading = this._gamePlayer.heading;
-        }
-        this.horn(d);
-      });
-      Events.on('passenger:speak', () => this.speak());
-      Events.on('game:state_changed', ({ state }) => {
-        if (state === 'pause' || state === 'menu' || state === 'shiftend') {
-          this.updateEngine(0, 0, false);
-          this.updateSkid(0);
-        }
-      });
-    } catch (e) {
-      console.warn('audio error', e);
-    }
+    // Реверб — одна процедурная IR («улица между домами»), без ассетов
+    const reverbSend = c.createGain(); reverbSend.gain.value = 1;
+    const reverbDamp = c.createBiquadFilter(); reverbDamp.type = 'lowpass'; reverbDamp.frequency.value = 4500;
+    const convolver = c.createConvolver();
+    convolver.buffer = this._makeImpulse(1.4, 2.2);
+    const reverbReturn = c.createGain(); reverbReturn.gain.value = 1;
+    reverbSend.connect(reverbDamp); reverbDamp.connect(convolver); convolver.connect(reverbReturn); reverbReturn.connect(masterGain);
+
+    const sfxSend = c.createGain(); sfxSend.gain.value = 0.16; sfx.connect(sfxSend); sfxSend.connect(reverbSend);
+    const voiceSend = c.createGain(); voiceSend.gain.value = 0.22; voice.connect(voiceSend); voiceSend.connect(reverbSend);
+    const engineSend = c.createGain(); engineSend.gain.value = 0.06; engine.connect(engineSend); engineSend.connect(reverbSend);
+
+    this.buses = { master: masterGain, music, sfx, engine, ambient, voice, ui, reverbSend, reverbReturn, sfxSend, voiceSend, engineSend };
+
+    // Пулы панеров — создаются один раз, раздаются round-robin, ноль аллокаций
+    // и ноль утечек на каждый horn()/spatialSpeak() (раньше StereoPanner
+    // никогда не отключался от шины)
+    this._panners = {
+      sfx: Array.from({ length: 8 }, () => this._makePanner(sfx)),
+      voice: Array.from({ length: 6 }, () => this._makePanner(voice)),
+    };
+
+    this.ready = true;
   }
 
-  _noiseBuffer(sec = 2) {
+  dispose() {
+    if (this.ctx) this.ctx.close().catch(() => {});
+    this.ready = false;
+  }
+
+  _makePanner(bus) {
+    if (!this.ctx.createStereoPanner) return bus; // фоллбек: шина как «панер» без панорамы
+    const p = this.ctx.createStereoPanner();
+    p.connect(bus);
+    return p;
+  }
+
+  /* Взять панер из пула шины (round-robin) и выставить панораму на момент t.
+     Если StereoPanner недоступен в браузере — вернёт саму шину без панорамы. */
+  takePanner(kind, panVal, t) {
+    const pool = this._panners && this._panners[kind];
+    if (!pool || !pool.length) return this.buses[kind === 'voice' ? 'voice' : 'sfx'];
+    this._pannerIdx[kind] = (this._pannerIdx[kind] + 1) % pool.length;
+    const p = pool[this._pannerIdx[kind]];
+    if (p.pan) p.pan.setValueAtTime(panVal, t);
+    return p;
+  }
+
+  _makeClipCurve() {
+    const n = 1024;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const x = (i / (n - 1)) * 2 - 1;
+      curve[i] = Math.tanh(x * 1.4) / Math.tanh(1.4);
+    }
+    return curve;
+  }
+
+  /* Процедурная импульсная характеристика для конволвера — без единого ассета */
+  _makeImpulse(sec, decay) {
+    const len = Math.floor(this.ctx.sampleRate * sec);
+    const buf = this.ctx.createBuffer(2, len, this.ctx.sampleRate);
+    for (let ch = 0; ch < 2; ch++) {
+      const d = buf.getChannelData(ch);
+      for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
+    }
+    return buf;
+  }
+
+  /* Кешированный шумовой буфер: раньше новый буфер (44100 вызовов Math.random())
+     генерировался на КАЖДЫЙ noiseBurst — на плотных ритмических станциях это
+     были сотни тысяч вызовов в секунду впустую. Буфер иммутабелен при
+     воспроизведении, поэтому безопасно шарится между любым числом источников. */
+  _noise(sec) {
+    let pick = AU_NOISE_LENGTHS[AU_NOISE_LENGTHS.length - 1];
+    for (const L of AU_NOISE_LENGTHS) { if (sec <= L) { pick = L; break; } }
+    if (!this._noiseCache) this._noiseCache = new Map();
+    let buf = this._noiseCache.get(pick);
+    if (!buf) { buf = this._noiseBuffer(pick); this._noiseCache.set(pick, buf); }
+    return buf;
+  }
+
+  _noiseBuffer(sec) {
     const len = Math.floor(this.ctx.sampleRate * sec);
     const buf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = buf.getChannelData(0);
@@ -2517,284 +2588,316 @@ class AudioManager {
     return buf;
   }
 
-  /* --- Двигатель: 3 осциллятора с саб-басом, фильтрацией и рыком --- */
-  _buildEngine() {
+  /* Простой одноголосый тон с ADSR-подобной огибающей (атака 15мс, экспоненциальный спад) */
+  tone(freq, dur, type = 'sine', gain = 0.2, when = 0, slideTo = null, dest = null) {
     const c = this.ctx;
-    const o1 = c.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 55;
-    const o2 = c.createOscillator(); o2.type = 'square'; o2.frequency.value = 27.5;
-    const o3 = c.createOscillator(); o3.type = 'triangle'; o3.frequency.value = 110;
-    
-    const g2 = c.createGain(); g2.gain.value = 0.4;
-    const g3 = c.createGain(); g3.gain.value = 0.2;
-    
-    const flt = c.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = 450; flt.Q.value = 2.5;
-    const g = c.createGain(); g.gain.value = 0;
-
-    o1.connect(flt);
-    o2.connect(g2); g2.connect(flt);
-    o3.connect(g3); g3.connect(flt);
-
-    flt.connect(g);
-    g.connect(this.sfxGain);
-
-    o1.start(); o2.start(); o3.start();
-    this.engineNodes = { o1, o2, o3, flt, g };
-  }
-
-  /* Скрип шин — полосовой фильтр с модулированным шумом */
-  _buildSkid() {
-    const c = this.ctx;
-    const src = c.createBufferSource(); src.buffer = this._noiseBuffer(2); src.loop = true;
-    const flt = c.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = 950; flt.Q.value = 2.0;
-    const g = c.createGain(); g.gain.value = 0;
-    src.connect(flt); flt.connect(g); g.connect(this.sfxGain);
-    src.start();
-    this.skidNodes = { flt, g };
-  }
-
-  /* Городской эмбиент: шелест ветра + птицы */
-  _buildAmbient() {
-    const c = this.ctx;
-    const src = c.createBufferSource(); src.buffer = this._noiseBuffer(3); src.loop = true;
-    const flt = c.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = 350;
-    const g = c.createGain(); g.gain.value = 0.04;
-    src.connect(flt); flt.connect(g); g.connect(this.master);
-    src.start();
-    this.ambNodes = { flt, g };
-    this._birdTimer = setInterval(() => { if (this.enabled && Math.random() < 0.6) this.bird(); }, 6500);
-  }
-
-  /* Дождь */
-  setRain(on) {
-    const c = this.ctx;
-    if (on && !this.rainNodes) {
-      const src = c.createBufferSource(); src.buffer = this._noiseBuffer(2); src.loop = true;
-      const flt = c.createBiquadFilter(); flt.type = 'highpass'; flt.frequency.value = 1100;
-      const g = c.createGain(); g.gain.value = 0.05;
-      src.connect(flt); flt.connect(g); g.connect(this.master);
-      src.start();
-      this.rainNodes = { flt, g };
-    }
-    if (this.rainNodes) this.rainNodes.g.gain.value = on ? 0.06 : 0;
-  }
-
-  updateEngine(rpm, throttle, running) {
-    if (!this.engineNodes) return;
-    const { o1, o2, o3, flt, g } = this.engineNodes;
-    if (this.enabled && running) {
-      const baseFreq = 48 + rpm * 140;
-      o1.frequency.setTargetAtTime(baseFreq, this.ctx.currentTime, 0.04);
-      o2.frequency.setTargetAtTime(baseFreq * 0.5, this.ctx.currentTime, 0.04);
-      o3.frequency.setTargetAtTime(baseFreq * 1.5, this.ctx.currentTime, 0.04);
-
-      flt.frequency.setTargetAtTime(300 + rpm * 900 + throttle * 350, this.ctx.currentTime, 0.06);
-      g.gain.setTargetAtTime(0.06 + throttle * 0.12 + rpm * 0.05, this.ctx.currentTime, 0.08);
-    } else {
-      g.gain.setTargetAtTime(0, this.ctx.currentTime, 0.1);
-    }
-  }
-
-  updateSkid(intensity) {
-    if (!this.skidNodes) return;
-    const { flt, g } = this.skidNodes;
-    if (this.enabled && intensity > 0.02) {
-      flt.frequency.setTargetAtTime(700 + intensity * 950, this.ctx.currentTime, 0.04);
-      g.gain.setTargetAtTime(0.08 * intensity, this.ctx.currentTime, 0.04);
-    } else {
-      g.gain.setTargetAtTime(0, this.ctx.currentTime, 0.05);
-    }
-  }
-
-  _tone(freq, dur, type = 'sine', gain = 0.2, when = 0, slideTo = null, dest = null) {
-    const c = this.ctx;
-    if (!c) return;
+    if (!c) return null;
     const t = c.currentTime + when;
     const o = c.createOscillator(); o.type = type; o.frequency.setValueAtTime(freq, t);
     if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
     const g = c.createGain(); g.gain.setValueAtTime(0.0001, t);
     g.gain.exponentialRampToValueAtTime(gain, t + 0.015);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    
-    const targetNode = dest || this.sfxGain;
+
+    const targetNode = dest || this.buses.sfx;
     o.connect(g); g.connect(targetNode);
     o.start(t); o.stop(t + dur + 0.05);
+    o.onended = () => { try { o.disconnect(); g.disconnect(); } catch (e) { /* уже отключён */ } };
+    return o;
   }
 
-  _musicNote(freq, dur, type = 'sine', gain = 0.1, when = 0, slideTo = null) {
-    if (!this.ctx) return;
-    this._tone(freq, dur, type, gain, when, slideTo, this.musicGain);
-  }
-
-  _noiseBurst(dur, gain, filterFreq, when = 0, dest = null) {
+  /* Отфильтрованный всплеск шума (удары, хэты, дождь-капли) — с случайным
+     сдвигом внутри буфера и лёгкой вариацией playbackRate для разнообразия */
+  noiseBurst(dur, gain, filterFreq, when = 0, dest = null) {
     const c = this.ctx;
-    if (!c) return;
+    if (!c) return null;
     const t = c.currentTime + when;
-    const src = c.createBufferSource(); src.buffer = this._noiseBuffer(1);
+    const buf = this._noise(dur);
+    const src = c.createBufferSource(); src.buffer = buf;
+    src.playbackRate.value = 0.92 + Math.random() * 0.16;
+    const maxOffset = Math.max(0, buf.duration - dur - 0.02);
+    const offset = maxOffset > 0 ? Math.random() * maxOffset : 0;
     const flt = c.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = filterFreq;
     const g = c.createGain();
     g.gain.setValueAtTime(gain, t);
     g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
 
-    const targetNode = dest || this.sfxGain;
+    const targetNode = dest || this.buses.sfx;
     src.connect(flt); flt.connect(g); g.connect(targetNode);
-    src.start(t); src.stop(t + dur + 0.05);
+    src.start(t, offset);
+    src.stop(t + dur + 0.05);
+    src.onended = () => { try { src.disconnect(); flt.disconnect(); g.disconnect(); } catch (e) { /* уже отключён */ } };
+    return src;
   }
+
+  /* --- Voice-limiting: общий бюджет + бюджет по budgetTag + кулдаун по cooldownTag ---
+     Разделены, т.к. несколько разных звуков (pedHit/thud) делят один бюджет 'ped',
+     но должны иметь собственный независимый кулдаун. */
+  alloc(budgetTag, cooldownTag = budgetTag) {
+    if (this._voiceTotal >= AU_BUDGET.total) return false;
+    const budget = AU_BUDGET[budgetTag];
+    if (budget !== undefined && (this._voiceByTag[budgetTag] || 0) >= budget) return false;
+    const cd = AU_COOLDOWN[cooldownTag];
+    if (cd) {
+      const last = this._lastPlay[cooldownTag] || 0;
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      if (now - last < cd) return false;
+      this._lastPlay[cooldownTag] = now;
+    }
+    this._voiceTotal++;
+    this._voiceByTag[budgetTag] = (this._voiceByTag[budgetTag] || 0) + 1;
+    return true;
+  }
+
+  free(budgetTag) {
+    this._voiceTotal = Math.max(0, this._voiceTotal - 1);
+    this._voiceByTag[budgetTag] = Math.max(0, (this._voiceByTag[budgetTag] || 0) - 1);
+  }
+
+  /* Освободить бюджет через durationMs после alloc() — проще и надёжнее,
+     чем считать onended по каждому из нескольких узлов одного «звука» */
+  releaseAfter(budgetTag, durationMs) {
+    setTimeout(() => this.free(budgetTag), Math.max(0, durationMs));
+  }
+
+  setVolume(key, val) {
+    this._volumes[key] = Math.max(0, Math.min(1, val));
+    const bus = key === 'master' ? this.buses?.master : this.buses?.[key];
+    if (bus && this.ctx) bus.gain.setTargetAtTime(this._volumes[key], this.ctx.currentTime, 0.05);
+  }
+
+  getVolumes() {
+    return { ...this._volumes };
+  }
+
+  setMasterEnabled(on) {
+    this.enabled = on;
+    if (this.buses && this.ctx) {
+      this.buses.master.gain.setTargetAtTime(on ? this._volumes.master : 0, this.ctx.currentTime, 0.1);
+    }
+  }
+
+  /* Диагностика voice-limiting для ?debug-оверлея */
+  getVoiceStatus() {
+    return { used: this._voiceTotal, total: AU_BUDGET.total, ctxState: this.ctx ? this.ctx.state : 'none' };
+  }
+}
+
+/* ===== audiosfx.js ===== */
+/* Библиотека одноразовых звуковых эффектов поверх AudioEngine. */
+class SfxLibrary {
+  constructor(engine) {
+    this.engine = engine;
+  }
+
+  get _c() { return this.engine.ctx; }
+  get _enabled() { return this.engine.enabled; }
 
   // --- Сочные и реалистичные автомобильные гудки с 3D-позиционированием ---
   horn(opts = {}) {
-    if (!this.enabled || !this.ctx) return;
+    const e = this.engine;
+    if (!e.enabled || !e.ctx) return;
 
     let vol = 1.0;
     let panVal = 0;
 
-    // Расчет 3D затухания по расстоянию до игрока
     if (opts.sourceX !== undefined && opts.sourceZ !== undefined && opts.playerX !== undefined && opts.playerZ !== undefined) {
       const dx = opts.sourceX - opts.playerX;
       const dz = opts.sourceZ - opts.playerZ;
       const dist = Math.hypot(dx, dz);
-      const maxDist = 180; // Гудок слышен на расстоянии до 180 метров по всему району
-      if (dist > maxDist) return; // Слишком далеко — тишина
+      const maxDist = 90; // Гудок слышен на расстоянии до 90 метров
+      if (dist > maxDist) return;
+      if (!e.alloc('horn')) return; // трафик может сигналить пачками — бюджет + кулдаун
 
-      // Плавное физическое затухание громкости
       const att = Math.pow(1 - dist / maxDist, 1.2);
       vol = Math.min(1.0, Math.max(0.08, att * 0.95));
 
-      // Панорамирование
       const angleToSource = Math.atan2(dx, dz);
       const relAngle = angleToSource - (opts.playerHeading || 0);
       panVal = Math.min(0.85, Math.max(-0.85, Math.sin(relAngle)));
+    } else if (!e.alloc('horn')) {
+      return;
     }
 
-    const c = this.ctx;
+    const c = e.ctx;
     const t = c.currentTime;
-
-    let destNode = this.sfxGain;
-    if (c.createStereoPanner) {
-      const panner = c.createStereoPanner();
-      panner.pan.setValueAtTime(panVal, t);
-      panner.connect(this.sfxGain);
-      destNode = panner;
-    }
-
-    // Различные тембры клаксонов
     const type = opts.type || (Math.random() < 0.35 ? 'sedan' : Math.random() < 0.7 ? 'classic' : Math.random() < 0.88 ? 'suv' : 'truck');
     const dur = opts.dur || (type === 'player' ? 0.65 : type === 'truck' ? 0.6 : 0.45);
+    const destNode = e.takePanner('sfx', panVal, t);
+    e.releaseAfter('horn', dur * 1000 + 60);
 
     if (type === 'player') {
-      // Басовитый, глубокий и продолжительный клаксон игрока (Низкий дуэт + суб-бас)
       const f1 = 293.66, f2 = 369.99; // D4 + F#4
-      this._tone(f1, dur, 'sawtooth', vol * 0.16, 0, null, destNode);
-      this._tone(f2, dur, 'sawtooth', vol * 0.14, 0, null, destNode);
-      this._tone(f1 * 0.5, dur, 'sine', vol * 0.22, 0, null, destNode); // Глубокий бас (D3)
-      this._tone(f1 * 0.25, dur, 'sine', vol * 0.15, 0, null, destNode); // Суб-бас (D2)
+      e.tone(f1, dur, 'sawtooth', vol * 0.16, 0, null, destNode);
+      e.tone(f2, dur, 'sawtooth', vol * 0.14, 0, null, destNode);
+      e.tone(f1 * 0.5, dur, 'sine', vol * 0.22, 0, null, destNode);
+      e.tone(f1 * 0.25, dur, 'sine', vol * 0.15, 0, null, destNode);
     } else if (type === 'truck') {
-      // Пневматический низкий гудок грузовика (Фа-Фа)
       const f1 = 185, f2 = 233;
-      this._tone(f1, dur, 'sawtooth', vol * 0.18, 0, null, destNode);
-      this._tone(f2, dur, 'sawtooth', vol * 0.15, 0, null, destNode);
-      this._tone(f1 * 0.5, dur, 'sine', vol * 0.22, 0, null, destNode);
+      e.tone(f1, dur, 'sawtooth', vol * 0.18, 0, null, destNode);
+      e.tone(f2, dur, 'sawtooth', vol * 0.15, 0, null, destNode);
+      e.tone(f1 * 0.5, dur, 'sine', vol * 0.22, 0, null, destNode);
     } else if (type === 'suv') {
-      // Громкий басовитый клаксон внедорожника
       const f1 = 330, f2 = 415;
-      this._tone(f1, dur, 'sawtooth', vol * 0.14, 0, null, destNode);
-      this._tone(f2, dur, 'square', vol * 0.12, 0, null, destNode);
-      this._tone(f1 * 0.5, dur, 'sine', vol * 0.15, 0, null, destNode);
+      e.tone(f1, dur, 'sawtooth', vol * 0.14, 0, null, destNode);
+      e.tone(f2, dur, 'square', vol * 0.12, 0, null, destNode);
+      e.tone(f1 * 0.5, dur, 'sine', vol * 0.15, 0, null, destNode);
     } else if (type === 'classic') {
-      // Звук классического гудка советского седана (Жигули/Пятерка)
       const f1 = 370, f2 = 293.66;
-      this._tone(f1, dur, 'sawtooth', vol * 0.14, 0, null, destNode);
-      this._tone(f2, dur, 'sawtooth', vol * 0.14, 0, null, destNode);
-      this._tone(f2 * 0.5, dur, 'sine', vol * 0.12, 0, null, destNode);
+      e.tone(f1, dur, 'sawtooth', vol * 0.14, 0, null, destNode);
+      e.tone(f2, dur, 'sawtooth', vol * 0.14, 0, null, destNode);
+      e.tone(f2 * 0.5, dur, 'sine', vol * 0.12, 0, null, destNode);
     } else {
-      // Стандартный европейский двухтональный легковой гудок
       const f1 = 415, f2 = 330;
-      this._tone(f1, dur, 'sawtooth', vol * 0.13, 0, null, destNode);
-      this._tone(f2, dur, 'square', vol * 0.11, 0, null, destNode);
-      this._tone(f2 * 0.5, dur, 'sine', vol * 0.10, 0, null, destNode);
+      e.tone(f1, dur, 'sawtooth', vol * 0.13, 0, null, destNode);
+      e.tone(f2, dur, 'square', vol * 0.11, 0, null, destNode);
+      e.tone(f2 * 0.5, dur, 'sine', vol * 0.10, 0, null, destNode);
     }
   }
 
   crash(impact) {
-    if (!this.enabled) return;
+    const e = this.engine;
+    if (!e.enabled || !e.alloc('crash')) return;
+    e.releaseAfter('crash', 700);
     const k = Math.min(1, Math.max(0, impact / 30));
-    // Глубокий металлический удар + метаморфный шумок
-    this._noiseBurst(0.3 + k * 0.3, 0.4 + k * 0.4, 350 + k * 800);
-    this._tone(70, 0.4, 'sine', 0.35 + k * 0.25, 0, 35);
-    this._tone(160, 0.25, 'sawtooth', 0.15 + k * 0.15, 0, 50);
+    e.noiseBurst(0.3 + k * 0.3, 0.4 + k * 0.4, 350 + k * 800);
+    e.tone(70, 0.4, 'sine', 0.35 + k * 0.25, 0, 35);
+    e.tone(160, 0.25, 'sawtooth', 0.15 + k * 0.15, 0, 50);
   }
 
   cash(amount) {
-    if (!this.enabled) return;
-    // Бренчание монет / кассовый аппарат
-    const n = Math.min(6, Math.max(2, 1 + Math.floor(Math.abs(amount) / 120)));
+    const e = this.engine;
+    if (!e.enabled) return;
+    const n = Math.min(6, Math.max(2, 1 + Math.floor(Math.abs(amount || 0) / 120)));
     for (let i = 0; i < n; i++) {
-      this._tone(1046.5 + i * 180, 0.1, 'triangle', 0.14, i * 0.09, 1318.5);
+      e.tone(1046.5 + i * 180, 0.1, 'triangle', 0.14, i * 0.09, 1318.5);
     }
   }
 
   pickup() {
-    if (!this.enabled) return;
-    // Приятный двутональный джингл принятия заказа
-    this._tone(523.25, 0.09, 'sine', 0.16);
-    this._tone(659.25, 0.12, 'triangle', 0.18, 0.08);
-    this._tone(783.99, 0.16, 'sine', 0.15, 0.16);
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.tone(523.25, 0.09, 'sine', 0.16);
+    e.tone(659.25, 0.12, 'triangle', 0.18, 0.08);
+    e.tone(783.99, 0.16, 'sine', 0.15, 0.16);
   }
 
   speak() {
-    if (!this.enabled) return;
-    this._tone(480, 0.07, 'sine', 0.1);
-    this._tone(640, 0.1, 'sine', 0.09, 0.05);
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.tone(480, 0.07, 'sine', 0.1);
+    e.tone(640, 0.1, 'sine', 0.09, 0.05);
   }
 
   fail() {
-    if (!this.enabled) return;
-    // Низкий разочаровывающий звук провала
-    this._tone(293.66, 0.22, 'sawtooth', 0.12, 0, 220);
-    this._tone(220.00, 0.35, 'sawtooth', 0.12, 0.18, 140);
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.tone(293.66, 0.22, 'sawtooth', 0.12, 0, 220);
+    e.tone(220.00, 0.35, 'sawtooth', 0.12, 0.18, 140);
   }
 
   pedHit() {
-    if (!this.enabled) return;
-    this._noiseBurst(0.35, 0.4, 450);
-    this._tone(130, 0.35, 'sine', 0.25, 0, 60);
+    const e = this.engine;
+    if (!e.enabled || !e.alloc('ped', 'pedHit')) return;
+    e.releaseAfter('ped', 500);
+    e.noiseBurst(0.35, 0.4, 450);
+    e.tone(130, 0.35, 'sine', 0.25, 0, 60);
   }
 
   thud() {
-    if (!this.enabled) return;
-    this._noiseBurst(0.2, 0.4, 300);
-    this._tone(90, 0.2, 'sine', 0.3, 0, 40);
+    const e = this.engine;
+    if (!e.enabled || !e.alloc('ped', 'thud')) return;
+    e.releaseAfter('ped', 300);
+    e.noiseBurst(0.2, 0.4, 300);
+    e.tone(90, 0.2, 'sine', 0.3, 0, 40);
   }
 
+  /* Двигатель глохнет: рык вниз + пара «чихов» */
   stall() {
-    if (!this.enabled) return;
-    this._tone(110, 0.5, 'sawtooth', 0.14, 0, 35);
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.tone(110, 0.5, 'sawtooth', 0.14, 0, 35);
+    for (let i = 0; i < 3; i++) {
+      e.noiseBurst(0.06, 0.12, 900, 0.05 + i * 0.13);
+    }
   }
 
   click() {
-    if (!this.enabled) return;
-    this._tone(587.33, 0.05, 'triangle', 0.09);
+    const e = this.engine;
+    if (!e.enabled || !e.alloc('click')) return;
+    e.releaseAfter('click', 100);
+    e.tone(587.33, 0.05, 'triangle', 0.09, 0, null, e.buses.ui);
   }
 
+  /* Заправка: гул насоса + щелчок пистолета в конце */
   refuel() {
-    if (!this.enabled) return;
-    this._tone(261.63, 0.6, 'sawtooth', 0.09, 0, 880);
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.noiseBurst(2.6, 0.05, 300);
+    e.tone(261.63, 0.15, 'sawtooth', 0.07, 2.5, 880);
+    e.tone(1400, 0.05, 'triangle', 0.08, 2.75);
   }
 
   bird() {
+    const e = this.engine;
+    if (!e.enabled) return;
     const f = 1900 + Math.random() * 1200;
-    this._tone(f, 0.08, 'sine', 0.03);
-    this._tone(f * 0.88, 0.07, 'sine', 0.025, 0.09);
+    e.tone(f, 0.08, 'sine', 0.03, 0, null, e.buses.ambient);
+    e.tone(f * 0.88, 0.07, 'sine', 0.025, 0.09, null, e.buses.ambient);
   }
 
   raceGo() {
-    if (!this.enabled) return;
-    this._tone(523.25, 0.14, 'square', 0.12);
-    this._tone(659.25, 0.14, 'square', 0.12, 0.18);
-    this._tone(783.99, 0.28, 'square', 0.14, 0.36);
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.tone(523.25, 0.14, 'square', 0.12);
+    e.tone(659.25, 0.14, 'square', 0.12, 0.18);
+    e.tone(783.99, 0.28, 'square', 0.14, 0.36);
+  }
+
+  /* Столкновение с краем карты — глухой удар о невидимую стену */
+  edgeBump() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.noiseBurst(0.15, 0.25, 500);
+    e.tone(70, 0.15, 'sine', 0.2);
+  }
+
+  /* Закрытие двери — щелчок + удар + короткий резонанс кузова (посадка) */
+  doorClose() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.noiseBurst(0.02, 0.15, 3000);
+    e.tone(130, 0.12, 'sine', 0.2, 0.01, 80);
+    e.tone(220, 0.08, 'triangle', 0.08, 0.02);
+  }
+
+  /* Открытие двери — скрип + защёлка (высадка) */
+  doorOpen() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.tone(190, 0.25, 'sawtooth', 0.06, 0, 110);
+    e.noiseBurst(0.03, 0.08, 2000, 0.24);
+  }
+
+  /* Запуск двигателя — стартер + «схват» и стабилизация оборотов */
+  engineStart() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.noiseBurst(0.5, 0.08, 500);
+    e.tone(42, 0.5, 'square', 0.1, 0, 50);
+    e.tone(48, 0.25, 'sawtooth', 0.12, 0.55, 46);
+  }
+
+  /* Ручник — трещотка из 4 щелчков */
+  handbrake() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    for (let i = 0; i < 4; i++) e.noiseBurst(0.02, 0.08, 3500, i * 0.032);
   }
 
   spatialSpeak(sourceX, sourceZ, playerX, playerZ, type = 'shout', playerHeading = 0) {
-    if (!this.enabled || !this.ctx || !this.sfxGain) return;
+    const e = this.engine;
+    if (!e.enabled || !e.ctx) return;
 
     let vol = 1.0;
     let panVal = 0;
@@ -2805,6 +2908,7 @@ class AudioManager {
       const dist = Math.hypot(dx, dz);
       const maxDist = 55;
       if (dist > maxDist) return;
+      if (!e.alloc('voice')) return;
 
       const att = Math.pow(1 - dist / maxDist, 1.6);
       vol = Math.min(1.0, Math.max(0.01, att * 0.85));
@@ -2812,18 +2916,14 @@ class AudioManager {
       const angleToSource = Math.atan2(dx, dz);
       const relAngle = angleToSource - (playerHeading || 0);
       panVal = Math.min(0.85, Math.max(-0.85, Math.sin(relAngle)));
+    } else if (!e.alloc('voice')) {
+      return;
     }
 
-    const c = this.ctx;
+    const c = e.ctx;
     const t = c.currentTime;
-
-    let destNode = this.sfxGain;
-    if (c.createStereoPanner) {
-      const panner = c.createStereoPanner();
-      panner.pan.setValueAtTime(panVal, t);
-      panner.connect(this.sfxGain);
-      destNode = panner;
-    }
+    const destNode = e.takePanner('voice', panVal, t);
+    e.releaseAfter('voice', 450);
 
     if (type === 'angry' || type === 'driver' || type === 'grump' || type === 'crash') {
       const o1 = c.createOscillator(); o1.type = 'sawtooth';
@@ -2886,10 +2986,452 @@ class AudioManager {
     }
   }
 
-  // ----- Управление радиостанциями -----
+  /* Стингер смены дня/ночи — короткий мотив из 3 нот */
+  dayNightChime() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.tone(392.0, 0.3, 'sine', 0.05, 0, null, e.buses.ambient);
+    e.tone(493.88, 0.3, 'sine', 0.05, 0.22, null, e.buses.ambient);
+    e.tone(587.33, 0.5, 'sine', 0.06, 0.44, null, e.buses.ambient);
+  }
+
+  /* Гром в дождь — низкий шумовой раскат с суб-басом, идёт в реверб через sfx-шину */
+  thunder() {
+    const e = this.engine;
+    if (!e.enabled || !e.alloc('crash')) return; // делим бюджет с crash — оба редкие и громкие
+    e.releaseAfter('crash', 1000);
+    e.noiseBurst(0.9, 0.22, 400);
+    e.tone(38, 0.9, 'sine', 0.18, 0, 30);
+  }
+
+  /* Итог смены — тёплый спускающийся стингер на 4 ноты */
+  shiftEnd() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.tone(659.25, 0.16, 'sine', 0.12, 0);
+    e.tone(587.33, 0.16, 'sine', 0.12, 0.15);
+    e.tone(523.25, 0.16, 'sine', 0.12, 0.3);
+    e.tone(392.0, 0.35, 'sine', 0.14, 0.45);
+  }
+
+  /* Тикание на исходе таймера срочного заказа — тон растёт по мере убывания */
+  orderTimerBeep(left) {
+    const e = this.engine;
+    if (!e.enabled) return;
+    const freq = 660 + (10 - Math.max(0, Math.min(10, left))) * 33;
+    e.tone(freq, 0.1, 'sine', 0.07, 0, null, e.buses.ui);
+  }
+
+  /* Сирена спецтранспорта — двухтоновый вой с 3D-позиционированием (как horn) */
+  siren(opts = {}) {
+    const e = this.engine;
+    if (!e.enabled || !e.ctx) return;
+    if (!e.alloc('siren')) return;
+
+    let vol = 1.0, panVal = 0;
+    if (opts.sourceX !== undefined && opts.playerX !== undefined) {
+      const dx = opts.sourceX - opts.playerX, dz = opts.sourceZ - opts.playerZ;
+      const dist = Math.hypot(dx, dz);
+      const maxDist = 120;
+      if (dist > maxDist) { e.free('siren'); return; }
+      vol = Math.min(1, Math.max(0.1, Math.pow(1 - dist / maxDist, 1.1)));
+      const rel = Math.atan2(dx, dz) - (opts.playerHeading || 0);
+      panVal = Math.min(0.85, Math.max(-0.85, Math.sin(rel)));
+    }
+
+    const c = e.ctx;
+    const t = c.currentTime;
+    const dur = 1.4;
+    const destNode = e.takePanner('sfx', panVal, t);
+    e.releaseAfter('siren', dur * 1000 + 100);
+
+    const type = opts.type === 'ambulance' ? 'ambulance' : 'police';
+    const o = c.createOscillator(); o.type = 'sine';
+    const lfoRate = type === 'ambulance' ? 3.2 : 0.9;
+    const lo = type === 'ambulance' ? 550 : 700, hi = type === 'ambulance' ? 950 : 1100;
+    const steps = Math.round(dur * lfoRate * 2);
+    for (let i = 0; i <= steps; i++) {
+      const tt = t + (i / steps) * dur;
+      o.frequency.linearRampToValueAtTime(i % 2 === 0 ? hi : lo, tt);
+    }
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t);
+    g.gain.linearRampToValueAtTime(vol * 0.09, t + 0.1);
+    g.gain.setValueAtTime(vol * 0.09, t + dur - 0.15);
+    g.gain.linearRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(destNode);
+    o.start(t); o.stop(t + dur + 0.05);
+  }
+
+  /* Шаг ближайшего пешехода — короткий приглушённый шумовой тук */
+  footstep(pan = 0, vol = 1) {
+    const e = this.engine;
+    if (!e.enabled || !e.alloc('voice', 'step')) return;
+    e.releaseAfter('voice', 100);
+    const t = e.ctx.currentTime;
+    const destNode = e.takePanner('voice', pan, t);
+    e.noiseBurst(0.05, 0.05 * vol, 220, 0, destNode);
+  }
+}
+
+/* ===== audioloops.js ===== */
+/* Непрерывные звуковые слои: двигатель, скрип шин, качение шин, ветер,
+   скрип тормозов, дребезг от урона, городской эмбиент (ветер-эмбиент +
+   птицы), дождь. Каждый слой строится один раз в build() и дальше только
+   модулируется через update*()/set*() — без пересоздания узлов. */
+
+/* Тембр двигателя на машину (config.js CARS[].base.carType): базовая частота
+   и микс осцилляторов _buildEngine() — дёшево, но даёт 7 разных «характеров»
+   вместо одного звука на все машины. */
+const LOOP_ENGINE_PROFILES = {
+  taxi: { base: 46, mixSquare: 0.5, mixTri: 0.18 },       // «Пятёрочка» — тарахтит
+  classic: { base: 45, mixSquare: 0.55, mixTri: 0.15 },   // «Классика» 2107 — ещё грубее
+  comfort: { base: 50, mixSquare: 0.35, mixTri: 0.25 },   // сбалансированный
+  minivan: { base: 44, mixSquare: 0.3, mixTri: 0.32 },    // низкий, ровный гул
+  business: { base: 58, mixSquare: 0.22, mixTri: 0.35 },  // премиум — ровнее, выше
+  sport: { base: 62, mixSquare: 0.15, mixTri: 0.12 },     // высокий, чистый
+  offroad: { base: 50, mixSquare: 0.4, mixTri: 0.28 },    // тяговитый, грубый
+};
+class LoopLayer {
+  constructor(engine) {
+    this.engine = engine;
+    this.engineNodes = null;
+    this.skidNodes = null;
+    this.tyreNodes = null;
+    this.windNodes = null;
+    this.brakeNodes = null;
+    this.damageNodes = null;
+    this.ambNodes = null;
+    this.rainNodes = null;
+    this._birdTimer = null;
+    this._paused = false;
+    this._engineBase = 48;
+    this._gravelNext = 0;
+    this._nextClank = 0;
+    this._nextBump = 0;
+    this._fuelWarnNext = 0;
+    this._lastGroundY = undefined;
+    /* Колбэк озвучки птицы — прокидывается фасадом AudioManager, чтобы
+       LoopLayer не знал о SfxLibrary напрямую */
+    this.playBird = null;
+  }
+
+  build() {
+    this._buildEngine();
+    this._buildSkid();
+    this._buildTyre();
+    this._buildWind();
+    this._buildBrake();
+    this._buildDamage();
+    this._buildAmbient();
+  }
+
+  /* --- Двигатель: 3 осциллятора с саб-басом, фильтрацией и рыком --- */
+  _buildEngine() {
+    const c = this.engine.ctx;
+    const o1 = c.createOscillator(); o1.type = 'sawtooth'; o1.frequency.value = 55;
+    const o2 = c.createOscillator(); o2.type = 'square'; o2.frequency.value = 27.5;
+    const o3 = c.createOscillator(); o3.type = 'triangle'; o3.frequency.value = 110;
+
+    const g2 = c.createGain(); g2.gain.value = 0.4;
+    const g3 = c.createGain(); g3.gain.value = 0.2;
+
+    const flt = c.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = 450; flt.Q.value = 2.5;
+    const g = c.createGain(); g.gain.value = 0;
+
+    o1.connect(flt);
+    o2.connect(g2); g2.connect(flt);
+    o3.connect(g3); g3.connect(flt);
+
+    flt.connect(g);
+    g.connect(this.engine.buses.engine);
+
+    o1.start(); o2.start(); o3.start();
+    this.engineNodes = { o1, o2, o3, g2, g3, flt, g };
+  }
+
+  /* Профиль тембра под конкретную машину (вызывается при смене carType) */
+  setEngineProfile(carType) {
+    const p = LOOP_ENGINE_PROFILES[carType] || LOOP_ENGINE_PROFILES.taxi;
+    this._engineBase = p.base;
+    if (this.engineNodes) {
+      const c = this.engine.ctx;
+      this.engineNodes.g2.gain.setTargetAtTime(p.mixSquare, c.currentTime, 0.3);
+      this.engineNodes.g3.gain.setTargetAtTime(p.mixTri, c.currentTime, 0.3);
+    }
+  }
+
+  /* Скрип шин при заносе — полосовой фильтр с модулированным шумом */
+  _buildSkid() {
+    const c = this.engine.ctx;
+    const src = c.createBufferSource(); src.buffer = this.engine._noise(2); src.loop = true;
+    const flt = c.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = 950; flt.Q.value = 2.0;
+    const g = c.createGain(); g.gain.value = 0;
+    src.connect(flt); flt.connect(g); g.connect(this.engine.buses.sfx);
+    src.start();
+    this.skidNodes = { flt, g };
+  }
+
+  /* Качение шин по асфальту/бездорожью — постоянный слой, раньше между
+     холостым двигателем и визгом покрышек была полная тишина */
+  _buildTyre() {
+    const c = this.engine.ctx;
+    const src = c.createBufferSource(); src.buffer = this.engine._noise(2); src.loop = true;
+    const flt = c.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = 400; flt.Q.value = 0.7;
+    const flt2 = c.createBiquadFilter(); flt2.type = 'bandpass'; flt2.frequency.value = 1400; flt2.Q.value = 1.2;
+    const g = c.createGain(); g.gain.value = 0;
+    const g2 = c.createGain(); g2.gain.value = 0; // добавка для бездорожья
+    src.connect(flt); flt.connect(g); g.connect(this.engine.buses.engine);
+    src.connect(flt2); flt2.connect(g2); g2.connect(this.engine.buses.engine);
+    src.start();
+    this.tyreNodes = { flt, g, g2 };
+  }
+
+  updateTyre(speed, onRoad) {
+    if (!this.tyreNodes) return;
+    const c = this.engine.ctx;
+    const spd = Math.abs(speed || 0);
+    if (this.engine.enabled && spd > 0.5) {
+      const roadGain = Math.min(0.09, spd * 0.006);
+      this.tyreNodes.flt.frequency.setTargetAtTime(250 + spd * 30, c.currentTime, 0.1);
+      this.tyreNodes.g.gain.setTargetAtTime(onRoad ? roadGain : roadGain * 0.4, c.currentTime, 0.1);
+      this.tyreNodes.g2.gain.setTargetAtTime(onRoad ? 0 : roadGain * 0.8, c.currentTime, 0.1);
+      if (!onRoad && spd > 2) {
+        const now = c.currentTime;
+        if (now >= this._gravelNext) {
+          this._gravelNext = now + 0.08 + Math.random() * 0.12;
+          this.engine.noiseBurst(0.04, 0.05, 2500, 0, this.engine.buses.engine);
+        }
+      }
+    } else {
+      this.tyreNodes.g.gain.setTargetAtTime(0, c.currentTime, 0.15);
+      this.tyreNodes.g2.gain.setTargetAtTime(0, c.currentTime, 0.15);
+    }
+  }
+
+  /* Ветер — растёт с квадратом скорости, даёт ощущение скорости лучше,
+     чем один только рост тона двигателя */
+  _buildWind() {
+    const c = this.engine.ctx;
+    const src = c.createBufferSource(); src.buffer = this.engine._noise(2); src.loop = true;
+    const flt = c.createBiquadFilter(); flt.type = 'highpass'; flt.frequency.value = 380;
+    const g = c.createGain(); g.gain.value = 0;
+    src.connect(flt); flt.connect(g); g.connect(this.engine.buses.ambient);
+    src.start();
+    this.windNodes = { flt, g };
+  }
+
+  updateWind(speed, maxSpeed) {
+    if (!this.windNodes) return;
+    const c = this.engine.ctx;
+    const spd = Math.abs(speed || 0);
+    const t = Math.min(1, spd / Math.max(1, maxSpeed || 40));
+    if (this.engine.enabled) {
+      this.windNodes.flt.frequency.setTargetAtTime(380 + spd * 35, c.currentTime, 0.15);
+      this.windNodes.g.gain.setTargetAtTime(t * t * 0.11, c.currentTime, 0.15);
+    } else {
+      this.windNodes.g.gain.setTargetAtTime(0, c.currentTime, 0.15);
+    }
+  }
+
+  /* Скрип тормозов — резонансный полосовой шум + тон, атака 80мс чтобы не щёлкало */
+  _buildBrake() {
+    const c = this.engine.ctx;
+    const src = c.createBufferSource(); src.buffer = this.engine._noise(1); src.loop = true;
+    const flt = c.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = 2400; flt.Q.value = 9;
+    const g = c.createGain(); g.gain.value = 0;
+    const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = 1650;
+    const og = c.createGain(); og.gain.value = 0;
+    src.connect(flt); flt.connect(g); g.connect(this.engine.buses.engine);
+    o.connect(og); og.connect(this.engine.buses.engine);
+    o.start(); src.start();
+    this.brakeNodes = { g, og };
+  }
+
+  updateBrake(brake, speed) {
+    if (!this.brakeNodes) return;
+    const c = this.engine.ctx;
+    const spd = Math.abs(speed || 0);
+    const active = this.engine.enabled && brake > 0.5 && spd > 4;
+    const amt = active ? Math.min(1, spd / 12) * ((brake - 0.5) * 2) : 0;
+    const tau = active ? 0.08 : 0.12;
+    this.brakeNodes.g.gain.setTargetAtTime(active ? amt * 0.1 : 0, c.currentTime, tau);
+    this.brakeNodes.og.gain.setTargetAtTime(active ? amt * 0.05 : 0, c.currentTime, tau);
+  }
+
+  /* Дребезг кузова при сильном повреждении — AM на квадратной волне через
+     полосовой фильтр + редкий металлический лязг при damage > 80 */
+  _buildDamage() {
+    const c = this.engine.ctx;
+    const o = c.createOscillator(); o.type = 'square'; o.frequency.value = 62;
+    const lfo = c.createOscillator(); lfo.type = 'sine'; lfo.frequency.value = 8.5;
+    const lfoGain = c.createGain(); lfoGain.gain.value = 0.5;
+    const carrierGain = c.createGain(); carrierGain.gain.value = 0.5;
+    lfo.connect(lfoGain); lfoGain.connect(carrierGain.gain);
+    const flt = c.createBiquadFilter(); flt.type = 'bandpass'; flt.frequency.value = 900; flt.Q.value = 3;
+    const g = c.createGain(); g.gain.value = 0;
+    o.connect(carrierGain); carrierGain.connect(flt); flt.connect(g); g.connect(this.engine.buses.engine);
+    o.start(); lfo.start();
+    this.damageNodes = { g };
+  }
+
+  updateDamageRattle(damage, speed) {
+    if (!this.damageNodes) return;
+    const c = this.engine.ctx;
+    const spd = Math.abs(speed || 0);
+    if (this.engine.enabled && damage > 50 && spd > 1) {
+      const amt = ((damage - 50) / 50) * Math.min(1, spd / 8);
+      this.damageNodes.g.gain.setTargetAtTime(amt * 0.06, c.currentTime, 0.2);
+      if (damage > 80) {
+        const now = c.currentTime;
+        if (now >= this._nextClank) {
+          this._nextClank = now + 3 + Math.random() * 5;
+          this.engine.noiseBurst(0.08, 0.12, 1800, 0, this.engine.buses.engine);
+        }
+      }
+    } else {
+      this.damageNodes.g.gain.setTargetAtTime(0, c.currentTime, 0.2);
+    }
+  }
+
+  /* Предупреждающий бип на низком топливе — раз в 8с при <12%, раз в 3с при <5% */
+  updateFuelWarning(fuelFrac) {
+    if (fuelFrac === undefined || !this.engine.ctx || !this.engine.enabled) return;
+    const now = this.engine.ctx.currentTime;
+    const interval = fuelFrac < 0.05 ? 3 : fuelFrac < 0.12 ? 8 : 0;
+    if (!interval) { this._fuelWarnNext = 0; return; }
+    if (!this._fuelWarnNext || now >= this._fuelWarnNext) {
+      this._fuelWarnNext = now + interval;
+      this.engine.tone(880, 0.12, 'sine', 0.06, 0, null, this.engine.buses.ui);
+    }
+  }
+
+  /* Кочки/подвеска — реагирует на резкий скачок groundY между кадрами */
+  updateSuspension(groundY) {
+    if (groundY === undefined || !this.engine.ctx) return;
+    const c = this.engine.ctx;
+    if (this._lastGroundY !== undefined) {
+      const dy = Math.abs(groundY - this._lastGroundY);
+      const now = c.currentTime;
+      if (this.engine.enabled && dy > 0.12 && now >= this._nextBump) {
+        this._nextBump = now + 0.2;
+        this.engine.noiseBurst(0.1, 0.15, 400, 0, this.engine.buses.engine);
+        this.engine.tone(95, 0.18, 'sine', 0.12, 0, 55, this.engine.buses.engine);
+      }
+    }
+    this._lastGroundY = groundY;
+  }
+
+  /* Городской эмбиент: шелест ветра-эмбиента + птицы */
+  _buildAmbient() {
+    const c = this.engine.ctx;
+    const src = c.createBufferSource(); src.buffer = this.engine._noise(3); src.loop = true;
+    const flt = c.createBiquadFilter(); flt.type = 'lowpass'; flt.frequency.value = 350;
+    const g = c.createGain(); g.gain.value = 0.04;
+    src.connect(flt); flt.connect(g); g.connect(this.engine.buses.ambient);
+    src.start();
+    this.ambNodes = { flt, g };
+    this._birdTimer = setInterval(() => {
+      if (this.engine.enabled && !this._paused && Math.random() < 0.6 && this.playBird) this.playBird();
+    }, 6500);
+  }
+
+  /* Дождь — создаётся лениво при первом включении погоды */
+  setRain(on) {
+    const c = this.engine.ctx;
+    if (!c) return;
+    if (on && !this.rainNodes) {
+      const src = c.createBufferSource(); src.buffer = this.engine._noise(2); src.loop = true;
+      const flt = c.createBiquadFilter(); flt.type = 'highpass'; flt.frequency.value = 1100;
+      const g = c.createGain(); g.gain.value = 0;
+      src.connect(flt); flt.connect(g); g.connect(this.engine.buses.ambient);
+      src.start();
+      this.rainNodes = { flt, g };
+    }
+    if (this.rainNodes) this.rainNodes.g.gain.setTargetAtTime(on ? 0.06 : 0, c.currentTime, 0.6);
+  }
+
+  updateEngine(rpm, throttle, running) {
+    if (!this.engineNodes) return;
+    const c = this.engine.ctx;
+    const { o1, o2, o3, flt, g } = this.engineNodes;
+    if (this.engine.enabled && running) {
+      const baseFreq = this._engineBase + rpm * 140;
+      o1.frequency.setTargetAtTime(baseFreq, c.currentTime, 0.04);
+      o2.frequency.setTargetAtTime(baseFreq * 0.5, c.currentTime, 0.04);
+      o3.frequency.setTargetAtTime(baseFreq * 1.5, c.currentTime, 0.04);
+
+      flt.frequency.setTargetAtTime(300 + rpm * 900 + throttle * 350, c.currentTime, 0.06);
+      g.gain.setTargetAtTime(0.06 + throttle * 0.12 + rpm * 0.05, c.currentTime, 0.08);
+    } else {
+      g.gain.setTargetAtTime(0, c.currentTime, 0.1);
+    }
+  }
+
+  updateSkid(intensity) {
+    if (!this.skidNodes) return;
+    const c = this.engine.ctx;
+    const { flt, g } = this.skidNodes;
+    if (this.engine.enabled && intensity > 0.02) {
+      flt.frequency.setTargetAtTime(700 + intensity * 950, c.currentTime, 0.04);
+      g.gain.setTargetAtTime(0.08 * intensity, c.currentTime, 0.04);
+    } else {
+      g.gain.setTargetAtTime(0, c.currentTime, 0.05);
+    }
+  }
+
+  setPaused(paused) {
+    this._paused = paused;
+    if (paused) {
+      this.updateEngine(0, 0, false);
+      this.updateSkid(0);
+      this.updateTyre(0, true);
+      this.updateWind(0, 1);
+      this.updateBrake(0, 0);
+      this.updateDamageRattle(0, 0);
+    }
+  }
+
+  dispose() {
+    if (this._birdTimer) { clearInterval(this._birdTimer); this._birdTimer = null; }
+  }
+}
+
+/* ===== audiomusic.js ===== */
+
+/* Радиодвижок на Tone.js: Tone.Transport вместо рекурсивного setTimeout
+   (без дрейфа при просадке FPS), настоящие инструменты (MembraneSynth,
+   NoiseSynth, MetalSynth, MonoSynth, PolySynth) вместо трёх осцилляторов
+   вручную, индивидуальный BPM и текстура на станцию, кроссфейд-перестройка,
+   даккинг на речь/краш, приглушение по дистанции камеры.
+
+   Tone.js подключается вторым CDN-скриптом рядом с three.js (build.py).
+   Если CDN недоступен (window.Tone отсутствует/window.__toneFailed) —
+   радио молча остаётся без звука, вся остальная игра не страдает: статик
+   при переключении станции реализован на чистом Web Audio через
+   AudioEngine.noiseBurst/tone и не зависит от Tone вовсе. */
+class RadioEngine {
+  constructor(engine) {
+    this.engine = engine;
+    this.musicOn = true;
+    this._running = false;
+    this._toneAvailable = false;
+    this._setup = false;
+    this._hour = 9;
+    this._night = false;
+
+    this.stations = [
+      { id: 'off', name: 'Радио ВЫКЛ', genre: 'Тишина', icon: '🔇' },
+      { id: 'pyatigorsk', name: 'Пятигорск FM', genre: 'Лоу-фай Чилл', icon: '📻', bpm: 84 },
+      { id: 'synth', name: 'Машук Synth 80s', genre: 'Ретровейв / Синт', icon: '🌆', bpm: 116 },
+      { id: 'kavkaz', name: 'Кавказ Beat', genre: 'Динамичный Этно-бит', icon: '⛰️', bpm: 128 },
+      { id: 'chanson', name: 'Кавказ Шансон', genre: 'Душевный Блатняк', icon: '🪕', bpm: 104 },
+      { id: 'chilled', name: 'Ночной Курорт', genre: 'Эмбиент Дезерт', icon: '🌙', bpm: 72 },
+    ];
+    this.currentStationIndex = 1; // По умолчанию Пятигорск FM
+  }
+
   nextStation() {
-    this.currentStationIndex = (this.currentStationIndex + 1) % this.stations.length;
-    this._playRadioStatic();
+    this._crossfadeTo((this.currentStationIndex + 1) % this.stations.length);
     const st = this.getCurrentStation();
     Events.emit('radio:changed', st);
     return st;
@@ -2899,14 +3441,31 @@ class AudioManager {
     return this.stations[this.currentStationIndex];
   }
 
-  /* Звук смены частот аналогового радио (радиовещательный шумок + свист гетеродина) */
-  _playRadioStatic() {
-    if (!this.enabled || !this.ctx) return;
-    const c = this.ctx;
+  getStationId() {
+    return this.getCurrentStation().id;
+  }
+
+  /* Восстановление станции по id из сохранения (а не по индексу — вставка
+     новой станции в середину списка иначе перепутала бы старые сейвы).
+     До первого unlock() (ctx ещё нет) просто переставляет индекс без
+     кроссфейда/статика — эффекты внутри _crossfadeTo сами ничего не делают
+     без готового AudioContext. */
+  setStationId(id) {
+    const idx = this.stations.findIndex((s) => s.id === id);
+    if (idx < 0 || idx === this.currentStationIndex) return;
+    this._crossfadeTo(idx);
+    Events.emit('radio:changed', this.getCurrentStation());
+  }
+
+  /* Звук смены частот аналогового радио — чистый Web Audio, работает даже
+     без Tone.js */
+  _playStatic() {
+    const e = this.engine;
+    if (!e.enabled || !e.ctx) return;
+    const c = e.ctx;
     const t = c.currentTime;
 
-    // 1. Белый шум перестройки частоты (FM Static)
-    const src = c.createBufferSource(); src.buffer = this._noiseBuffer(0.35);
+    const src = c.createBufferSource(); src.buffer = e._noise(0.35);
     const flt = c.createBiquadFilter(); flt.type = 'bandpass';
     flt.frequency.setValueAtTime(1500, t);
     flt.frequency.exponentialRampToValueAtTime(5500, t + 0.18);
@@ -2917,10 +3476,9 @@ class AudioManager {
     g.gain.setValueAtTime(0.18, t);
     g.gain.exponentialRampToValueAtTime(0.001, t + 0.34);
 
-    src.connect(flt); flt.connect(g); g.connect(this.musicGain);
+    src.connect(flt); flt.connect(g); g.connect(e.buses.music);
     src.start(t); src.stop(t + 0.35);
 
-    // 2. Свист поиска гетеродина (Heterodyne Tuning Whistle)
     const osc = c.createOscillator(); osc.type = 'sine';
     osc.frequency.setValueAtTime(800, t);
     osc.frequency.exponentialRampToValueAtTime(3200, t + 0.15);
@@ -2930,299 +3488,619 @@ class AudioManager {
     oscG.gain.setValueAtTime(0.05, t);
     oscG.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
 
-    osc.connect(oscG); oscG.connect(this.musicGain);
+    osc.connect(oscG); oscG.connect(e.buses.music);
     osc.start(t); osc.stop(t + 0.31);
   }
 
-  /* --- Музыкальный полифонический трекер-секвенсор с сайдчейном и дилэем --- */
-  startMusic() {
-    if (this._musicTimer || !this._ready) return;
+  /* Кроссфейд между станциями: короткий фейд-аут -> статик -> фейд-ин на новой
+     станции с новым BPM/текстурой */
+  _crossfadeTo(newIndex) {
+    this.currentStationIndex = newIndex;
+    this._playStatic();
+    if (!this._toneAvailable) return;
+    const now = Tone.now();
+    this._fadeGain.gain.cancelScheduledValues(now);
+    this._fadeGain.gain.setValueAtTime(this._fadeGain.gain.value, now);
+    this._fadeGain.gain.linearRampToValueAtTime(0, now + 0.12);
+    this._fadeGain.gain.setValueAtTime(0, now + 0.3);
+    this._fadeGain.gain.linearRampToValueAtTime(1, now + 0.5);
+    this._applyBpm();
+    this._applyStationColor(this.getCurrentStation());
+  }
 
-    let sixteenthStep = 0;
-    const BPM = 118; // Динамичный темп 118 BPM
-    const stepDuration = (60 / BPM) / 4; // ~127 мс на 1/16 шаг
+  /* Приглушение и приглушение верхов радио, когда камера отдаляется от
+     машины (радио «играет из салона») */
+  setCamDist(dist) {
+    if (!this._toneAvailable) return;
+    // Вызывается каждый кадр из updateVehicle() — не перепланируем автоматизацию,
+    // если дистанция камеры почти не изменилась (иначе 60 rampTo()/сек впустую)
+    if (this._lastCamDist !== undefined && Math.abs(dist - this._lastCamDist) < 0.15) return;
+    this._lastCamDist = dist;
+    const t = Math.max(0, Math.min(1, (dist - 5) / (16 - 5)));
+    const freq = 6500 - t * (6500 - 900);
+    const gainMul = 1 - t * 0.45;
+    this._radioLP.frequency.rampTo(freq, 0.15);
+    this._camGain.gain.rampTo(gainMul, 0.15);
+  }
 
-    // Дополнительные звуковые шины и эффекты для музыки
-    const c = this.ctx;
-    const musicBus = c.createGain(); musicBus.gain.value = 0.8;
-    const sidechainBus = c.createGain(); sidechainBus.gain.value = 1.0;
-    
-    // Эффект задержки (Stereo Delay)
-    const delayNode = c.createDelay(); delayNode.delayTime.value = stepDuration * 3; // 3/16 эхо
-    const delayFeedback = c.createGain(); delayFeedback.gain.value = 0.32;
-    const delayFilter = c.createBiquadFilter(); delayFilter.type = 'lowpass'; delayFilter.frequency.value = 2200;
-    
-    delayNode.connect(delayFilter);
-    delayFilter.connect(delayFeedback);
-    delayFeedback.connect(delayNode);
-    delayFilter.connect(this.musicGain);
+  /* Даккинг радио на речь пассажира/крик/столкновение */
+  duck(toGain, holdSec, releaseSec) {
+    if (!this._toneAvailable) return;
+    const now = Tone.now();
+    this._duckGain.gain.cancelScheduledValues(now);
+    this._duckGain.gain.setValueAtTime(this._duckGain.gain.value, now);
+    this._duckGain.gain.linearRampToValueAtTime(toGain, now + 0.05);
+    this._duckGain.gain.setValueAtTime(toGain, now + 0.05 + holdSec);
+    this._duckGain.gain.linearRampToValueAtTime(1, now + 0.05 + holdSec + releaseSec);
+  }
 
-    sidechainBus.connect(musicBus);
-    musicBus.connect(this.musicGain);
+  /* Час суток — влияет на темп (ночью чуть медленнее и тише) */
+  setHour(hour) {
+    const wasNight = this._night;
+    this._hour = hour;
+    this._night = hour >= 22 || hour < 6;
+    if (this._night !== wasNight) this._applyBpm();
+  }
 
-    // Ударные инструменты
-    const playKick = (t) => {
-      const o = c.createOscillator(); o.type = 'sine';
-      o.frequency.setValueAtTime(150, t);
-      o.frequency.exponentialRampToValueAtTime(35, t + 0.09);
-      const g = c.createGain(); g.gain.setValueAtTime(0.42, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.14);
-      o.connect(g); g.connect(this.musicGain);
-      o.start(t); o.stop(t + 0.15);
+  _applyBpm() {
+    const st = this.getCurrentStation();
+    const bpm = (st.bpm || 118) * (this._night ? 0.94 : 1);
+    this._stepDuration = (60 / bpm) / 4; // 1/16 шаг
+  }
 
-      // Эффект Sidechain ducking: приседание громкости аккордов и баса при ударе бочки
-      sidechainBus.gain.cancelScheduledValues(t);
-      sidechainBus.gain.setValueAtTime(0.35, t);
-      sidechainBus.gain.exponentialRampToValueAtTime(1.0, t + 0.22);
-    };
+  /* Текстурный «цвет» станции: Chebyshev-дисторшн для лоу-фая, хорус для
+     ретро-синта и шансона, лёгкий драйв для этно-бита, длинный реверб для
+     чилл-аута */
+  _applyStationColor(st) {
+    if (!this._toneAvailable) return;
+    const targets = { crush: 0, chorus: 0, dist: 0, reverb: 0.12 };
+    if (st.id === 'pyatigorsk') { targets.crush = 0.35; targets.reverb = 0.16; }
+    else if (st.id === 'synth') { targets.chorus = 0.55; }
+    else if (st.id === 'kavkaz') { targets.dist = 0.18; }
+    else if (st.id === 'chanson') { targets.chorus = 0.35; }
+    else if (st.id === 'chilled') { targets.reverb = 0.4; }
+    this._crush.wet.rampTo(targets.crush, 0.3);
+    this._chorus.wet.rampTo(targets.chorus, 0.3);
+    this._distDrone.wet.rampTo(targets.dist, 0.3);
+    this._reverbSend.gain.rampTo(targets.reverb, 0.3);
+  }
 
-    const playSnare = (t) => {
-      const o = c.createOscillator(); o.type = 'triangle';
-      o.frequency.setValueAtTime(210, t);
-      o.frequency.exponentialRampToValueAtTime(85, t + 0.08);
-      const g = c.createGain(); g.gain.setValueAtTime(0.24, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + 0.1);
-      o.connect(g); g.connect(this.musicGain);
-      o.start(t); o.stop(t + 0.11);
+  start() {
+    if (!this.engine.ready) return;
+    if (!this._setup) this._setupGraph();
+    if (!this._toneAvailable) return; // без Tone.js играть нечем — статик всё ещё работает
+    if (this._running) return;
+    this._running = true;
+    this._scheduleStep();
+  }
 
-      this._noiseBurst(0.14, 0.09, 3800, t - c.currentTime, this.musicGain);
-    };
+  stop() {
+    this._running = false;
+    if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+  }
 
-    const playClap = (t) => {
-      this._noiseBurst(0.08, 0.06, 2200, t - c.currentTime, this.musicGain);
-      this._noiseBurst(0.09, 0.08, 1800, t - c.currentTime + 0.015, this.musicGain);
-    };
+  /* Собственный планировщик шагов поверх ctx.currentTime — НЕ Tone.Transport.
+     Tone.Transport/Tone.Loop в этом окружении переходят в state:'started' и
+     Transport.seconds исправно растёт, но сами события планировщика ни разу
+     не срабатывают (проверено изолированным тестом); risk признан слишком
+     высоким для музыкального слоя, поэтому таймингом занимается тот же
+     рекурсивный setTimeout, что был в нативном движке Фазы 1 — а Tone.js
+     используется только за инструменты/эффекты, которым точный источник
+     времени вызова безразличен. */
+  _scheduleStep() {
+    if (!this._running) return;
+    const st = this.getCurrentStation();
+    if (this.musicOn && this.engine.enabled && st.id !== 'off') {
+      const now = this.engine.ctx.currentTime + 0.03; // небольшой lookahead
+      const step = this._step % 16;
+      const step32 = this._step % 32;
+      const chordIdx = Math.floor(step / 4) % 4;
+      try {
+        this._musicStep(now, step, step32, chordIdx, st);
+      } catch (e) {
+        console.warn('radio step error', e);
+      }
+    }
+    this._step++;
+    this._timer = setTimeout(() => this._scheduleStep(), this._stepDuration * 1000);
+  }
 
-    const playHat = (t, open = false) => {
-      const dur = open ? 0.14 : 0.035;
-      const gain = open ? 0.045 : 0.025;
-      this._noiseBurst(dur, gain, 8000, t - c.currentTime, musicBus);
-    };
+  setMusicOn(on) {
+    this.musicOn = on;
+  }
 
-    const playBassNote = (t, freq, dur = 0.25, type = 'sawtooth') => {
-      const o = c.createOscillator(); o.type = type;
-      o.frequency.setValueAtTime(freq, t);
-      const flt = c.createBiquadFilter(); flt.type = 'lowpass';
-      flt.frequency.setValueAtTime(550, t);
-      flt.frequency.exponentialRampToValueAtTime(140, t + dur);
-      const g = c.createGain(); g.gain.setValueAtTime(0.16, t);
-      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      o.connect(flt); flt.connect(g); g.connect(sidechainBus);
-      o.start(t); o.stop(t + dur + 0.02);
-    };
+  _setupGraph() {
+    this._setup = true;
+    if (typeof window.Tone === 'undefined' || window.__toneFailed) {
+      this._toneAvailable = false;
+      console.warn('Tone.js недоступен — радио будет без звука (статик при переключении по-прежнему работает)');
+      return;
+    }
+    try {
+      Tone.setContext(this.engine.ctx); // Tone оборачивает НАШ AudioContext, не создаёт свой
+      // clockSource по умолчанию 'worker' в ряде окружений не тикает вовсе;
+      // 'timeout' (обычный setInterval) надёжнее — используется как защитная
+      // мера, хотя основной тайминг ведёт наш собственный _scheduleStep(),
+      // см. комментарий там.
+      Tone.getContext().clockSource = 'timeout';
+      this._buildToneGraph();
+      this._toneAvailable = true;
+      this._applyBpm();
+      this._applyStationColor(this.getCurrentStation());
+    } catch (e) {
+      console.warn('Tone.js init error — радио будет без звука', e);
+      this._toneAvailable = false;
+    }
+  }
 
-    const playLeadNote = (t, freq, dur = 0.2, type = 'triangle', sendDelay = false) => {
-      const o = c.createOscillator(); o.type = type;
-      o.frequency.setValueAtTime(freq, t);
-      const g = c.createGain(); g.gain.setValueAtTime(0.001, t);
-      g.gain.linearRampToValueAtTime(0.08, t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-      o.connect(g);
-      g.connect(sidechainBus);
-      if (sendDelay) g.connect(delayNode);
-      o.start(t); o.stop(t + dur + 0.02);
-    };
+  _buildToneGraph() {
+    const e = this.engine;
 
-    const playPadChord = (t, freqs, dur = 1.0) => {
-      freqs.forEach((f) => {
-        const o = c.createOscillator(); o.type = 'sine';
-        o.frequency.setValueAtTime(f, t);
-        const g = c.createGain(); g.gain.setValueAtTime(0.001, t);
-        g.gain.linearRampToValueAtTime(0.03, t + 0.12);
-        g.gain.exponentialRampToValueAtTime(0.001, t + dur);
-        o.connect(g); g.connect(sidechainBus);
-        o.start(t); o.stop(t + dur + 0.05);
-      });
-    };
+    // Шинная цепочка: инструменты -> fadeGain(кроссфейд) -> duckGain(даккинг)
+    // -> camGain(дистанция камеры) -> текстурные инсерты -> LP(дистанция) -> нативная шина музыки
+    //                                                      \-> reverbSend -> Reverb -> нативная шина музыки (параллельно)
+    this._sidechain = new Tone.Gain(1);
+    this._fadeGain = new Tone.Gain(1);
+    this._duckGain = new Tone.Gain(1);
+    this._camGain = new Tone.Gain(1);
+    // Chebyshev, а не BitCrusher: BitCrusher реализован через AudioWorkletNode,
+    // а его встроенный воркл-процессор регистрируется через Tone.setContext()
+    // на ЧУЖОМ (нашем) AudioContext не так, как ожидает нативный конструктор
+    // AudioWorkletNode — addAudioWorkletModule() резолвится успешно, но
+    // следующий new AudioWorkletNode(...) кидает InvalidStateError (проверено
+    // изолированным тестом: тот же код на context, который создаёт сам Tone,
+    // не падает; падает только на context, переданном через setContext()).
+    // Chebyshev — тот же класс эффектов, но на WaveShaperNode, без воркла —
+    // даёт похожую жёсткую лоу-фай текстуру без этой несовместимости.
+    this._crush = new Tone.Chebyshev(50); this._crush.wet.value = 0;
+    this._chorus = new Tone.Chorus(3, 2.5, 0.4).start(); this._chorus.wet.value = 0;
+    this._distDrone = new Tone.Distortion(0.25); this._distDrone.wet.value = 0;
+    this._radioLP = new Tone.Filter(6500, 'lowpass');
+    this._reverbSend = new Tone.Gain(0.12);
+    this._reverb = new Tone.Reverb({ decay: 3.2, preDelay: 0.02, wet: 1 });
+    this._reverb.generate().catch(() => {});
 
-    // Музыкальные шкалы и 32-шаговые паттерны
+    this._sidechain.connect(this._fadeGain);
+    this._fadeGain.connect(this._duckGain);
+    this._duckGain.connect(this._camGain);
+    this._camGain.chain(this._crush, this._chorus, this._distDrone, this._radioLP);
+    this._radioLP.connect(e.buses.music);
+    this._camGain.connect(this._reverbSend);
+    this._reverbSend.connect(this._reverb);
+    this._reverb.connect(e.buses.music);
+
+    // Дилэй-сенд для соло (аналог старого echo-эффекта)
+    this._leadDelay = new Tone.FeedbackDelay({ delayTime: '16n', feedback: 0.32, wet: 0.5 }).connect(this._sidechain);
+
+    // Инструменты
+    this._kick = new Tone.MembraneSynth({
+      pitchDecay: 0.05, octaves: 6, envelope: { attack: 0.001, decay: 0.28, sustain: 0 },
+    }).connect(this._sidechain);
+    this._snare = new Tone.NoiseSynth({
+      noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.11, sustain: 0 },
+    }).connect(this._sidechain);
+    this._clap = new Tone.NoiseSynth({
+      noise: { type: 'pink' }, envelope: { attack: 0.001, decay: 0.08, sustain: 0 },
+    }).connect(this._sidechain);
+    this._hat = new Tone.MetalSynth({
+      envelope: { attack: 0.001, decay: 0.06, release: 0.01 },
+      harmonicity: 5.1, modulationIndex: 20, resonance: 4000, octaves: 1.2,
+    }).connect(this._sidechain);
+    this._bass = new Tone.MonoSynth({
+      oscillator: { type: 'sawtooth' },
+      envelope: { attack: 0.005, decay: 0.2, sustain: 0.1, release: 0.1 },
+      filterEnvelope: { attack: 0.001, decay: 0.2, sustain: 0, baseFrequency: 550, octaves: -2 },
+    }).connect(this._sidechain);
+    this._lead = new Tone.Synth({
+      oscillator: { type: 'triangle' }, envelope: { attack: 0.02, decay: 0.15, sustain: 0, release: 0.05 },
+    });
+    this._lead.connect(this._sidechain);
+    this._lead.connect(this._leadDelay);
+    this._pad = new Tone.PolySynth(Tone.Synth, {
+      oscillator: { type: 'sine' }, envelope: { attack: 0.3, decay: 0.2, sustain: 0.6, release: 0.5 },
+      volume: -6,
+    }).connect(this._sidechain);
+
+    // Музыкальные шкалы и 16/32-шаговые паттерны (частоты в Гц — те же, что
+    // были в нативном секвенсоре; Tone-инструменты принимают Hz напрямую)
     const CHORDS_LOFI = [
-      [220.00, 261.63, 329.63, 392.00], // Am7
-      [174.61, 220.00, 261.63, 329.63], // Fmaj7
-      [130.81, 164.81, 196.00, 246.94], // Cmaj7
-      [196.00, 246.94, 293.66, 349.23], // G7
+      [220.00, 261.63, 329.63, 392.00], [174.61, 220.00, 261.63, 329.63],
+      [130.81, 164.81, 196.00, 246.94], [196.00, 246.94, 293.66, 349.23],
     ];
     const BASS_LOFI = [110.00, 87.31, 65.41, 98.00];
     const MELODY_LOFI = [
       329.63, 392.00, 440.00, 523.25, 440.00, 392.00, 329.63, 293.66,
-      329.63, 392.00, 440.00, 587.33, 523.25, 440.00, 392.00, 329.63
+      329.63, 392.00, 440.00, 587.33, 523.25, 440.00, 392.00, 329.63,
     ];
 
     const CHORDS_SYNTH = [
-      [146.83, 174.61, 220.00, 261.63], // Dm7
-      [116.54, 146.83, 174.61, 220.00], // Bbmaj7
-      [174.61, 220.00, 261.63, 329.63], // Fmaj7
-      [130.81, 164.81, 196.00, 246.94], // Cmaj7
+      [146.83, 174.61, 220.00, 261.63], [116.54, 146.83, 174.61, 220.00],
+      [174.61, 220.00, 261.63, 329.63], [130.81, 164.81, 196.00, 246.94],
     ];
     const BASS_SYNTH = [73.42, 58.27, 87.31, 65.41];
-    const MELODY_SYNTH = [
-      587.33, 523.25, 440.00, 349.23, 440.00, 523.25, 659.25, 587.33,
-      783.99, 659.25, 587.33, 523.25, 440.00, 523.25, 587.33, 440.00
-    ];
 
     const CHORDS_KAVKAZ = [
-      [146.83, 155.56, 185.00, 220.00], // D фригийский
-      [130.81, 146.83, 164.81, 196.00],
-      [116.54, 130.81, 146.83, 174.61],
-      [146.83, 185.00, 220.00, 293.66],
+      [146.83, 155.56, 185.00, 220.00], [130.81, 146.83, 164.81, 196.00],
+      [116.54, 130.81, 146.83, 174.61], [146.83, 185.00, 220.00, 293.66],
     ];
     const BASS_KAVKAZ = [73.42, 65.41, 58.27, 73.42];
     const MELODY_KAVKAZ = [
       293.66, 311.13, 369.99, 392.00, 440.00, 369.99, 311.13, 293.66,
-      369.99, 392.00, 440.00, 554.37, 587.33, 554.37, 440.00, 369.99
+      369.99, 392.00, 440.00, 554.37, 587.33, 554.37, 440.00, 369.99,
     ];
 
-    // Гармония и соло Кавказ Шансон (Am - Dm - E7 - Am)
     const CHORDS_CHANSON = [
-      [220.00, 261.63, 329.63], // Am
-      [146.83, 174.61, 220.00], // Dm
-      [164.81, 207.65, 246.94, 293.66], // E7
-      [220.00, 261.63, 329.63], // Am
+      [220.00, 261.63, 329.63], [146.83, 174.61, 220.00],
+      [164.81, 207.65, 246.94, 293.66], [220.00, 261.63, 329.63],
     ];
     const BASS_CHANSON = [110.00, 73.42, 82.41, 110.00];
     const MELODY_CHANSON = [
       440.00, 523.25, 659.25, 587.33, 523.25, 440.00, 415.30, 440.00,
-      523.25, 659.25, 783.99, 659.25, 587.33, 523.25, 440.00, 415.30
+      523.25, 659.25, 783.99, 659.25, 587.33, 523.25, 440.00, 415.30,
     ];
 
     const CHORDS_CHILL = [
-      [130.81, 164.81, 196.00, 246.94], // Cmaj7
-      [110.00, 130.81, 164.81, 196.00], // Am7
-      [87.31, 110.00, 130.81, 164.81],  // Fmaj7
-      [98.00, 123.47, 146.83, 174.61],  // G7
+      [130.81, 164.81, 196.00, 246.94], [110.00, 130.81, 164.81, 196.00],
+      [87.31, 110.00, 130.81, 164.81], [98.00, 123.47, 146.83, 174.61],
     ];
     const BASS_CHILL = [65.41, 55.00, 43.65, 49.00];
 
-    const scheduler = () => {
-      if (!this.musicOn || !this.enabled) {
-        this._musicTimer = setTimeout(scheduler, 400);
-        return;
-      }
+    const duckSidechain = (t) => {
+      this._sidechain.gain.cancelScheduledValues(t);
+      this._sidechain.gain.setValueAtTime(0.35, t);
+      this._sidechain.gain.exponentialRampToValueAtTime(1.0, t + 0.22);
+    };
+    const playKick = (t) => { this._kick.triggerAttackRelease('C1', 0.14, t, 0.9); duckSidechain(t); };
+    const playSnare = (t) => this._snare.triggerAttackRelease(0.12, t, 0.55);
+    const playClap = (t) => { this._clap.triggerAttackRelease(0.08, t, 0.4); this._clap.triggerAttackRelease(0.08, t + 0.015, 0.4); };
+    const playHat = (t, open = false) => this._hat.triggerAttackRelease(open ? 0.14 : 0.035, t, open ? 0.35 : 0.2);
+    const playBassNote = (t, freq, dur = 0.25) => this._bass.triggerAttackRelease(freq, dur, t, 0.85);
+    const playLeadNote = (t, freq, dur = 0.2) => this._lead.triggerAttackRelease(freq, dur, t, 0.55);
+    const playPadChord = (t, freqs, dur = 1.0) => this._pad.triggerAttackRelease(freqs, dur, t, 0.4);
 
-      const st = this.getCurrentStation();
-      if (st.id === 'off') {
-        this._musicTimer = setTimeout(scheduler, 500);
-        return;
-      }
-
-      const now = this.ctx.currentTime;
-      const step = sixteenthStep % 16;
-      const step32 = sixteenthStep % 32;
-      const chordIdx = Math.floor(step / 4) % 4;
-
+    this._musicStep = (now, step, step32, chordIdx, st) => {
       if (st.id === 'pyatigorsk') {
-        // --- РИТМ ЛОУ-ФАЙ ---
         if (step === 0 || step === 10) playKick(now);
         if (step === 4 || step === 12) playSnare(now);
         if (step === 14) playClap(now);
         if (step % 2 === 0) playHat(now, step === 6 || step === 14);
-
-        // --- БАС С САЙДЧЕЙНОМ ---
-        if (step % 4 === 0 || step === 6 || step === 14) {
-          playBassNote(now, BASS_LOFI[chordIdx], 0.26, 'sawtooth');
-        }
-
-        // --- АККОРДЫ ---
-        if (step % 4 === 0) {
-          playPadChord(now, CHORDS_LOFI[chordIdx], stepDuration * 3.8);
-        }
-
-        // --- СОЛО С ЭХО-ДИЛЭЕМ ---
+        if (step % 4 === 0 || step === 6 || step === 14) playBassNote(now, BASS_LOFI[chordIdx], 0.26);
+        if (step % 4 === 0) playPadChord(now, CHORDS_LOFI[chordIdx], 0.9);
         if (step === 2 || step === 7 || step === 11 || step === 15) {
-          const note = MELODY_LOFI[step32 % MELODY_LOFI.length];
-          playLeadNote(now, note, 0.22, 'triangle', true);
+          playLeadNote(now, MELODY_LOFI[step32 % MELODY_LOFI.length], 0.22);
         }
       } else if (st.id === 'synth') {
-        // --- ПЛОТНЫЙ РЕТРО-РИТМ ---
         if (step % 4 === 0) playKick(now);
         if (step === 4 || step === 12) playSnare(now);
         if (step % 4 === 2) playHat(now, true);
         if (step % 2 === 0) playHat(now, false);
-
-        // --- СИНТ-БАС (Running 16th Bassline) ---
-        playBassNote(now, BASS_SYNTH[chordIdx], 0.12, 'square');
-
-        // --- СИНТ-ПЭД ---
-        if (step === 0 || step === 8) {
-          playPadChord(now, CHORDS_SYNTH[chordIdx], stepDuration * 7.5);
-        }
-
-        // --- РЕТРО-АРПЕДЖИО С ЭХО ---
-        const arpeggioNotes = CHORDS_SYNTH[chordIdx];
-        const arpNote = arpeggioNotes[step % arpeggioNotes.length] * 2;
-        playLeadNote(now, arpNote, 0.14, 'sawtooth', true);
+        playBassNote(now, BASS_SYNTH[chordIdx], 0.12);
+        if (step === 0 || step === 8) playPadChord(now, CHORDS_SYNTH[chordIdx], 1.6);
+        const arp = CHORDS_SYNTH[chordIdx];
+        playLeadNote(now, arp[step % arp.length] * 2, 0.14);
       } else if (st.id === 'kavkaz') {
-        // --- ДИНАМИЧНЫЙ ЭТНО-РИТМ ---
-        if (step === 0 || step === 3 || step === 6 || step === 8 || step === 11 || step === 14) {
-          playKick(now);
-        }
+        if (step === 0 || step === 3 || step === 6 || step === 8 || step === 11 || step === 14) playKick(now);
         if (step === 4 || step === 12) playSnare(now);
         if (step === 7 || step === 15) playClap(now);
         if (step % 2 === 1) playHat(now, step === 15);
-
-        // --- БАС ---
-        if (step === 0 || step === 6 || step === 8 || step === 14) {
-          playBassNote(now, BASS_KAVKAZ[chordIdx], 0.2, 'sawtooth');
-        }
-
-        // --- СОЛО ---
-        if (step % 2 === 0) {
-          const note = MELODY_KAVKAZ[step32 % MELODY_KAVKAZ.length];
-          playLeadNote(now, note, 0.18, 'sawtooth', true);
-        }
+        if (step === 0 || step === 6 || step === 8 || step === 14) playBassNote(now, BASS_KAVKAZ[chordIdx], 0.2);
+        if (step % 2 === 0) playLeadNote(now, MELODY_KAVKAZ[step32 % MELODY_KAVKAZ.length], 0.18);
       } else if (st.id === 'chanson') {
-        // --- РИТМ ШАНСОНА / УМЦА-УМЦА ---
         if (step === 0 || step === 8) playKick(now);
         if (step === 4 || step === 12) playClap(now);
         if (step % 2 === 0) playHat(now, false);
-
-        // --- ШАНСОН БАС ---
-        if (step === 0 || step === 8) {
-          playBassNote(now, BASS_CHANSON[chordIdx], 0.35, 'sawtooth');
-        }
-
-        // --- ПИЗЗИКАТО ГИТАРА / АККОРДЕОН ---
-        if (step % 4 === 2) {
-          playPadChord(now, CHORDS_CHANSON[chordIdx], 0.18);
-        }
-
-        // --- ДУШЕВНОЕ СОЛО С ЭХО ---
-        if (step % 2 === 0) {
-          const note = MELODY_CHANSON[step32 % MELODY_CHANSON.length];
-          playLeadNote(now, note, 0.22, 'sawtooth', true);
-        }
+        if (step === 0 || step === 8) playBassNote(now, BASS_CHANSON[chordIdx], 0.35);
+        if (step % 4 === 2) playPadChord(now, CHORDS_CHANSON[chordIdx], 0.18);
+        if (step % 2 === 0) playLeadNote(now, MELODY_CHANSON[step32 % MELODY_CHANSON.length], 0.22);
       } else if (st.id === 'chilled') {
-        // --- ГЛУБОКИЙ ЧИЛЛ-АУТ ---
-        if (step === 0) playKick(now);
+        const skipKick = this._night; // после 23:00/ночью — без бочки, только пэд и бас
+        if (step === 0 && !skipKick) playKick(now);
         if (step === 8) playSnare(now);
         if (step % 4 === 2) playHat(now, true);
-
-        // --- СУПЕР-САБ БАС ---
-        if (step === 0 || step === 8) {
-          playBassNote(now, BASS_CHILL[chordIdx], 0.65, 'sine');
-        }
-
-        // --- МЯГКИЙ АККОРД ---
-        if (step === 0) {
-          playPadChord(now, CHORDS_CHILL[chordIdx], stepDuration * 15);
-        }
+        if (step === 0 || step === 8) playBassNote(now, BASS_CHILL[chordIdx], 0.65);
+        if (step === 0) playPadChord(now, CHORDS_CHILL[chordIdx], 3.6);
       }
-
-      sixteenthStep++;
-      this._musicTimer = setTimeout(scheduler, stepDuration * 1000);
     };
 
-    scheduler();
+    this._step = 0;
+  }
+}
+
+/* ===== audio.js ===== */
+
+
+
+
+
+/* Фасад звуковой системы: владеет ядром (шины/лимитер/реверб/пулинг),
+   библиотекой одноразовых эффектов, непрерывными слоями и радио. Держит
+   ВСЕ подписки на EventBus — единственный источник истины для звуковых
+   триггеров, порождённых симуляцией мира (см. docs/plans на 2026-08-08). */
+class AudioManager {
+  constructor() {
+    this.engine = new AudioEngine();
+    this.sfx = new SfxLibrary(this.engine);
+    this.loops = new LoopLayer(this.engine);
+    this.loops.playBird = () => this.sfx.bird();
+    this.radio = new RadioEngine(this.engine);
+
+    this._ready = false;
+    this._unlockInstalled = false;
+    this._hornActive = false;
+    /* Позиция слушателя (игрока) для 3D-панорамирования — обновляется каждый
+       кадр из updateVehicle(), а не читается напрямую из объекта PlayerCar
+       (раньше был хак this.audio._gamePlayer = this.player в game.js) */
+    this._listener = { x: 0, z: 0, heading: 0 };
+
+    // Подписки регистрируются один раз здесь, а не при unlock(), чтобы
+    // события между конструктором и первым жестом пользователя не терялись
+    // молча. Каждый обработчик сам проверяет this._ready.
+    this._bindEvents();
   }
 
-  setEnabled(on) {
-    this.enabled = on;
-    if (this.master && this.ctx) this.master.gain.setTargetAtTime(on ? 0.85 : 0, this.ctx.currentTime, 0.1);
+  get enabled() { return this.engine.enabled; }
+  get musicOn() { return this.radio.musicOn; }
+  get ctx() { return this.engine.ctx; }
+  get stations() { return this.radio.stations; }
+
+  _bindEvents() {
+    Events.on('crash', (d) => {
+      if (!this._ready) return;
+      this.sfx.crash(d ? d.impact || 20 : 20);
+      this.radio.duck(0.25, 0.15, 0.5);
+    });
+    Events.on('order:accepted', (d) => {
+      if (!this._ready) return;
+      this.sfx.doorClose();
+      this.sfx.pickup();
+      if (d && d.order && d.order.type === 'race') this.sfx.raceGo();
+    });
+    Events.on('order:completed', (r) => {
+      if (!this._ready) return;
+      this.sfx.doorOpen();
+      this.sfx.cash(r ? r.total : 100);
+    });
+    Events.on('order:failed', () => {
+      if (!this._ready) return;
+      this.sfx.fail();
+    });
+    Events.on('hitPed', (d) => {
+      if (!this._ready) return;
+      if (d && d.byPlayer === false) return;
+      this.sfx.pedHit();
+    });
+    Events.on('trafficHitPed', () => {
+      if (!this._ready) return;
+      this.sfx.pedHit();
+    });
+    Events.on('ped:kick', () => {
+      if (!this._ready) return;
+      this.sfx.thud();
+    });
+    Events.on('horn', (d = {}) => {
+      if (!this._ready) return;
+      if (d.sourceX !== undefined) {
+        d.playerX = this._listener.x;
+        d.playerZ = this._listener.z;
+        d.playerHeading = this._listener.heading;
+      }
+      this.sfx.horn(d);
+    });
+    Events.on('spatial:shout', (d) => {
+      if (!this._ready || !d) return;
+      const soundType = d.type || (d.avatar === '🚘' ? 'driver' : 'grump');
+      this.sfx.spatialSpeak(d.x, d.z, this._listener.x, this._listener.z, soundType, this._listener.heading);
+      this.radio.duck(0.45, 0.3, 0.9);
+    });
+    Events.on('passenger:speak', (d) => {
+      if (!this._ready) return;
+      const toneType = d && (d.event === 'crash' || d.event === 'offroad') ? 'grump' : d && d.event === 'fast' ? 'drift' : 'greeting';
+      this.sfx.spatialSpeak(null, null, 0, 0, toneType);
+      this.radio.duck(0.45, 0.3, 0.9);
+    });
+    Events.on('stall', () => {
+      if (!this._ready) return;
+      this.sfx.stall();
+    });
+    Events.on('noFuel', () => {
+      if (!this._ready) return;
+      this.sfx.fail();
+    });
+    Events.on('edge', () => {
+      if (!this._ready) return;
+      this.sfx.edgeBump();
+    });
+    Events.on('weather:changed', (d) => {
+      if (!this._ready) return;
+      this.loops.setRain(!!(d && d.weather === 'rain'));
+    });
+    Events.on('game:state_changed', ({ state }) => {
+      if (!this._ready) return;
+      this.setSceneState(state);
+    });
+    Events.on('shift:started', () => {
+      if (!this._ready) return;
+      this.sfx.engineStart();
+    });
+    Events.on('shift:ended', () => {
+      if (!this._ready) return;
+      this.sfx.shiftEnd();
+    });
+    Events.on('order:timer', (d) => {
+      if (!this._ready) return;
+      this.sfx.orderTimerBeep(d ? d.left : 0);
+    });
   }
 
-  setMusic(on) {
-    this.musicOn = on;
+  /* Разблокировка AudioContext по первому жесту пользователя — сразу
+     несколько типов событий (клик мышью — не единственный способ начать
+     игру; старт с клавиатуры/тача без единого pointerdown раньше оставлял
+     игру немой) */
+  installUnlockHandlers() {
+    if (this._unlockInstalled) return;
+    this._unlockInstalled = true;
+    const events = ['pointerdown', 'keydown', 'touchstart', 'click'];
+    const handler = () => {
+      events.forEach((ev) => window.removeEventListener(ev, handler, true));
+      this.unlock();
+    };
+    events.forEach((ev) => window.addEventListener(ev, handler, { once: true, capture: true }));
   }
+
+  /* Вызывать по первому жесту пользователя */
+  unlock() {
+    if (this._ready) {
+      if (this.engine.ctx && this.engine.ctx.state === 'suspended') this.engine.ctx.resume();
+      return;
+    }
+    try {
+      this.engine.init();
+      if (!this.engine.ready) return;
+      // Возвращаем контекст из suspended/interrupted (входящий звонок на iOS
+      // и т.п.), когда вкладка снова видима
+      this.engine.ctx.onstatechange = () => {
+        const st = this.engine.ctx.state;
+        if ((st === 'suspended' || st === 'interrupted') && document.visibilityState === 'visible') {
+          this.engine.ctx.resume().catch(() => {});
+        }
+      };
+      this.loops.build();
+      this._ready = true;
+      this.radio.start();
+    } catch (e) {
+      console.warn('audio error', e);
+    }
+  }
+
+  dispose() {
+    this.radio.stop();
+    this.loops.dispose();
+    this.engine.dispose();
+    this._ready = false;
+  }
+
+  /* Реакция на смену состояния игры: вне 'driving' глушим непрерывные слои
+     (движок/скид) и ставим музыку с птицами на паузу */
+  setSceneState(state) {
+    const driving = state === 'driving';
+    this.loops.setPaused(!driving);
+    if (driving) this.radio.start();
+    else this.radio.stop();
+  }
+
+  /* --- Делегирование к SfxLibrary --- */
+  horn(opts) { this.sfx.horn(opts); }
+  crash(impact) { this.sfx.crash(impact); }
+  cash(amount) { this.sfx.cash(amount); }
+  pickup() { this.sfx.pickup(); }
+  speak() { this.sfx.speak(); }
+  fail() { this.sfx.fail(); }
+  pedHit() { this.sfx.pedHit(); }
+  thud() { this.sfx.thud(); }
+  stall() { this.sfx.stall(); }
+  click() { this.sfx.click(); }
+  refuel() { this.sfx.refuel(); }
+  bird() { this.sfx.bird(); }
+  raceGo() { this.sfx.raceGo(); }
+  edgeBump() { this.sfx.edgeBump(); }
+  spatialSpeak(sourceX, sourceZ, playerX, playerZ, type, playerHeading) {
+    this.sfx.spatialSpeak(sourceX, sourceZ, playerX, playerZ, type, playerHeading);
+  }
+
+  /* --- Делегирование к LoopLayer --- */
+  updateEngine(rpm, throttle, running) { this.loops.updateEngine(rpm, throttle, running); }
+  updateSkid(intensity) { this.loops.updateSkid(intensity); }
+  setRain(on) { this.loops.setRain(on); }
+
+  /* Единый per-frame вызов из Game._drive(): обновляет непрерывные слои
+     (движок/скид/шины/ветер/тормоза/дребезг от урона), позицию слушателя
+     для 3D-панорамирования и триггерит гудок/ручник игрока по фронту
+     нажатия. carType переключает тембр двигателя (без пересборки узлов). */
+  updateVehicle(v) {
+    this._listener.x = v.x; this._listener.z = v.z; this._listener.heading = v.heading;
+    this._vehicle = v;
+    if (v.carType && v.carType !== this._lastCarType) {
+      this._lastCarType = v.carType;
+      this.loops.setEngineProfile(v.carType);
+    }
+    this.loops.updateEngine(v.rpm, v.throttle, v.running);
+    this.loops.updateSkid(v.slip);
+    this.loops.updateTyre(v.speed, v.onRoad);
+    this.loops.updateWind(v.speed, v.maxSpeed);
+    this.loops.updateBrake(v.brake, v.speed);
+    this.loops.updateDamageRattle(v.damage, v.speed);
+    this.loops.updateFuelWarning(v.fuelFrac);
+    this.loops.updateSuspension(v.groundY);
+    if (v.horn) {
+      if (!this._hornActive) { this.sfx.horn({ type: 'player', dur: 0.65 }); this._hornActive = true; }
+    } else {
+      this._hornActive = false;
+    }
+    if (v.handbrake) {
+      if (!this._handbrakeActive) { this.sfx.handbrake(); this._handbrakeActive = true; }
+    } else {
+      this._handbrakeActive = false;
+    }
+    if (v.camDist !== undefined) this.radio.setCamDist(v.camDist);
+    if (v.hour !== undefined) this.radio.setHour(v.hour);
+    this._updateWorldAudio(v);
+  }
+
+  /* Звуки мира, завязанные на per-frame состояние: смена дня/ночи, гром в
+     дождь, сирены ближайшей спецмашины, шаги ближайшего пешехода. Все
+     таймеры считаются в ctx-времени, поэтому без готового AudioContext
+     (до unlock()) просто ничего не делают. */
+  _updateWorldAudio(v) {
+    if (v.hour !== undefined) {
+      const night = v.hour >= 20 || v.hour < 6;
+      if (this._lastNightChime === undefined) this._lastNightChime = night;
+      else if (night !== this._lastNightChime) {
+        this._lastNightChime = night;
+        if (this._ready) this.sfx.dayNightChime();
+      }
+    }
+    if (!this._ready || !this.engine.ctx) return;
+    const now = this.engine.ctx.currentTime;
+
+    if (v.raining) {
+      if (!this._thunderNext) this._thunderNext = now + 15 + Math.random() * 30;
+      if (now >= this._thunderNext) {
+        this._thunderNext = now + 20 + Math.random() * 40;
+        this.sfx.thunder();
+      }
+    } else {
+      this._thunderNext = 0;
+    }
+
+    if (v.siren) {
+      if (!this._sirenNext || now >= this._sirenNext) {
+        this._sirenNext = now + 1.5;
+        this.sfx.siren({
+          sourceX: v.siren.x, sourceZ: v.siren.z,
+          playerX: v.x, playerZ: v.z, playerHeading: v.heading, type: v.siren.type,
+        });
+      }
+    }
+
+    if (v.nearestPedDist !== undefined && v.nearestPedDist < 12) {
+      if (!this._stepNext || now >= this._stepNext) {
+        this._stepNext = now + 0.42;
+        this.sfx.footstep(v.nearestPedPan || 0, 1 - v.nearestPedDist / 12);
+      }
+    }
+  }
+
+  /* --- Делегирование к RadioEngine --- */
+  nextStation() { return this.radio.nextStation(); }
+  getCurrentStation() { return this.radio.getCurrentStation(); }
+  getStationId() { return this.radio.getStationId(); }
+  setStationId(id) { this.radio.setStationId(id); }
+
+  /* --- Громкости и мьют --- */
+  setEnabled(on) { this.engine.setMasterEnabled(on); }
+  setMusic(on) { this.radio.setMusicOn(on); }
+  setVolume(key, val) { this.engine.setVolume(key, val); }
+  getVolumes() { return this.engine.getVolumes(); }
 
   /* --- Алиасы, используемые Game --- */
   setEngine(rpm, throttle, running) { this.updateEngine(rpm, throttle, running); }
@@ -3231,7 +4109,6 @@ class AudioManager {
   chime() { this.pickup(); }
   error() { this.fail(); }
 }
-
 
 /* ===== input.js ===== */
 /* ============================================================
@@ -6129,10 +7006,11 @@ class PlayerCar {
     this._builtCarType = cType;
 
     const def = CAR_TYPE_SHAPE[cType] || CAR_TYPE_SHAPE.taxi;
-    // багажник на крыше — только силуэты, где он геометрически разрешён
-    // (roofRackOk в CAR_SHAPES: wagon/suv/van, см. carmodel.js); вычисляется
-    // из уже существующего def.shape, CAR_TYPE_SHAPE не трогаем
-    const hasRoofRack = def.shape === 'wagon' || def.shape === 'suv' || def.shape === 'van';
+    // багажник на крыше: hasRoofRack передаём безусловно — единственный
+    // источник правды о том, разрешён ли он геометрически (roofRackOk в
+    // CAR_SHAPES: wagon/suv/van), это внутренний гейт buildCarModel
+    // (built.roofRack === null для остальных силуэтов, см. carmodel.js);
+    // дублировать список силуэтов здесь не нужно.
     const built = buildCarModel({
       shape: def.shape, w: def.w, len: def.len, animated: true,
       matBody: this.matBody, matDark: this.matDark, matChrome: this.matChrome, matGlass: this.matGlass,
@@ -6141,7 +7019,7 @@ class PlayerCar {
       matSign: this.matSign, matLivery: this.matLivery,
       rimStyle: this.tuning.rimStyle || 'disc', bodyKit: this.tuning.bodyKit || 'stock',
       hasPlate: true, hasSign: !!this.stats.isTaxi, hasLivery: !!this.stats.isTaxi,
-      hasRoofRack,
+      hasRoofRack: true,
     });
 
     // спойлер строится всегда (скрыт по умолчанию) — включение в _applyTuning
@@ -6688,10 +7566,11 @@ class TrafficManager {
     // _bodyGeoCache не растёт неограниченно (ключ считает carGeoCacheKey)
     const variants = shapeVariants(def.shape);
     const shapeOpts = variants[(Math.random() * variants.length) | 0];
-    // багажник на крыше — только силуэты, где он геометрически разрешён
-    // (roofRackOk в CAR_SHAPES: wagon/suv/van, см. carmodel.js); вычисляется
-    // из уже существующего def.shape, TRAFFIC_TYPES не трогаем
-    const hasRoofRack = def.shape === 'wagon' || def.shape === 'suv' || def.shape === 'van';
+    // багажник на крыше: hasRoofRack передаём безусловно — единственный
+    // источник правды о том, разрешён ли он геометрически (roofRackOk в
+    // CAR_SHAPES: wagon/suv/van), это внутренний гейт buildCarModel
+    // (built.roofRack === null для остальных силуэтов, см. carmodel.js);
+    // дублировать список силуэтов здесь не нужно.
     const built = buildCarModel({
       shape: def.shape, w: def.w, len: def.len, animated: false,
       matBody: this.matColored, matGlass: this.matGlass,
@@ -6700,7 +7579,7 @@ class TrafficManager {
       matBeaconRed: this.matBeaconRed, matBeaconBlue: this.matBeaconBlue,
       bodyColor, darkColor, chromeColor, bodyKit: def.bodyKit || 'stock', shapeOpts,
       hasPlate: true, hasSign: !!def.livery, hasLivery: !!def.livery, beacon: def.beacon || null,
-      hasRoofRack,
+      hasRoofRack: true,
     });
     built.group.userData.type = def.name;
     built.group.userData.refs = built.refs;
@@ -8982,7 +9861,6 @@ class PassengerManager {
     player.style = 0.7;
     player.styleTimer = 0;
     Events.emit('order:accepted', { order, player });
-    Events.emit('pickup', {});
     const dlg = getPassengerDialogue('pickup', order);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: dlg.color });
     return true;
@@ -9037,6 +9915,13 @@ class PassengerManager {
       if (a.timeLimit) {
         a.timer -= dt;
         if (a.timer <= 0) { this.fail(a, 'time'); return; }
+        if (a.timer < 10) {
+          const sec = Math.ceil(a.timer);
+          if (sec !== a._lastWarnSec) {
+            a._lastWarnSec = sec;
+            Events.emit('order:timer', { left: sec });
+          }
+        }
       }
       const drop = a.drops[a.dropIdx];
       // подсветка финальной точки высадки в мире
@@ -9173,7 +10058,6 @@ class PassengerManager {
     const dlg = getPassengerDialogue('dropoff', a);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#7ee787' });
     Events.emit('order:completed', res);
-    Events.emit('orderDone', res);
     return res;
   }
 
@@ -9190,7 +10074,6 @@ class PassengerManager {
     this._cabOut();
     this._removePassenger(a);
     Events.emit('order:failed', { reason, order: a });
-    Events.emit('fail', { reason });
     Events.emit('toast', { text: reason === 'time' ? 'Заказ провален: время вышло!' : 'Пассажир ушёл!', color: '#e05050' });
   }
 
@@ -9315,6 +10198,7 @@ class UpgradeSystem {
         carId: this.carId, ownedCars: this.ownedCars,
         stats: data.stats, day: data.day,
         sound: data.sound, music: data.music, quality: CFG.quality, gfx: CFG.gfx,
+        audioVol: data.audioVol, radio: data.radio,
       }));
     } catch (e) { /* приватный режим */ }
   }
@@ -9333,8 +10217,6 @@ class UpgradeSystem {
       // constructor() (иначе игрок, уже сменивший машину в старом сохранении,
       // молча получил бы дефолтные шашечки такси на купленной машине)
       if (!d.tuning || d.tuning.decal === undefined) this.tuning.decal = defaultDecalIndex(this.carId);
-      if (d.sound !== undefined) window._sndPref = d.sound;
-      if (d.music !== undefined) window._musPref = d.music;
       if (d.quality) CFG.quality = d.quality;
       // gfx — новая схема; старые сохранения без неё откатываются на пресет по quality
       if (d.gfx) CFG.gfx = { ...CFG.gfx, ...d.gfx };
@@ -9401,6 +10283,14 @@ class UIManager {
   /* ---------- Кнопки ---------- */
   _bindButtons() {
     const on = (id, cb) => { const el = this.$(id); if (el) el.addEventListener('click', cb); };
+    // UI-звук на любой клик по кнопке — один делегированный слушатель вместо
+    // правки каждой кнопки по отдельности; звучит на нажатие мышью/тачем,
+    // не дублируется с клавиатурными шорткатами (у них нет 'click' на кнопке)
+    document.addEventListener('pointerdown', (e) => {
+      const b = e.target.closest('button');
+      if (!b || b.disabled) return;
+      this.game.audio.click();
+    }, true);
     on('btn-newgame', () => this.game.newGame());
     on('btn-continue', () => this.game.continueGame());
     on('btn-menu-garage', () => this.game.openGarage('menu'));
@@ -9441,6 +10331,27 @@ class UIManager {
     // настройки
     on('chk-sound', () => this.game.setSound(this.$('chk-sound').checked));
     on('chk-music', () => this.game.setMusic(this.$('chk-music').checked));
+    // громкости — 'input' срабатывает на каждое движение ползунка (не 'change',
+    // которое ждёт отпускания), сохранение в game.setVolume уже с debounce
+    const vol = (id, key) => {
+      const el = this.$(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        const v = Number(el.value) / 100;
+        this.game.setVolume(key, v);
+        const label = document.querySelector('.vol-val[data-for="' + id + '"]');
+        if (label) label.textContent = el.value + '%';
+      });
+    };
+    vol('rng-vol-master', 'master');
+    vol('rng-vol-music', 'music');
+    vol('rng-vol-sfx', 'sfx');
+    vol('rng-vol-engine', 'engine');
+    vol('rng-vol-ambient', 'ambient');
+    const stationSel = this.$('sel-radio-station');
+    if (stationSel) {
+      stationSel.addEventListener('change', () => this.game.setRadioStation(stationSel.value));
+    }
     // графика: пресет применяет все поля разом и синхронизирует остальные контролы
     on('sel-gfx-preset', () => {
       const v = this.$('sel-gfx-preset').value;
@@ -9955,7 +10866,34 @@ class UIManager {
   syncSettings(sound, music) {
     this.$('chk-sound').checked = sound;
     this.$('chk-music').checked = music;
+    this.syncVolumeUI();
     this.syncGfxUI();
+  }
+
+  /* Слайдеры громкости + список станций — синхронизируются с audio.getVolumes()
+     и audio.stations (единственный источник истины для списка станций) */
+  syncVolumeUI() {
+    const vols = this.game.audio.getVolumes();
+    const ids = { master: 'rng-vol-master', music: 'rng-vol-music', sfx: 'rng-vol-sfx', engine: 'rng-vol-engine', ambient: 'rng-vol-ambient' };
+    for (const key in ids) {
+      const el = this.$(ids[key]);
+      if (!el || vols[key] === undefined) continue;
+      const pct = Math.round(vols[key] * 100);
+      el.value = String(pct);
+      const label = document.querySelector('.vol-val[data-for="' + ids[key] + '"]');
+      if (label) label.textContent = pct + '%';
+    }
+    const sel = this.$('sel-radio-station');
+    if (sel) {
+      if (!sel.options.length) {
+        for (const st of this.game.audio.stations) {
+          const opt = document.createElement('option');
+          opt.value = st.id; opt.textContent = st.icon + ' ' + st.name;
+          sel.appendChild(opt);
+        }
+      }
+      sel.value = this.game.audio.getCurrentStation().id;
+    }
   }
 
   syncGfxUI() {
@@ -9977,6 +10915,8 @@ class UIManager {
     if (iconEl) iconEl.textContent = st.icon;
     if (nameEl) nameEl.textContent = st.name;
     this.toast(`📻 Радио: ${st.icon} ${st.name} (${st.genre})`, '#58a6ff');
+    const sel = this.$('sel-radio-station');
+    if (sel && sel.options.length) sel.value = st.id;
   }
 }
 
@@ -10086,7 +11026,6 @@ class Game {
     this._initScene();
     this._initWorld();
     this._initManagers();
-    this.audio._gamePlayer = this.player;
     this._initEvents();
 
     if (save) {
@@ -10095,6 +11034,13 @@ class Game {
       this.soundOn = save.sound !== undefined ? save.sound : true;
       this.musicOn = save.music !== undefined ? save.music : true;
       this.weather = save.weather || this.weather;
+      // громкости/станция — опциональные поля; старые сохранения без них
+      // должны грузиться без ошибок. Применяются до unlock() — методы
+      // audio.setVolume()/setStationId() безопасны без готового AudioContext.
+      if (save.audioVol) {
+        for (const key in save.audioVol) this.audio.setVolume(key, save.audioVol[key]);
+      }
+      if (save.radio) this.audio.setStationId(save.radio);
       this.player.applyUpgrades(this.upgrades.stats());
       this.player.setTuning(this.upgrades.tuningForCar());
       this.ui.syncSettings(this.soundOn, this.musicOn);
@@ -10105,9 +11051,9 @@ class Game {
       this.ui.syncSettings(this.soundOn, this.musicOn);
     }
 
-    // звук — только после жеста пользователя
-    const unlock = () => { this.audio.unlock(); window.removeEventListener('pointerdown', unlock); };
-    window.addEventListener('pointerdown', unlock);
+    // звук — только после жеста пользователя (pointerdown/keydown/touchstart/click,
+    // старт с клавиатуры без единого клика раньше оставлял игру немой)
+    this.audio.installUnlockHandlers();
 
     this.audio.setMaster(this.soundOn);
     this.audio.setMusic(this.musicOn);
@@ -10255,7 +11201,6 @@ class Game {
   _initEvents() {
     events.on('crash', (d) => {
       this.shiftStats.crashes++;
-      this.audio.crash(Math.min(1, d.impact / 30));
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
       this.orders.onCrash(d.impact);
     });
@@ -10264,7 +11209,6 @@ class Game {
       this.shiftStats.peds++;
       this.setRating(this.rating - CFG.ratingFail.hitPed);
       this.addMoney(-300);
-      this.audio.crash(0.5);
       this.shakeT = 0.3; this.shakeAmp = 0.4;
       // Посылка не прерывается при сбитии пешехода — пассажира в машине нет
       if (this.orders.active && this.orders.active.type !== 'package') this.orders.fail(this.orders.active, 'ped');
@@ -10275,27 +11219,20 @@ class Game {
       this.shakeT = 0.22; this.shakeAmp = 0.32;
     });
     events.on('stall', () => {
-      this.audio.error();
       this.ui.toast('Двигатель заглох!', '#ffb030');
     });
     events.on('noFuel', () => {
       this.ui.toast('Кончилось топливо! До заправки пешком…', '#ffb030');
-      this.audio.error();
     });
     events.on('edge', () => {
       this.ui.toast('Край карты — дальше не проехать!', '#ffb030');
     });
     events.on('order:accepted', () => {
-      this.audio.chime();
       this.ui.toast('Пассажир сел. Поехали!', '#7ee787');
     });
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
 
     events.on('spatial:shout', (d) => {
-      const soundType = d.type || (d.avatar === '🚘' ? 'driver' : 'grump');
-      if (this.player && this.audio) {
-        this.audio.spatialSpeak(d.x, d.z, this.player.x, this.player.z, soundType, this.player.heading);
-      }
       if (d.text && this.player) {
         const dist = Math.hypot(d.x - this.player.x, d.z - this.player.z);
         if (dist < 38) {
@@ -10307,10 +11244,6 @@ class Game {
     });
 
     events.on('passenger:speak', (d) => {
-      if (this.audio) {
-        const toneType = d.event === 'crash' || d.event === 'offroad' ? 'grump' : d.event === 'fast' ? 'drift' : 'greeting';
-        this.audio.spatialSpeak(null, null, 0, 0, toneType);
-      }
       if (d.text) {
         this.ui.showDialogue(d.speaker, d.text, d.avatar, d.color);
       }
@@ -10327,7 +11260,6 @@ class Game {
         this.shiftStats.missions++;
         if (!this.orders.completed.includes(r.missionId)) this.orders.completed.push(r.missionId);
       }
-      this.audio.cash(r.tips > 40);
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
       this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay) + bonus, '#7ee787');
       if (this.rating >= 100) this.ui.toast('Максимальный рейтинг! Пятигорск ваш! ⭐', '#ffd75e');
@@ -10335,7 +11267,6 @@ class Game {
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
       this.setRating(this.rating - CFG.ratingFail.failOrder);
-      this.audio.error();
     });
   }
 
@@ -10403,11 +11334,13 @@ class Game {
     this.player.wash();
     this.chaseCam.reset(this.player);
     this.setState('driving');
+    Events.emit('shift:started');
   }
 
   endShift() {
     this.setState('shiftend');
     this.save();
+    Events.emit('shift:ended');
   }
 
   startNewShift() {
@@ -10451,6 +11384,19 @@ class Game {
 
   setSound(on) { this.soundOn = on; this.audio.setMaster(on); }
   setMusic(on) { this.musicOn = on; this.audio.setMusic(on); }
+
+  /* Слайдер громкости — протаскивание не должно писать в localStorage на
+     каждый шаг, поэтому сохранение debounce'ится на 800мс */
+  setVolume(key, val) {
+    this.audio.setVolume(key, val);
+    clearTimeout(this._volSaveTimer);
+    this._volSaveTimer = setTimeout(() => this.save(), 800);
+  }
+
+  setRadioStation(id) {
+    this.audio.setStationId(id);
+    this.save();
+  }
 
   /* Применить именованный пресет графики (low|medium|high) целиком */
   applyGfxPreset(name) {
@@ -10518,8 +11464,10 @@ class Game {
   /* ---------- Действия игрока ---------- */
   pressHorn() {
     if (this.stateName !== 'driving') return;
+    // Звук гудка триггерится единожды за нажатие внутри audio.updateVehicle()
+    // (по фронту hornTimer > 0) — раньше здесь был ещё один прямой вызов
+    // audio.horn(), и на одно нажатие H звучало два наложенных гудка.
     this.player.hornTimer = 0.7;
-    this.audio.horn();
   }
 
   toggleLights() {
@@ -10528,8 +11476,10 @@ class Game {
   }
 
   toggleRadio() {
-    const st = this.audio.nextStation();
-    this.audio.click();
+    // звук переключения — статик/свист внутри nextStation(); отдельный
+    // click() не нужен: для мыши/тача его уже даёт делегированный слушатель
+    // кнопок в ui.js, а дублировать его для клавиши R незачем
+    this.audio.nextStation();
   }
 
   evacuate() {
@@ -10633,6 +11583,7 @@ class Game {
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,
       sound: this.soundOn, music: this.musicOn, weather: this.weather,
+      audioVol: this.audio.getVolumes(), radio: this.audio.getStationId(),
     });
   }
 
@@ -10741,10 +11692,12 @@ class Game {
       this._dbgEl.style.cssText = 'position:fixed;top:4px;left:4px;z-index:9999;background:#000a;color:#7ee787;font:12px monospace;padding:6px 8px;pointer-events:none;white-space:pre;';
       document.body.appendChild(this._dbgEl);
     }
+    const av = this.audio.engine.getVoiceStatus();
     this._dbgEl.textContent =
       `FPS: ${fps}  CPU: ${cpuMs.toFixed(1)}ms\n` +
       `calls: ${info.render.calls}  tris: ${info.render.triangles}\n` +
-      `tex: ${info.memory.textures}  geo: ${info.memory.geometries}`;
+      `tex: ${info.memory.textures}  geo: ${info.memory.geometries}\n` +
+      `voices: ${av.used}/${av.total}  ctx: ${av.ctxState}`;
     this._dbgAccum = 0; this._dbgFrames = 0;
   }
 
@@ -10836,19 +11789,39 @@ class Game {
     // километраж
     this.shiftStats.km += this.player.speed * dt / 1000;
 
-    // звук
+    // звук — единый per-frame апдейт (движок, скид, гудок, позиция слушателя)
     const st = this.player.stats;
     const rpm = clamp(Math.abs(this.player.speed) / st.maxSpeed, 0, 1);
-    this.audio.setEngine(rpm, input.throttle, this.player.engineDead);
-    this.audio.setSkid(this.player.slip);
-    if (this.player.hornTimer > 0) {
-      if (!this._hornActive) {
-        this.audio.horn({ type: 'player', dur: 0.65 });
-        this._hornActive = true;
-      }
-    } else {
-      this._hornActive = false;
+
+    // ближайшая машина со спецсигналами (P2: сирены) и ближайший пешеход (P2: шаги)
+    let siren = null, sirenDist = 130;
+    for (const c of this.traffic.cars) {
+      if (!c.beacon || !c.mesh.visible) continue;
+      const d = dist2D(c.x, c.z, this.player.x, this.player.z);
+      if (d < sirenDist) { sirenDist = d; siren = { x: c.x, z: c.z, type: c.beacon }; }
     }
+    let nearestPedDist, nearestPedPan, bestPd = 12;
+    for (const p of this.peds.cars) {
+      if (!p.alive || p.isAnimal || !p.mesh.visible) continue;
+      const d = dist2D(p.x, p.z, this.player.x, this.player.z);
+      if (d < bestPd) {
+        bestPd = d; nearestPedDist = d;
+        const dx = p.x - this.player.x, dz = p.z - this.player.z;
+        nearestPedPan = clamp(Math.sin(Math.atan2(dx, dz) - this.player.heading), -0.85, 0.85);
+      }
+    }
+
+    this.audio.updateVehicle({
+      rpm, throttle: input.throttle, brake: input.brake,
+      running: !this.player.engineDead,
+      speed: this.player.speed, slip: this.player.slip, maxSpeed: st.maxSpeed,
+      onRoad: this.player.onRoad, damage: this.player.damage,
+      fuelFrac: this.player.fuel / st.tank, horn: this.player.hornTimer > 0,
+      handbrake: input.handbrake, carType: st.carType, groundY: this.player.groundY,
+      camDist: this.chaseCam.dist, raining: this.weather === 'rain', siren,
+      nearestPedDist, nearestPedPan,
+      x: this.player.x, z: this.player.z, heading: this.player.heading, hour: this.hour,
+    });
 
     // HUD (троттлинг до ~15 Гц — DOM-запись не нуждается в 60 Гц)
     this._hudAccum = (this._hudAccum || 0) + dt;

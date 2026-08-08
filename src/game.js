@@ -104,7 +104,6 @@ export class Game {
     this._initScene();
     this._initWorld();
     this._initManagers();
-    this.audio._gamePlayer = this.player;
     this._initEvents();
 
     if (save) {
@@ -113,6 +112,13 @@ export class Game {
       this.soundOn = save.sound !== undefined ? save.sound : true;
       this.musicOn = save.music !== undefined ? save.music : true;
       this.weather = save.weather || this.weather;
+      // громкости/станция — опциональные поля; старые сохранения без них
+      // должны грузиться без ошибок. Применяются до unlock() — методы
+      // audio.setVolume()/setStationId() безопасны без готового AudioContext.
+      if (save.audioVol) {
+        for (const key in save.audioVol) this.audio.setVolume(key, save.audioVol[key]);
+      }
+      if (save.radio) this.audio.setStationId(save.radio);
       this.player.applyUpgrades(this.upgrades.stats());
       this.player.setTuning(this.upgrades.tuningForCar());
       this.ui.syncSettings(this.soundOn, this.musicOn);
@@ -123,9 +129,9 @@ export class Game {
       this.ui.syncSettings(this.soundOn, this.musicOn);
     }
 
-    // звук — только после жеста пользователя
-    const unlock = () => { this.audio.unlock(); window.removeEventListener('pointerdown', unlock); };
-    window.addEventListener('pointerdown', unlock);
+    // звук — только после жеста пользователя (pointerdown/keydown/touchstart/click,
+    // старт с клавиатуры без единого клика раньше оставлял игру немой)
+    this.audio.installUnlockHandlers();
 
     this.audio.setMaster(this.soundOn);
     this.audio.setMusic(this.musicOn);
@@ -273,7 +279,6 @@ export class Game {
   _initEvents() {
     events.on('crash', (d) => {
       this.shiftStats.crashes++;
-      this.audio.crash(Math.min(1, d.impact / 30));
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
       this.orders.onCrash(d.impact);
     });
@@ -282,7 +287,6 @@ export class Game {
       this.shiftStats.peds++;
       this.setRating(this.rating - CFG.ratingFail.hitPed);
       this.addMoney(-300);
-      this.audio.crash(0.5);
       this.shakeT = 0.3; this.shakeAmp = 0.4;
       // Посылка не прерывается при сбитии пешехода — пассажира в машине нет
       if (this.orders.active && this.orders.active.type !== 'package') this.orders.fail(this.orders.active, 'ped');
@@ -293,27 +297,20 @@ export class Game {
       this.shakeT = 0.22; this.shakeAmp = 0.32;
     });
     events.on('stall', () => {
-      this.audio.error();
       this.ui.toast('Двигатель заглох!', '#ffb030');
     });
     events.on('noFuel', () => {
       this.ui.toast('Кончилось топливо! До заправки пешком…', '#ffb030');
-      this.audio.error();
     });
     events.on('edge', () => {
       this.ui.toast('Край карты — дальше не проехать!', '#ffb030');
     });
     events.on('order:accepted', () => {
-      this.audio.chime();
       this.ui.toast('Пассажир сел. Поехали!', '#7ee787');
     });
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
 
     events.on('spatial:shout', (d) => {
-      const soundType = d.type || (d.avatar === '🚘' ? 'driver' : 'grump');
-      if (this.player && this.audio) {
-        this.audio.spatialSpeak(d.x, d.z, this.player.x, this.player.z, soundType, this.player.heading);
-      }
       if (d.text && this.player) {
         const dist = Math.hypot(d.x - this.player.x, d.z - this.player.z);
         if (dist < 38) {
@@ -325,10 +322,6 @@ export class Game {
     });
 
     events.on('passenger:speak', (d) => {
-      if (this.audio) {
-        const toneType = d.event === 'crash' || d.event === 'offroad' ? 'grump' : d.event === 'fast' ? 'drift' : 'greeting';
-        this.audio.spatialSpeak(null, null, 0, 0, toneType);
-      }
       if (d.text) {
         this.ui.showDialogue(d.speaker, d.text, d.avatar, d.color);
       }
@@ -345,7 +338,6 @@ export class Game {
         this.shiftStats.missions++;
         if (!this.orders.completed.includes(r.missionId)) this.orders.completed.push(r.missionId);
       }
-      this.audio.cash(r.tips > 40);
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
       this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay) + bonus, '#7ee787');
       if (this.rating >= 100) this.ui.toast('Максимальный рейтинг! Пятигорск ваш! ⭐', '#ffd75e');
@@ -353,7 +345,6 @@ export class Game {
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
       this.setRating(this.rating - CFG.ratingFail.failOrder);
-      this.audio.error();
     });
   }
 
@@ -421,11 +412,13 @@ export class Game {
     this.player.wash();
     this.chaseCam.reset(this.player);
     this.setState('driving');
+    Events.emit('shift:started');
   }
 
   endShift() {
     this.setState('shiftend');
     this.save();
+    Events.emit('shift:ended');
   }
 
   startNewShift() {
@@ -469,6 +462,19 @@ export class Game {
 
   setSound(on) { this.soundOn = on; this.audio.setMaster(on); }
   setMusic(on) { this.musicOn = on; this.audio.setMusic(on); }
+
+  /* Слайдер громкости — протаскивание не должно писать в localStorage на
+     каждый шаг, поэтому сохранение debounce'ится на 800мс */
+  setVolume(key, val) {
+    this.audio.setVolume(key, val);
+    clearTimeout(this._volSaveTimer);
+    this._volSaveTimer = setTimeout(() => this.save(), 800);
+  }
+
+  setRadioStation(id) {
+    this.audio.setStationId(id);
+    this.save();
+  }
 
   /* Применить именованный пресет графики (low|medium|high) целиком */
   applyGfxPreset(name) {
@@ -536,8 +542,10 @@ export class Game {
   /* ---------- Действия игрока ---------- */
   pressHorn() {
     if (this.stateName !== 'driving') return;
+    // Звук гудка триггерится единожды за нажатие внутри audio.updateVehicle()
+    // (по фронту hornTimer > 0) — раньше здесь был ещё один прямой вызов
+    // audio.horn(), и на одно нажатие H звучало два наложенных гудка.
     this.player.hornTimer = 0.7;
-    this.audio.horn();
   }
 
   toggleLights() {
@@ -546,8 +554,10 @@ export class Game {
   }
 
   toggleRadio() {
-    const st = this.audio.nextStation();
-    this.audio.click();
+    // звук переключения — статик/свист внутри nextStation(); отдельный
+    // click() не нужен: для мыши/тача его уже даёт делегированный слушатель
+    // кнопок в ui.js, а дублировать его для клавиши R незачем
+    this.audio.nextStation();
   }
 
   evacuate() {
@@ -651,6 +661,7 @@ export class Game {
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,
       sound: this.soundOn, music: this.musicOn, weather: this.weather,
+      audioVol: this.audio.getVolumes(), radio: this.audio.getStationId(),
     });
   }
 
@@ -759,10 +770,12 @@ export class Game {
       this._dbgEl.style.cssText = 'position:fixed;top:4px;left:4px;z-index:9999;background:#000a;color:#7ee787;font:12px monospace;padding:6px 8px;pointer-events:none;white-space:pre;';
       document.body.appendChild(this._dbgEl);
     }
+    const av = this.audio.engine.getVoiceStatus();
     this._dbgEl.textContent =
       `FPS: ${fps}  CPU: ${cpuMs.toFixed(1)}ms\n` +
       `calls: ${info.render.calls}  tris: ${info.render.triangles}\n` +
-      `tex: ${info.memory.textures}  geo: ${info.memory.geometries}`;
+      `tex: ${info.memory.textures}  geo: ${info.memory.geometries}\n` +
+      `voices: ${av.used}/${av.total}  ctx: ${av.ctxState}`;
     this._dbgAccum = 0; this._dbgFrames = 0;
   }
 
@@ -854,19 +867,39 @@ export class Game {
     // километраж
     this.shiftStats.km += this.player.speed * dt / 1000;
 
-    // звук
+    // звук — единый per-frame апдейт (движок, скид, гудок, позиция слушателя)
     const st = this.player.stats;
     const rpm = clamp(Math.abs(this.player.speed) / st.maxSpeed, 0, 1);
-    this.audio.setEngine(rpm, input.throttle, this.player.engineDead);
-    this.audio.setSkid(this.player.slip);
-    if (this.player.hornTimer > 0) {
-      if (!this._hornActive) {
-        this.audio.horn({ type: 'player', dur: 0.65 });
-        this._hornActive = true;
-      }
-    } else {
-      this._hornActive = false;
+
+    // ближайшая машина со спецсигналами (P2: сирены) и ближайший пешеход (P2: шаги)
+    let siren = null, sirenDist = 130;
+    for (const c of this.traffic.cars) {
+      if (!c.beacon || !c.mesh.visible) continue;
+      const d = dist2D(c.x, c.z, this.player.x, this.player.z);
+      if (d < sirenDist) { sirenDist = d; siren = { x: c.x, z: c.z, type: c.beacon }; }
     }
+    let nearestPedDist, nearestPedPan, bestPd = 12;
+    for (const p of this.peds.cars) {
+      if (!p.alive || p.isAnimal || !p.mesh.visible) continue;
+      const d = dist2D(p.x, p.z, this.player.x, this.player.z);
+      if (d < bestPd) {
+        bestPd = d; nearestPedDist = d;
+        const dx = p.x - this.player.x, dz = p.z - this.player.z;
+        nearestPedPan = clamp(Math.sin(Math.atan2(dx, dz) - this.player.heading), -0.85, 0.85);
+      }
+    }
+
+    this.audio.updateVehicle({
+      rpm, throttle: input.throttle, brake: input.brake,
+      running: !this.player.engineDead,
+      speed: this.player.speed, slip: this.player.slip, maxSpeed: st.maxSpeed,
+      onRoad: this.player.onRoad, damage: this.player.damage,
+      fuelFrac: this.player.fuel / st.tank, horn: this.player.hornTimer > 0,
+      handbrake: input.handbrake, carType: st.carType, groundY: this.player.groundY,
+      camDist: this.chaseCam.dist, raining: this.weather === 'rain', siren,
+      nearestPedDist, nearestPedPan,
+      x: this.player.x, z: this.player.z, heading: this.player.heading, hour: this.hour,
+    });
 
     // HUD (троттлинг до ~15 Гц — DOM-запись не нуждается в 60 Гц)
     this._hudAccum = (this._hudAccum || 0) + dt;

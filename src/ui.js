@@ -38,6 +38,14 @@ export class UIManager {
   /* ---------- Кнопки ---------- */
   _bindButtons() {
     const on = (id, cb) => { const el = this.$(id); if (el) el.addEventListener('click', cb); };
+    // UI-звук на любой клик по кнопке — один делегированный слушатель вместо
+    // правки каждой кнопки по отдельности; звучит на нажатие мышью/тачем,
+    // не дублируется с клавиатурными шорткатами (у них нет 'click' на кнопке)
+    document.addEventListener('pointerdown', (e) => {
+      const b = e.target.closest('button');
+      if (!b || b.disabled) return;
+      this.game.audio.click();
+    }, true);
     on('btn-newgame', () => this.game.newGame());
     on('btn-continue', () => this.game.continueGame());
     on('btn-menu-garage', () => this.game.openGarage('menu'));
@@ -78,6 +86,27 @@ export class UIManager {
     // настройки
     on('chk-sound', () => this.game.setSound(this.$('chk-sound').checked));
     on('chk-music', () => this.game.setMusic(this.$('chk-music').checked));
+    // громкости — 'input' срабатывает на каждое движение ползунка (не 'change',
+    // которое ждёт отпускания), сохранение в game.setVolume уже с debounce
+    const vol = (id, key) => {
+      const el = this.$(id);
+      if (!el) return;
+      el.addEventListener('input', () => {
+        const v = Number(el.value) / 100;
+        this.game.setVolume(key, v);
+        const label = document.querySelector('.vol-val[data-for="' + id + '"]');
+        if (label) label.textContent = el.value + '%';
+      });
+    };
+    vol('rng-vol-master', 'master');
+    vol('rng-vol-music', 'music');
+    vol('rng-vol-sfx', 'sfx');
+    vol('rng-vol-engine', 'engine');
+    vol('rng-vol-ambient', 'ambient');
+    const stationSel = this.$('sel-radio-station');
+    if (stationSel) {
+      stationSel.addEventListener('change', () => this.game.setRadioStation(stationSel.value));
+    }
     // графика: пресет применяет все поля разом и синхронизирует остальные контролы
     on('sel-gfx-preset', () => {
       const v = this.$('sel-gfx-preset').value;
@@ -592,7 +621,34 @@ export class UIManager {
   syncSettings(sound, music) {
     this.$('chk-sound').checked = sound;
     this.$('chk-music').checked = music;
+    this.syncVolumeUI();
     this.syncGfxUI();
+  }
+
+  /* Слайдеры громкости + список станций — синхронизируются с audio.getVolumes()
+     и audio.stations (единственный источник истины для списка станций) */
+  syncVolumeUI() {
+    const vols = this.game.audio.getVolumes();
+    const ids = { master: 'rng-vol-master', music: 'rng-vol-music', sfx: 'rng-vol-sfx', engine: 'rng-vol-engine', ambient: 'rng-vol-ambient' };
+    for (const key in ids) {
+      const el = this.$(ids[key]);
+      if (!el || vols[key] === undefined) continue;
+      const pct = Math.round(vols[key] * 100);
+      el.value = String(pct);
+      const label = document.querySelector('.vol-val[data-for="' + ids[key] + '"]');
+      if (label) label.textContent = pct + '%';
+    }
+    const sel = this.$('sel-radio-station');
+    if (sel) {
+      if (!sel.options.length) {
+        for (const st of this.game.audio.stations) {
+          const opt = document.createElement('option');
+          opt.value = st.id; opt.textContent = st.icon + ' ' + st.name;
+          sel.appendChild(opt);
+        }
+      }
+      sel.value = this.game.audio.getCurrentStation().id;
+    }
   }
 
   syncGfxUI() {
@@ -614,5 +670,7 @@ export class UIManager {
     if (iconEl) iconEl.textContent = st.icon;
     if (nameEl) nameEl.textContent = st.name;
     this.toast(`📻 Радио: ${st.icon} ${st.name} (${st.genre})`, '#58a6ff');
+    const sel = this.$('sel-radio-station');
+    if (sel && sel.options.length) sel.value = st.id;
   }
 }

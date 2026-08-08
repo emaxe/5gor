@@ -410,7 +410,6 @@ class PassengerManager {
     player.style = 0.7;
     player.styleTimer = 0;
     Events.emit('order:accepted', { order, player });
-    Events.emit('pickup', {});
     const dlg = getPassengerDialogue('pickup', order);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: dlg.color });
     return true;
@@ -465,6 +464,13 @@ class PassengerManager {
       if (a.timeLimit) {
         a.timer -= dt;
         if (a.timer <= 0) { this.fail(a, 'time'); return; }
+        if (a.timer < 10) {
+          const sec = Math.ceil(a.timer);
+          if (sec !== a._lastWarnSec) {
+            a._lastWarnSec = sec;
+            Events.emit('order:timer', { left: sec });
+          }
+        }
       }
       const drop = a.drops[a.dropIdx];
       // подсветка финальной точки высадки в мире
@@ -601,7 +607,6 @@ class PassengerManager {
     const dlg = getPassengerDialogue('dropoff', a);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#7ee787' });
     Events.emit('order:completed', res);
-    Events.emit('orderDone', res);
     return res;
   }
 
@@ -618,7 +623,6 @@ class PassengerManager {
     this._cabOut();
     this._removePassenger(a);
     Events.emit('order:failed', { reason, order: a });
-    Events.emit('fail', { reason });
     Events.emit('toast', { text: reason === 'time' ? 'Заказ провален: время вышло!' : 'Пассажир ушёл!', color: '#e05050' });
   }
 

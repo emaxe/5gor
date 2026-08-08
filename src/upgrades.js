@@ -76,6 +76,7 @@ export class UpgradeSystem {
         carId: this.carId, ownedCars: this.ownedCars,
         stats: data.stats, day: data.day,
         sound: data.sound, music: data.music, quality: CFG.quality, gfx: CFG.gfx,
+        audioVol: data.audioVol, radio: data.radio,
       }));
     } catch (e) { /* приватный режим */ }
   }
@@ -94,8 +95,6 @@ export class UpgradeSystem {
       // constructor() (иначе игрок, уже сменивший машину в старом сохранении,
       // молча получил бы дефолтные шашечки такси на купленной машине)
       if (!d.tuning || d.tuning.decal === undefined) this.tuning.decal = defaultDecalIndex(this.carId);
-      if (d.sound !== undefined) window._sndPref = d.sound;
-      if (d.music !== undefined) window._musPref = d.music;
       if (d.quality) CFG.quality = d.quality;
       // gfx — новая схема; старые сохранения без неё откатываются на пресет по quality
       if (d.gfx) CFG.gfx = { ...CFG.gfx, ...d.gfx };
