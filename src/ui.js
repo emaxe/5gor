@@ -491,8 +491,11 @@ export class UIManager {
       row2.innerHTML = '<b style="font-size:13px">Диски:</b>';
       TUNING.rims.forEach((rc, i) => {
         const s = document.createElement('div');
-        s.className = 'swatch' + (tune.rims === i ? ' active' : '');
-        s.style.background = rc.c;
+        // swatch-<style> добавляет фоновый узор (см. style.css) — свотч
+        // намекает на геометрию диска, не только на цвет заливки
+        s.className = 'swatch swatch-' + (rc.style || 'disc') + (tune.rims === i ? ' active' : '');
+        s.style.backgroundColor = rc.c;
+        s.title = rc.name;
         s.addEventListener('click', () => { upgrades.tuning.rims = i; this.game.applyTuning(); this.renderGarage(upgrades, money, player); });
         row2.appendChild(s);
       });

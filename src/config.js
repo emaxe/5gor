@@ -47,7 +47,8 @@
 /**
  * @typedef {Object} TuningRim
  * @property {string} name - Название дисков
- * @property {string} c - HEX-код цвета дисков
+ * @property {string} c - HEX-код цвета дисков (для style==='chrome' влияет только на превью свотча в UI — материал берётся из matChrome)
+ * @property {'disc'|'spoke'|'chrome'} style - геометрия диска (см. carmodel.js buildCarModel spec.rimStyle)
  */
 
 /**
@@ -226,9 +227,9 @@ export const TUNING = {
     { name: 'Оранжевый',    c: '#e67e22' },
   ],
   rims: [
-    { name: 'Стандарт', c: '#b8b8b8' },
-    { name: 'Чёрные',   c: '#2a2a2a' },
-    { name: 'Золотые',  c: '#d4af37' },
+    { name: 'Стандарт', c: '#b8b8b8', style: 'disc' },
+    { name: 'Спицы',    c: '#2a2a2a', style: 'spoke' },
+    { name: 'Хром',     c: '#e8ecf0', style: 'chrome' },
   ],
   spoiler: false,
 };

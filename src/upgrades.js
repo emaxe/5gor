@@ -49,6 +49,7 @@ export class UpgradeSystem {
     return {
       color: parseInt(this.tuning.color.replace('#', ''), 16),
       rims: parseInt(rims.c.replace('#', ''), 16),
+      rimStyle: rims.style || 'disc',
       spoiler: this.tuning.spoiler,
     };
   }

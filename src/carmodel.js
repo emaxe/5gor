@@ -63,6 +63,32 @@ export function taperedBox(w, h, d, opts = {}) {
 /* Геометрия колеса: цилиндр развёрнут осью по X (ось вращения — локальный X) */
 function wheelGeo(r, tw, seg = 12) { return new THREE.CylinderGeometry(r, r, tw, seg).rotateZ(Math.PI / 2); }
 
+/* --- Стили дисков (rimStyle: 'disc'|'spoke'|'chrome') -------------------
+   'disc' — сплошной цилиндр (как раньше). 'spoke' — тот же цилиндр + 5
+   тонких радиальных боксов-спиц поверх. 'chrome' — та же геометрия, что
+   и 'disc', но красится matChrome/светлым цветом вместо matRim/rimColor
+   (см. вызовы ниже). Спицы строятся в "естественной" системе координат
+   цилиндра (ось Y, радиальная плоскость — XZ) — до применения общего
+   поворота, которым диск ставится на колесо (rotateZ(PI/2) для статичной
+   НЕ-animated геометрии, mesh.rotation.z для animated). */
+function rimSpokeBars(r, tw, count = 5) {
+  const barLen = r * 0.94, barW = r * 0.16, barH = tw + 0.05;
+  const bars = [];
+  for (let i = 0; i < count; i++) {
+    bars.push(new THREE.BoxGeometry(barW, barH, barLen).translate(0, 0, barLen / 2).rotateY(i * (Math.PI * 2 / count)));
+  }
+  return bars;
+}
+
+/* Геометрия диска для НЕ-animated (трафик) ветки — уже с запечённым
+   поворотом (как wheelGeo), спицы (если есть) слиты в ту же геометрию,
+   чтобы не плодить лишний draw call (см. mergeColored ниже). */
+function buildStaticRimGeo(style, r, tw, seg) {
+  const disc = wheelGeo(r, tw, seg);
+  if (style !== 'spoke') return disc;
+  return mergeGeoms([disc, ...rimSpokeBars(r, tw).map((g) => g.rotateZ(Math.PI / 2))]);
+}
+
 const insetAnchor = (a) => ({
   x: a.x - Math.sign(a.x) * a.w * 0.55, y: a.y, z: a.z, w: a.w * 0.46, h: a.h * 0.68, d: a.d,
 });
@@ -247,7 +273,13 @@ export const CAR_SHAPES = {
  * @param {number} [spec.darkColor]
  * @param {number} [spec.chromeColor]
  * @param {number} [spec.tireColor] - цвет шины (НЕ-animated, наружный цилиндр колеса)
- * @param {number} [spec.rimColor] - цвет диска (НЕ-animated, внутренний цилиндр колеса)
+ * @param {number} [spec.rimColor] - цвет диска (НЕ-animated, внутренний цилиндр колеса; игнорируется при rimStyle==='chrome' — используется chromeColor)
+ * @param {string} [spec.rimStyle='disc'] - 'disc'|'spoke'|'chrome' — стиль сборки диска (геометрия, не только цвет).
+ *   Для animated (игрок) строятся сразу все 3 варианта как дочерние меши колеса
+ *   (wheels[i].rimVariants), rimStyle задаёт, какой из них видим изначально —
+ *   переключение между ними без пересборки идёт через player.js:_applyTuning().
+ *   Для НЕ-animated (трафик) строится только один вариант, спицы (если есть)
+ *   запекаются в staticColored вместе с кузовом (без лишнего draw call).
  * @param {boolean} [spec.hasPlate=true]
  * @param {boolean} [spec.hasSign=false] - плафон "ТАКСИ"
  * @param {boolean} [spec.hasLivery=false] - шашечки по бортам
@@ -261,6 +293,7 @@ export function buildCarModel(spec) {
     matRim, matHub, matPlate, matSign, matLivery,
     matBeaconRed, matBeaconBlue,
     bodyColor = 0xcccccc, darkColor = 0x22262c, chromeColor = 0xc8c8c8, tireColor = 0x18181a, rimColor = 0xc4c8cc,
+    rimStyle = 'disc',
     hasPlate = true, hasSign = false, hasLivery = false, beacon = null,
   } = spec;
 
@@ -371,12 +404,28 @@ export function buildCarModel(spec) {
     // анимируемого колеса нельзя (сломает ось вращения, см. NPC-ветку ниже,
     // где геометрия статична и запекать безопасно).
     const tireGeo = new THREE.CylinderGeometry(wr, wr, wtw, 12);
-    const rimGeo = new THREE.CylinderGeometry(wr * 0.58, wr * 0.58, wtw + 0.035, 10);
+    const rimR = wr * 0.58, rimTw = wtw + 0.035;
+    const discGeo = new THREE.CylinderGeometry(rimR, rimR, rimTw, 10);
+    // все 3 стиля диска строятся сразу (а не только выбранный rimStyle) —
+    // player.js:_applyTuning() переключает видимость без пересборки геометрии
+    // кузова при смене тюнинга (см. wheels[i].rimVariants)
+    const spokeGeo = matRim ? mergeGeoms([discGeo, ...rimSpokeBars(rimR, rimTw)]) : null;
     for (const [sx, sz, isFront] of layout) {
       const tw3 = new THREE.Mesh(tireGeo, matDark);
       tw3.rotation.z = Math.PI / 2;
       tw3.userData.front = isFront;
-      if (matRim) tw3.add(new THREE.Mesh(rimGeo, matRim));
+      if (matRim) {
+        const rimVariants = {
+          disc: new THREE.Mesh(discGeo, matRim),
+          spoke: new THREE.Mesh(spokeGeo, matRim),
+          chrome: new THREE.Mesh(discGeo, matChrome || matRim),
+        };
+        for (const key in rimVariants) {
+          rimVariants[key].visible = key === rimStyle;
+          tw3.add(rimVariants[key]);
+        }
+        tw3.rimVariants = rimVariants;
+      }
       if (isFront) {
         const pivot = new THREE.Group();
         pivot.position.set(sx, wr, sz);
@@ -394,11 +443,12 @@ export function buildCarModel(spec) {
     // колёса NPC не вращаются (см. traffic.js) — сливаем их вместе с кузовом
     // в один-единственный vertexColors-меш вместо отдельного draw call.
     // Снаружи тёмная шина (tireColor), внутри — диск (rimColor).
+    const rimBakedColor = rimStyle === 'chrome' ? chromeColor : rimColor;
     for (const [sx, sz] of layout) {
       staticColored.push({ g: wheelGeo(wr, wtw, 10).translate(sx, wr, sz), c: tireColor });
-      staticColored.push({ g: wheelGeo(wr * 0.58, wtw + 0.035, 8).translate(sx, wr, sz), c: rimColor });
+      staticColored.push({ g: buildStaticRimGeo(rimStyle, wr * 0.58, wtw + 0.035, 8).translate(sx, wr, sz), c: rimBakedColor });
     }
-    const cacheKey = spec.cacheKey || `${shape}|${w}|${len}|${bodyColor}|${darkColor}|${chromeColor}|${tireColor}|${rimColor}`;
+    const cacheKey = spec.cacheKey || `${shape}|${w}|${len}|${bodyColor}|${darkColor}|${chromeColor}|${tireColor}|${rimColor}|${rimStyle}`;
     const mergedGeo = getBodyGeometry(cacheKey, () => mergeColored(staticColored));
     bodyGroup.add(new THREE.Mesh(mergedGeo, matBody));
   }

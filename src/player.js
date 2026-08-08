@@ -49,7 +49,7 @@ export class PlayerCar {
     this.offroadTimer = 0;
     this.passengerCount = 0;
     /** @type {import('./config.js').Tuning} параметры тюнинга */
-    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, spoiler: false };
+    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false };
     this.groundY = 0.5;
     this._builtCarType = null;
     this._roll = 0; this._pitch = 0;
@@ -92,6 +92,7 @@ export class PlayerCar {
       matHead: this.matHead, matStop: this.matStop, matTurnA: this.matTurnA, matTurnB: this.matTurnB,
       matReverse: this.matReverse, matRim: this.matRim, matPlate: this.matPlate,
       matSign: this.matSign, matLivery: this.matLivery,
+      rimStyle: this.tuning.rimStyle || 'disc',
       hasPlate: true, hasSign: !!this.stats.isTaxi, hasLivery: !!this.stats.isTaxi,
     });
 
@@ -130,6 +131,13 @@ export class PlayerCar {
   _applyTuning(tuning) {
     this.matBody.color.setHex(tuning.color);
     this.matRim.color.setHex(tuning.rims);
+    // стиль диска: геометрия всех 3 вариантов уже построена в _build()
+    // (wheels[i].rimVariants) — переключаем только видимость, без пересборки
+    const rimStyle = tuning.rimStyle || 'disc';
+    for (const w of this.wheels) {
+      if (!w.rimVariants) continue;
+      for (const key in w.rimVariants) w.rimVariants[key].visible = key === rimStyle;
+    }
     if (this.spoilerGroup) this.spoilerGroup.visible = !!tuning.spoiler;
   }
 
