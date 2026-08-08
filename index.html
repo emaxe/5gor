@@ -715,10 +715,15 @@ const CFG = {
 
 /* Настройки графики: реальные поля, применяемые applyGfx() (game.js). Дефолты
    соответствуют текущему поведению quality:'high'. */
+// pixelBudget — потолок пикселей буфера рендера (ширина×высота×pixelRatio²).
+// На fullscreen retina-окне один pixelRatio из пресета не спасает: экран сам
+// по себе может быть 2560×1440, и 1.75 там даёт ~16 млн фрагментов. game.js
+// (_effectivePixelRatio) урезает pixelRatio так, чтобы уложиться в бюджет,
+// не трогая сам пресет для маленьких окон.
 const CFG_GFX_PRESETS = {
-  low:    { shadows: 'off',  shadowActors: false, pixelRatio: 1.25, drawDistance: 600,  trafficDensity: 0.5, pedDensity: 0.5, rain: false },
-  medium: { shadows: 'low',  shadowActors: false, pixelRatio: 1.25, drawDistance: 1000, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
-  high:   { shadows: 'high', shadowActors: false, pixelRatio: 1.75, drawDistance: 1400, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
+  low:    { shadows: 'off',  shadowActors: false, pixelRatio: 1.25, pixelBudget: 1600000, drawDistance: 600,  trafficDensity: 0.5, pedDensity: 0.5, rain: false },
+  medium: { shadows: 'low',  shadowActors: false, pixelRatio: 1.25, pixelBudget: 2400000, drawDistance: 1000, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
+  high:   { shadows: 'high', shadowActors: false, pixelRatio: 1.75, pixelBudget: 3200000, drawDistance: 1400, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
 };
 
 CFG.gfx = { ...CFG_GFX_PRESETS.high, preset: 'high' };
@@ -11027,6 +11032,10 @@ class Game {
     this._initWorld();
     this._initManagers();
     this._initEvents();
+    // CFG.gfx к этому моменту уже отражает загруженный пресет (upgrades.load()
+    // применяет save.gfx синхронно до _initRenderer()), но сам рендерер ещё
+    // не приведён в соответствие — синхронизируем без тоста
+    this.applyGfx({}, { silent: true });
 
     if (save) {
       this.money = save.money; this.rating = save.rating; this.day = save.day || 1;
@@ -11067,20 +11076,51 @@ class Game {
     const probe = document.createElement('canvas');
     const gl = probe.getContext('webgl2') || probe.getContext('webgl');
     if (!gl) throw new Error('WebGL не поддерживается вашим браузером');
-    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: true, powerPreference: 'high-performance' });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, CFG.gfx.pixelRatio));
+    // MSAA имеет смысл только при pixelRatio < 1.5 — выше суперсэмплинг уже
+    // сглаживает края сам, а MSAA поверх него удваивает-учетверяет фрагментный
+    // трафик почти без выигрыша в картинке (см. план по просадке FPS)
+    const dpr = window.devicePixelRatio || 1;
+    this.renderer = new THREE.WebGLRenderer({ canvas: this.canvas, antialias: dpr < 1.5, powerPreference: 'high-performance' });
+    this._applyResolution();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
     this.renderer.shadowMap.enabled = CFG.gfx.shadows !== 'off';
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.shadowMap.autoUpdate = false;
     this.renderer.outputEncoding = THREE.sRGBEncoding;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     window.addEventListener('resize', () => {
+      this.camera.aspect = window.innerWidth / window.innerHeight;
+      this.camera.updateProjectionMatrix();
+      this._applyResolution();
       this.renderer.setSize(window.innerWidth, window.innerHeight);
       if (this.rainUniforms) {
         this.rainUniforms.uScale.value = window.innerHeight * 0.5;
       }
     });
+  }
+
+  /* Эффективный pixelRatio буфера: ограничен пресетом графики и бюджетом пикселей
+     под текущий размер окна (иначе fullscreen на retina просто топит филлрейт).
+     Пересчитывается только по событиям (старт, resize, смена пресета) — НЕ
+     покадрово: setPixelRatio() меняет canvas.width/height, а изменение размеров
+     канваса немедленно очищает буфер отрисовки. Периодический вызов посреди
+     игры (была такая попытка с авто-подстройкой под текущий FPS) на мгновение
+     показывает пользователю только что очищенный кадр раньше, чем следующий
+     renderer.render() успевает его перерисовать — читается как мерцание. */
+  _effectivePixelRatio() {
+    const dpr = Math.min(window.devicePixelRatio || 1, CFG.gfx.pixelRatio);
+    const budget = CFG.gfx.pixelBudget || 3200000;
+    const cap = Math.sqrt(budget / Math.max(1, window.innerWidth * window.innerHeight));
+    return Math.max(0.7, Math.min(dpr, cap));
+  }
+
+  /* setPixelRatio() пересоздаёт внутренние буферы рендерера — не дёргать его,
+     если разрешение фактически не изменилось */
+  _applyResolution() {
+    const r = this._effectivePixelRatio();
+    if (this.renderer.getPixelRatio && Math.abs(r - this.renderer.getPixelRatio()) < 0.01) return;
+    this.renderer.setPixelRatio(r);
+    if (this.rainUniforms) this.rainUniforms.uSize.value = 0.3 * r;
   }
 
   _initScene() {
@@ -11407,13 +11447,22 @@ class Game {
 
   /* Точечно применить часть настроек графики (остальные поля CFG.gfx не трогаются).
      Тени полностью выключаются/включаются (не просто прячутся): shadowMap.enabled,
-     castShadow, dispose текущей shadow map — а не косметическое сокрытие результата. */
-  applyGfx(partial) {
+     castShadow, dispose текущей shadow map — а не косметическое сокрытие результата.
+     opts.silent — без тоста; используется при старте игры (см. конструктор), чтобы
+     привести состояние рендерера (тип теней/pixelRatio/camera.far) в соответствие
+     с загруженным сохранением сразу, а не только после первого ручного открытия
+     настроек. Без этого вызова _initRenderer()/_initScene() жёстко прописывают
+     дефолт, который может не совпадать с CFG.gfx из сейва (например, у пресета
+     «Высокое» — мягкие тени, а хардкод в _initRenderer — обычный PCF). */
+  applyGfx(partial, opts = {}) {
     CFG.gfx = { ...CFG.gfx, ...partial };
     const g = CFG.gfx;
     const shadowsOn = g.shadows !== 'off';
 
     this.renderer.shadowMap.enabled = shadowsOn;
+    // 'high' — мягкие тени (PCFSoftShadowMap дороже на каждый затенённый
+    // фрагмент), 'low' — обычный PCF: экономия филлрейта важнее мягкости края
+    this.renderer.shadowMap.type = g.shadows === 'high' ? THREE.PCFSoftShadowMap : THREE.PCFShadowMap;
     this.sun.castShadow = shadowsOn;
     const shadowRes = g.shadows === 'high' ? 1024 : 512;
     this.sun.shadow.mapSize.set(shadowRes, shadowRes);
@@ -11422,11 +11471,8 @@ class Game {
     if (shadowsOn) this.renderer.shadowMap.needsUpdate = true;
     this._setActorShadow(shadowsOn && g.shadowActors);
 
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, g.pixelRatio));
-    if (this.rainUniforms) {
-      this.rainUniforms.uSize.value = 0.3 * this.renderer.getPixelRatio();
-      this.rainUniforms.uScale.value = window.innerHeight * 0.5;
-    }
+    this._applyResolution();
+    if (this.rainUniforms) this.rainUniforms.uScale.value = window.innerHeight * 0.5;
 
     this.camera.far = g.drawDistance;
     this.camera.updateProjectionMatrix();
@@ -11434,6 +11480,7 @@ class Game {
     // Старый алиас CFG.quality — держится ради обратной совместимости сохранений
     CFG.quality = (g.shadows === 'high' && g.pixelRatio >= 1.75) ? 'high' : 'low';
 
+    if (opts.silent) return;
     const presetNames = { low: 'низкое', medium: 'среднее', high: 'высокое', custom: 'своё' };
     this.ui.toast('Графика: ' + (presetNames[g.preset] || 'своё'), '#7ee787');
   }
@@ -11636,7 +11683,16 @@ class Game {
     this.sun.intensity = (0.25 + dayF * 1.05) * weatherDim;
     const sunY = Math.max(6, 90 * dayF + 12);
     this.sun.position.set(60, sunY, 40 - 60 * (1 - dayF));
-    const sunMoved = Math.abs(dayF - (this._lastSunDayF ?? -1)) > 0.01;
+    // Порог триггера полного пересчёта shadow map. shadowMap.autoUpdate=false —
+    // тень между обновлениями заморожена на СТАРОМ угле солнца, а не следует
+    // за ним непрерывно, поэтому каждое обновление — дискретный скачок тени.
+    // При старом пороге 0.01 и dayLengthSec=720 накопление занимает ~1.6с
+    // (см. derivative dayF/dt) — на честных 60 FPS этот скачок читается как
+    // периодическое мерцание. Меньший порог даёт более частые, но более мелкие
+    // (менее заметные) скачки вместо редких крупных; полный autoUpdate=true
+    // на данной сцене дороже — много статичных зданий-теней пересчитывались
+    // бы 60 раз/с ради изменения угла всего одного источника света.
+    const sunMoved = Math.abs(dayF - (this._lastSunDayF ?? -1)) > 0.002;
     if (sunMoved) {
       this._lastSunDayF = dayF;
       if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
@@ -11693,11 +11749,14 @@ class Game {
       document.body.appendChild(this._dbgEl);
     }
     const av = this.audio.engine.getVoiceStatus();
+    const pr = this.renderer.getPixelRatio();
+    const bufW = Math.round(window.innerWidth * pr), bufH = Math.round(window.innerHeight * pr);
     this._dbgEl.textContent =
       `FPS: ${fps}  CPU: ${cpuMs.toFixed(1)}ms\n` +
       `calls: ${info.render.calls}  tris: ${info.render.triangles}\n` +
       `tex: ${info.memory.textures}  geo: ${info.memory.geometries}\n` +
-      `voices: ${av.used}/${av.total}  ctx: ${av.ctxState}`;
+      `voices: ${av.used}/${av.total}  ctx: ${av.ctxState}\n` +
+      `res: ${bufW}x${bufH} @${pr.toFixed(2)}`;
     this._dbgAccum = 0; this._dbgFrames = 0;
   }
 

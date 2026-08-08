@@ -158,10 +158,15 @@ export const CFG = {
 
 /* Настройки графики: реальные поля, применяемые applyGfx() (game.js). Дефолты
    соответствуют текущему поведению quality:'high'. */
+// pixelBudget — потолок пикселей буфера рендера (ширина×высота×pixelRatio²).
+// На fullscreen retina-окне один pixelRatio из пресета не спасает: экран сам
+// по себе может быть 2560×1440, и 1.75 там даёт ~16 млн фрагментов. game.js
+// (_effectivePixelRatio) урезает pixelRatio так, чтобы уложиться в бюджет,
+// не трогая сам пресет для маленьких окон.
 export const CFG_GFX_PRESETS = {
-  low:    { shadows: 'off',  shadowActors: false, pixelRatio: 1.25, drawDistance: 600,  trafficDensity: 0.5, pedDensity: 0.5, rain: false },
-  medium: { shadows: 'low',  shadowActors: false, pixelRatio: 1.25, drawDistance: 1000, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
-  high:   { shadows: 'high', shadowActors: false, pixelRatio: 1.75, drawDistance: 1400, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
+  low:    { shadows: 'off',  shadowActors: false, pixelRatio: 1.25, pixelBudget: 1600000, drawDistance: 600,  trafficDensity: 0.5, pedDensity: 0.5, rain: false },
+  medium: { shadows: 'low',  shadowActors: false, pixelRatio: 1.25, pixelBudget: 2400000, drawDistance: 1000, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
+  high:   { shadows: 'high', shadowActors: false, pixelRatio: 1.75, pixelBudget: 3200000, drawDistance: 1400, trafficDensity: 1.0, pedDensity: 1.0, rain: true },
 };
 
 CFG.gfx = { ...CFG_GFX_PRESETS.high, preset: 'high' };
