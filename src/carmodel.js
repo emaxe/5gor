@@ -98,6 +98,26 @@ function buildStaticRimGeo(style, r, tw, seg) {
    в том же формате {g,role}, что и CAR_SHAPES — buildCarModel раскладывает
    их по той же логике (animated: отдельные меши в скрываемой группе,
    НЕ-animated: сливаются в staticColored вместе с кузовом). */
+/* --- Багажник на крыше (roofRack) ----------------------------------------
+   Строится в buildCarModel (не в threeBoxCar/boxVanCar), потому что нужен
+   ОДИН приём геометрии для обеих фабрик — зависит только от anchor'а
+   built.roofRack (см. threeBoxCar/boxVanCar, паттерн как у roofSign) и
+   ширины машины. Фабрика возвращает anchor только если её силуэт разрешает
+   багажник (per-shape опция roofRackOk в CAR_SHAPES — wagon/suv/van), иначе
+   built.roofRack === null и buildCarModel ничего не строит независимо от
+   spec.hasRoofRack. 2 продольных рельса вдоль anchor.z + 2 поперечные дуги. */
+function roofRackParts(rr, w) {
+  const railW = w * 0.72;
+  const parts = [];
+  for (const s of [-1, 1]) {
+    parts.push({ g: new THREE.BoxGeometry(0.04, 0.035, rr.len).translate(rr.x + s * railW / 2, rr.y, rr.z), role: 'dark' });
+  }
+  for (const s of [-1, 1]) {
+    parts.push({ g: new THREE.BoxGeometry(railW + 0.04, 0.03, 0.04).translate(rr.x, rr.y, rr.z + s * rr.len * 0.32), role: 'dark' });
+  }
+  return parts;
+}
+
 function bodyKitParts(dims, kit) {
   if (kit !== 'sport') return [];
   const { w, len, wheelR = 0.38 } = dims;
@@ -163,6 +183,7 @@ function threeBoxCar(dims, o = {}) {
     cabW: 0.86, cabH: 0.46, cabY: 1.32, cabTopWfrac: 0.9, cabDZfrac: -0.02,
     roofW: 0.78, roofH: 0.1, roofY: 1.58, roofFrac: 0.4, roofDZfrac: -0.02,
     chromeBumper: false, chromeTrim: false, wheelR: 0.38,
+    hasExhaust: false, roofRackOk: false,
     ...o,
   }, o);
   const parts = [], glass = [];
@@ -191,11 +212,24 @@ function threeBoxCar(dims, o = {}) {
     add(new THREE.BoxGeometry(w * 1.04, 0.16, 0.16).translate(0, opt.deckY - opt.deckH * 0.42, s * (len / 2 + 0.07)), bumperRole);
   }
   for (const s of [-1, 1]) {
+    // зеркало: корпус (тот же anchor, что и у прежнего плейсхолдера) + ножка
+    // крепления между бортом и корпусом зеркала — ножка всегда 'dark'
+    // (пластиковый кронштейн), даже если сам корпус хромирован (chromeTrim)
     add(new THREE.BoxGeometry(0.14, 0.1, 0.16).translate(s * (w / 2 + 0.07), opt.cabY - opt.cabH * 0.3, len * 0.12), opt.chromeTrim ? 'chrome' : 'dark');
+    add(new THREE.BoxGeometry(0.05, 0.045, 0.05).translate(s * (w / 2 + 0.03), opt.cabY - opt.cabH * 0.3, len * 0.12), 'dark');
     add(new THREE.BoxGeometry(0.03, 0.06, 0.32).translate(s * (w * opt.beltW / 2 + 0.015), opt.deckY + 0.1, 0), 'dark');
+    // шов дверей — тонкая инсетная тёмная полоса вдоль борта (тот же приём,
+    // что у chromeTrim ниже, но безусловная НОВАЯ деталь, не завязанная на
+    // chromeTrim: вертикальная линия у границы дверей, а не горизонтальный пояс)
+    add(new THREE.BoxGeometry(0.025, opt.deckH * 0.86, 0.03).translate(s * (w * opt.beltW / 2 + 0.008), opt.deckY, len * 0.02), 'dark');
   }
   if (opt.chromeTrim) {
     add(new THREE.BoxGeometry(w * opt.beltW + 0.02, 0.035, len * 0.7).translate(0, opt.deckY + opt.deckH * 0.5, 0), 'chrome');
+  }
+  if (opt.hasExhaust) {
+    // выхлопная труба — маленький цилиндр под задним бампером (sedan/coupe/hatch)
+    add(new THREE.CylinderGeometry(0.05, 0.05, 0.16, 8).rotateX(Math.PI / 2)
+      .translate(w * 0.22, opt.deckY - opt.deckH * 0.44, -(len / 2 + 0.02)), 'dark');
   }
 
   const lampFront = [-1, 1].map((s) => ({ x: s * w * 0.32, y: opt.deckY, z: len / 2 + 0.045, w: 0.28, h: 0.15, d: 0.08 }));
@@ -206,6 +240,11 @@ function threeBoxCar(dims, o = {}) {
     wheel: { r: opt.wheelR, tw: 0.3, front: { x: w * 0.47, z: len * 0.31 }, rear: { x: w * 0.47, z: -len * 0.31 } },
     lampFront, lampRear,
     roofSign: { x: 0, y: opt.roofY + opt.roofH / 2 + 0.11, z: len * opt.roofDZfrac },
+    // anchor только когда силуэт разрешает багажник (wagon/suv, roofRackOk
+    // в CAR_SHAPES) — buildCarModel строит геометрию лишь при наличии anchor'а
+    roofRack: opt.roofRackOk
+      ? { x: 0, y: opt.roofY + opt.roofH / 2 + 0.05, z: len * opt.roofDZfrac, len: len * opt.roofFrac * 0.85 }
+      : null,
     liveryStripe: { y: opt.deckY, z: 0, w: len * 0.82, h: opt.deckH * 0.62 },
     plate: { x: 0, y: opt.deckY - 0.06, z: -(len / 2 + 0.05) },
   };
@@ -218,6 +257,7 @@ function boxVanCar(dims, o = {}) {
     cabLenFrac: 0.22, cabH: 0.9, cabY: 1.05, windshieldRise: -0.28,
     cargoLenFrac: 0.68, cargoH: 1.5, cargoY: 1.35,
     openBed: false, bedWallH: 0.35, sideGlass: false, wheelR: 0.38,
+    roofRackOk: false,
     ...o,
   }, o);
   const parts = [], glass = [];
@@ -251,7 +291,12 @@ function boxVanCar(dims, o = {}) {
     add(new THREE.BoxGeometry(w * 1.02, 0.16, 0.16).translate(0, opt.deckY - opt.deckH * 0.4, s * (len / 2 + 0.07)), 'dark');
   }
   for (const s of [-1, 1]) {
+    // зеркало: корпус (тот же anchor, что и у прежнего плейсхолдера) + ножка
+    // крепления, тот же приём, что в threeBoxCar
     add(new THREE.BoxGeometry(0.14, 0.1, 0.16).translate(s * (w / 2 + 0.07), opt.cabY - 0.05, len / 2 - cabLen * 0.5), 'dark');
+    add(new THREE.BoxGeometry(0.05, 0.045, 0.05).translate(s * (w / 2 + 0.03), opt.cabY - 0.05, len / 2 - cabLen * 0.5), 'dark');
+    // шов дверей — тонкая инсетная тёмная полоса вдоль борта кабины
+    add(new THREE.BoxGeometry(0.025, opt.cabH * 0.55, 0.03).translate(s * (w * 0.94 / 2 + 0.008), opt.cabY - opt.cabH * 0.05, len / 2 - cabLen * 0.5), 'dark');
   }
 
   const lampFront = [-1, 1].map((s) => ({ x: s * w * 0.34, y: opt.deckY, z: len / 2 + 0.045, w: 0.26, h: 0.16, d: 0.08 }));
@@ -262,6 +307,11 @@ function boxVanCar(dims, o = {}) {
     wheel: { r: opt.wheelR, tw: 0.3, front: { x: w * 0.47, z: len / 2 - cabLen * 0.55 }, rear: { x: w * 0.47, z: -(len / 2 - cabLen - (opt.openBed ? (len - cabLen) * 0.4 : cargoLen * 0.35)) } },
     lampFront, lampRear,
     roofSign: { x: 0, y: opt.cabY + opt.cabH / 2 + 0.13, z: len / 2 - cabLen * 0.5 },
+    // над ГРУЗОВЫМ ОТСЕКОМ (не над кабиной, как roofSign) — иначе накладывался
+    // бы на плафон такси/маячок у машин с hasSign/beacon (см. бриф Task 7)
+    roofRack: opt.roofRackOk
+      ? { x: 0, y: opt.cargoY + opt.cargoH / 2 + 0.06, z: cargoZ, len: cargoLen * 0.8 }
+      : null,
     liveryStripe: { y: opt.deckY + 0.1, z: -0.1, w: len * 0.7, h: opt.deckH * 0.7 },
     plate: { x: 0, y: opt.deckY - 0.04, z: -(len / 2 + 0.05) },
   };
@@ -271,20 +321,20 @@ function boxVanCar(dims, o = {}) {
    прозрачно доходят до threeBoxCar/boxVanCar и ПЕРЕКРЫВАЮТ базовые опции
    конкретного силуэта. Без него (игрок, старые вызовы) поведение прежнее. */
 export const CAR_SHAPES = {
-  sedan: (d, o) => threeBoxCar(d, { ...o }),
+  sedan: (d, o) => threeBoxCar(d, { hasExhaust: true, ...o }),
   hatch: (d, o) => threeBoxCar(d, {
-    trunkFrac: 0.13, trunkRise: -0.36, roofFrac: 0.52, cabDZfrac: -0.06, roofDZfrac: -0.08, ...o,
+    trunkFrac: 0.13, trunkRise: -0.36, roofFrac: 0.52, cabDZfrac: -0.06, roofDZfrac: -0.08, hasExhaust: true, ...o,
   }),
   wagon: (d, o) => threeBoxCar(d, {
-    trunkFrac: 0.22, trunkRise: -0.05, roofFrac: 0.62, roofDZfrac: -0.1, cabTopWfrac: 0.94, ...o,
+    trunkFrac: 0.22, trunkRise: -0.05, roofFrac: 0.62, roofDZfrac: -0.1, cabTopWfrac: 0.94, roofRackOk: true, ...o,
   }),
   coupe: (d, o) => threeBoxCar(d, {
     deckY: 0.66, deckH: 0.38, cabY: 1.2, cabH: 0.4, roofY: 1.42,
-    hoodFrac: 0.4, trunkFrac: 0.34, cabDZfrac: -0.08, cabTopWfrac: 0.8, roofFrac: 0.24, ...o,
+    hoodFrac: 0.4, trunkFrac: 0.34, cabDZfrac: -0.08, cabTopWfrac: 0.8, roofFrac: 0.24, hasExhaust: true, ...o,
   }),
   suv: (d, o) => threeBoxCar(d, {
     deckY: 0.92, deckH: 0.5, cabY: 1.58, cabH: 0.56, roofY: 1.9, roofH: 0.12,
-    roofFrac: 0.58, cabTopWfrac: 0.96, hoodFrac: 0.28, trunkFrac: 0.24, wheelR: 0.44, ...o,
+    roofFrac: 0.58, cabTopWfrac: 0.96, hoodFrac: 0.28, trunkFrac: 0.24, wheelR: 0.44, roofRackOk: true, ...o,
   }),
   retro: (d, o) => threeBoxCar(d, {
     cabTopWfrac: 0.96, cabDZfrac: 0, roofFrac: 0.34, hoodRise: -0.16, trunkRise: -0.16, chromeBumper: true, ...o,
@@ -293,7 +343,7 @@ export const CAR_SHAPES = {
     deckY: 0.68, deckH: 0.4, cabY: 1.22, cabH: 0.42, roofY: 1.46,
     hoodFrac: 0.4, trunkFrac: 0.32, cabTopWfrac: 0.86, roofFrac: 0.3, chromeTrim: true, ...o,
   }),
-  van: (d, o) => boxVanCar(d, { sideGlass: true, ...o }),
+  van: (d, o) => boxVanCar(d, { sideGlass: true, roofRackOk: true, ...o }),
   bus: (d, o) => boxVanCar(d, {
     cabLenFrac: 0.16, cabH: 1.1, cabY: 1.15, cargoLenFrac: 0.8, cargoH: 1.65, cargoY: 1.45, sideGlass: true, ...o,
   }),
@@ -364,6 +414,7 @@ const GEO_SPEC_DEFAULTS = {
   tireColor: 0x18181a, rimColor: 0xc4c8cc,
   rimStyle: 'disc', bodyKit: 'stock',
   shapeOpts: null,
+  hasRoofRack: false,
 };
 
 /* Значения сериализуем рекурсивно: объекты (shapeOpts) — по отсортированным
@@ -438,6 +489,11 @@ export function carGeoCacheKey(spec) {
  *   hasLivery здесь ни на что не влияет (дефолт выбора декали считает upgrades.js).
  *   Для НЕ-animated (трафик) поведение прежнее: anchor строится только при hasLivery===true.
  * @param {string|null} [spec.beacon] - 'police'|'ambulance'|null — маячок на крыше
+ * @param {boolean} [spec.hasRoofRack=false] - багажник на крыше. Геометрически значим
+ *   (меняет staticColored/статичную сборку трафика), поэтому участвует в GEO_SPEC_DEFAULTS
+ *   и carGeoCacheKey. Реально строится только когда И spec.hasRoofRack===true, И силуэт
+ *   разрешает багажник (built.roofRack !== null — см. per-shape опцию roofRackOk у
+ *   wagon/suv/van в CAR_SHAPES); для остальных силуэтов флаг ни на что не влияет.
  */
 export function buildCarModel(spec) {
   const {
@@ -452,6 +508,7 @@ export function buildCarModel(spec) {
     rimStyle = GEO_SPEC_DEFAULTS.rimStyle, bodyKit = GEO_SPEC_DEFAULTS.bodyKit,
     shapeOpts = GEO_SPEC_DEFAULTS.shapeOpts,
     hasPlate = true, hasSign = false, hasLivery = false, beacon = null,
+    hasRoofRack = GEO_SPEC_DEFAULTS.hasRoofRack,
   } = spec;
 
   const shapeFn = CAR_SHAPES[shape] || CAR_SHAPES.sedan;
@@ -551,6 +608,21 @@ export function buildCarModel(spec) {
     refs.beaconRed = new THREE.Mesh(barGeo().translate(rs.x - 0.1, rs.y, rs.z), matBeaconRed);
     refs.beaconBlue = new THREE.Mesh(barGeo().translate(rs.x + 0.1, rs.y, rs.z), matBeaconBlue);
     bodyGroup.add(refs.beaconRed, refs.beaconBlue);
+  }
+
+  // --- багажник на крыше (wagon/suv/van, spec.hasRoofRack) ---
+  // built.roofRack !== null только когда силуэт разрешает багажник
+  // (roofRackOk в CAR_SHAPES) — hasRoofRack на прочих силуэтах не эффекта
+  if (hasRoofRack && built.roofRack) {
+    const rackParts = roofRackParts(built.roofRack, w);
+    if (animated) {
+      const rackGroup = new THREE.Group();
+      for (const { g } of rackParts) rackGroup.add(new THREE.Mesh(g, matDark));
+      bodyGroup.add(rackGroup);
+      refs.roofRack = rackGroup;
+    } else {
+      for (const { g } of rackParts) staticColored.push({ g, c: darkColor });
+    }
   }
 
   // --- боди-кит (сплиттер + пороги, bodyKit: 'stock'|'sport') ---

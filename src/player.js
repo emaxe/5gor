@@ -97,6 +97,10 @@ export class PlayerCar {
     this._builtCarType = cType;
 
     const def = CAR_TYPE_SHAPE[cType] || CAR_TYPE_SHAPE.taxi;
+    // багажник на крыше — только силуэты, где он геометрически разрешён
+    // (roofRackOk в CAR_SHAPES: wagon/suv/van, см. carmodel.js); вычисляется
+    // из уже существующего def.shape, CAR_TYPE_SHAPE не трогаем
+    const hasRoofRack = def.shape === 'wagon' || def.shape === 'suv' || def.shape === 'van';
     const built = buildCarModel({
       shape: def.shape, w: def.w, len: def.len, animated: true,
       matBody: this.matBody, matDark: this.matDark, matChrome: this.matChrome, matGlass: this.matGlass,
@@ -105,6 +109,7 @@ export class PlayerCar {
       matSign: this.matSign, matLivery: this.matLivery,
       rimStyle: this.tuning.rimStyle || 'disc', bodyKit: this.tuning.bodyKit || 'stock',
       hasPlate: true, hasSign: !!this.stats.isTaxi, hasLivery: !!this.stats.isTaxi,
+      hasRoofRack,
     });
 
     // спойлер строится всегда (скрыт по умолчанию) — включение в _applyTuning
