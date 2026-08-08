@@ -95,9 +95,10 @@ function buildStaticRimGeo(style, r, tw, seg) {
    и радиуса колеса (даёт разумную высоту от земли для любого типа кузова).
    'stock' — обвеса нет (пустой массив). 'sport' — тонкий передний сплиттер
    под бампером + пороги вдоль порогов по обеим сторонам. Возвращает parts
-   в том же формате {g,role}, что и CAR_SHAPES — buildCarModel раскладывает
-   их по той же логике (animated: отдельные меши в скрываемой группе,
-   НЕ-animated: сливаются в staticColored вместе с кузовом). */
+   как [{g}] (без role — все детали здесь всегда красятся в 'dark', см.
+   consumption sites в buildCarModel; roleParts-диспетчер используют только
+   CAR_SHAPES-детали): animated — отдельные меши в скрываемой группе,
+   НЕ-animated — сливаются в staticColored вместе с кузовом. */
 /* --- Багажник на крыше (roofRack) ----------------------------------------
    Строится в buildCarModel (не в threeBoxCar/boxVanCar), потому что нужен
    ОДИН приём геометрии для обеих фабрик — зависит только от anchor'а
@@ -110,10 +111,10 @@ function roofRackParts(rr, w) {
   const railW = w * 0.72;
   const parts = [];
   for (const s of [-1, 1]) {
-    parts.push({ g: new THREE.BoxGeometry(0.04, 0.035, rr.len).translate(rr.x + s * railW / 2, rr.y, rr.z), role: 'dark' });
+    parts.push({ g: new THREE.BoxGeometry(0.04, 0.035, rr.len).translate(rr.x + s * railW / 2, rr.y, rr.z) });
   }
   for (const s of [-1, 1]) {
-    parts.push({ g: new THREE.BoxGeometry(railW + 0.04, 0.03, 0.04).translate(rr.x, rr.y, rr.z + s * rr.len * 0.32), role: 'dark' });
+    parts.push({ g: new THREE.BoxGeometry(railW + 0.04, 0.03, 0.04).translate(rr.x, rr.y, rr.z + s * rr.len * 0.32) });
   }
   return parts;
 }
@@ -124,11 +125,11 @@ function bodyKitParts(dims, kit) {
   const y = wheelR * 0.5;
   const parts = [
     // передний сплиттер
-    { g: new THREE.BoxGeometry(w * 1.06, wheelR * 0.22, 0.22).translate(0, y, len / 2 + 0.06), role: 'dark' },
+    { g: new THREE.BoxGeometry(w * 1.06, wheelR * 0.22, 0.22).translate(0, y, len / 2 + 0.06) },
   ];
   // пороги
   for (const s of [-1, 1]) {
-    parts.push({ g: new THREE.BoxGeometry(0.12, wheelR * 0.3, len * 0.52).translate(s * (w / 2 + 0.03), y, 0), role: 'dark' });
+    parts.push({ g: new THREE.BoxGeometry(0.12, wheelR * 0.3, len * 0.52).translate(s * (w / 2 + 0.03), y, 0) });
   }
   return parts;
 }

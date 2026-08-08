@@ -134,10 +134,11 @@ export class TrafficManager {
     // _bodyGeoCache не растёт неограниченно (ключ считает carGeoCacheKey)
     const variants = shapeVariants(def.shape);
     const shapeOpts = variants[(Math.random() * variants.length) | 0];
-    // багажник на крыше — только силуэты, где он геометрически разрешён
-    // (roofRackOk в CAR_SHAPES: wagon/suv/van, см. carmodel.js); вычисляется
-    // из уже существующего def.shape, TRAFFIC_TYPES не трогаем
-    const hasRoofRack = def.shape === 'wagon' || def.shape === 'suv' || def.shape === 'van';
+    // багажник на крыше: hasRoofRack передаём безусловно — единственный
+    // источник правды о том, разрешён ли он геометрически (roofRackOk в
+    // CAR_SHAPES: wagon/suv/van), это внутренний гейт buildCarModel
+    // (built.roofRack === null для остальных силуэтов, см. carmodel.js);
+    // дублировать список силуэтов здесь не нужно.
     const built = buildCarModel({
       shape: def.shape, w: def.w, len: def.len, animated: false,
       matBody: this.matColored, matGlass: this.matGlass,
@@ -146,7 +147,7 @@ export class TrafficManager {
       matBeaconRed: this.matBeaconRed, matBeaconBlue: this.matBeaconBlue,
       bodyColor, darkColor, chromeColor, bodyKit: def.bodyKit || 'stock', shapeOpts,
       hasPlate: true, hasSign: !!def.livery, hasLivery: !!def.livery, beacon: def.beacon || null,
-      hasRoofRack,
+      hasRoofRack: true,
     });
     built.group.userData.type = def.name;
     built.group.userData.refs = built.refs;
