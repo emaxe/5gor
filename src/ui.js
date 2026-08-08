@@ -519,6 +519,20 @@ export class UIManager {
         row4.appendChild(b);
       });
       list.appendChild(row4);
+      const row5 = document.createElement('div');
+      row5.className = 'tune-row';
+      row5.innerHTML = '<b style="font-size:13px">Декали:</b>';
+      TUNING.decals.forEach((dc, i) => {
+        const active = tune.decal === i;
+        const b = document.createElement('button');
+        b.textContent = dc.name;
+        b.style.cssText = 'padding:6px 12px;font-size:12.5px;border-radius:8px;cursor:pointer;' +
+          (active ? 'background:#f2c12e;color:#1a1a1a;border:1px solid #f2c12e;font-weight:700'
+                  : 'background:rgba(255,255,255,0.05);color:#9aa4b0;border:1px solid rgba(255,255,255,0.12)');
+        b.addEventListener('click', () => { upgrades.tuning.decal = i; this.game.applyTuning(); this.renderGarage(upgrades, money, player); });
+        row5.appendChild(b);
+      });
+      list.appendChild(row5);
     } else if (this._garageTab === 'cars') {
       for (const key in CARS) {
         const cc = CARS[key];

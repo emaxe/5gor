@@ -58,11 +58,18 @@
  */
 
 /**
+ * @typedef {Object} TuningDecal
+ * @property {string} name - Название декали
+ * @property {'none'|'stripe'|'checker'|'racing'} id - см. player.js DECAL_TEXTURE
+ */
+
+/**
  * @typedef {Object} Tuning
  * @property {TuningColor[]} colors - Доступные цвета кузова
  * @property {TuningRim[]} rims - Доступные варианты дисков
  * @property {boolean} spoiler - Установлен ли спойлер
  * @property {TuningBodyKit[]} bodyKits - Доступные боди-киты
+ * @property {TuningDecal[]} decals - Доступные декали (текстура на built.refs.decal)
  */
 
 /**
@@ -242,6 +249,13 @@ export const TUNING = {
   bodyKits: [
     { name: 'Стандарт', id: 'stock' },
     { name: 'Спорт',    id: 'sport' },
+  ],
+  // дефолт по типу машины считает upgrades.js (taxi -> 'checker', остальные -> 'none')
+  decals: [
+    { name: 'Нет',       id: 'none' },
+    { name: 'Полоса',    id: 'stripe' },
+    { name: 'Шашечки',   id: 'checker' },
+    { name: 'Гоночная',  id: 'racing' },
   ],
 };
 

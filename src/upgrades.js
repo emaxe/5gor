@@ -1,10 +1,20 @@
 import { CFG, CFG_GFX_PRESETS, UPGRADES, CARS, TUNING } from './config.js';
 
+/* Индекс дефолтной декали для машины: 'taxi' -> 'checker' (сохраняет родные
+   шашечки стартовой «Пятёрочки»), остальные машины -> 'none'. Используется
+   только когда декаль ещё не выбрана явно (новая игра / старое сохранение
+   без поля tuning.decal) — см. constructor() и load() ниже. */
+function defaultDecalIndex(carId) {
+  const wantId = carId === 'taxi' ? 'checker' : 'none';
+  const idx = TUNING.decals.findIndex((d) => d.id === wantId);
+  return idx >= 0 ? idx : 0;
+}
+
 export class UpgradeSystem {
   constructor() {
     this.levels = { engine: 0, suspension: 0, brakes: 0, armor: 0, tank: 0, capacity: 0 };
-    this.tuning = { color: '#f2c12e', rims: 0, spoiler: false, bodyKit: 0 };
     this.carId = 'taxi';
+    this.tuning = { color: '#f2c12e', rims: 0, spoiler: false, bodyKit: 0, decal: defaultDecalIndex(this.carId) };
     this.ownedCars = ['taxi'];
   }
 
@@ -47,12 +57,14 @@ export class UpgradeSystem {
   tuningForCar() {
     const rims = TUNING.rims[this.tuning.rims];
     const kit = TUNING.bodyKits[this.tuning.bodyKit];
+    const decal = TUNING.decals[this.tuning.decal];
     return {
       color: parseInt(this.tuning.color.replace('#', ''), 16),
       rims: parseInt(rims.c.replace('#', ''), 16),
       rimStyle: rims.style || 'disc',
       spoiler: this.tuning.spoiler,
       bodyKit: (kit && kit.id) || 'stock',
+      decal: (decal && decal.id) || 'none',
     };
   }
 
@@ -77,6 +89,11 @@ export class UpgradeSystem {
       this.tuning = { ...this.tuning, ...(d.tuning || {}) };
       this.carId = d.carId || 'taxi';
       this.ownedCars = d.ownedCars || ['taxi'];
+      // старые сохранения (до появления декалей) не содержат tuning.decal —
+      // считаем дефолт по фактическому carId сейчас, а не по 'taxi' из
+      // constructor() (иначе игрок, уже сменивший машину в старом сохранении,
+      // молча получил бы дефолтные шашечки такси на купленной машине)
+      if (!d.tuning || d.tuning.decal === undefined) this.tuning.decal = defaultDecalIndex(this.carId);
       if (d.sound !== undefined) window._sndPref = d.sound;
       if (d.music !== undefined) window._musPref = d.music;
       if (d.quality) CFG.quality = d.quality;

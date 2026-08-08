@@ -588,11 +588,18 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
  */
 
 /**
+ * @typedef {Object} TuningDecal
+ * @property {string} name - Название декали
+ * @property {'none'|'stripe'|'checker'|'racing'} id - см. player.js DECAL_TEXTURE
+ */
+
+/**
  * @typedef {Object} Tuning
  * @property {TuningColor[]} colors - Доступные цвета кузова
  * @property {TuningRim[]} rims - Доступные варианты дисков
  * @property {boolean} spoiler - Установлен ли спойлер
  * @property {TuningBodyKit[]} bodyKits - Доступные боди-киты
+ * @property {TuningDecal[]} decals - Доступные декали (текстура на built.refs.decal)
  */
 
 /**
@@ -771,6 +778,13 @@ const TUNING = {
   bodyKits: [
     { name: 'Стандарт', id: 'stock' },
     { name: 'Спорт',    id: 'sport' },
+  ],
+  // дефолт по типу машины считает upgrades.js (taxi -> 'checker', остальные -> 'none')
+  decals: [
+    { name: 'Нет',       id: 'none' },
+    { name: 'Полоса',    id: 'stripe' },
+    { name: 'Шашечки',   id: 'checker' },
+    { name: 'Гоночная',  id: 'racing' },
   ],
 };
 
@@ -973,6 +987,40 @@ function makeCheckerStripTexture() {
   t.colorSpace = THREE.SRGBColorSpace;
   t.wrapS = THREE.RepeatWrapping;
   t.repeat.set(3, 1);
+  return t;
+}
+
+/* Декаль-полоса из 2 цветов — по образцу makeCheckerStripTexture(), но
+   параметризована (цвета в ключе кэша), иначе смена цвета декали не
+   отрисуется — старая текстура возьмётся из кэша по фиксированному ключу */
+function makeStripeDecalTexture(colorA, colorB) {
+  const key = 'stripeDecal_' + colorA + '_' + colorB;
+  if (_texCache.has(key)) return _texCache.get(key);
+  const c = makeCanvas(128, 32);
+  const g = c.getContext('2d');
+  g.fillStyle = colorA; g.fillRect(0, 0, 128, 32);
+  g.fillStyle = colorB;
+  g.fillRect(0, 9, 128, 6);
+  g.fillRect(0, 17, 128, 6);
+  const t = canvasToTexture(c, key);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/* Гоночная декаль — широкая центральная полоса с тонкими кантами (фикс.
+   цвета, без параметров — один ключ кэша, как у makeCheckerStripTexture) */
+function makeRacingDecalTexture() {
+  const key = 'racingDecal';
+  if (_texCache.has(key)) return _texCache.get(key);
+  const c = makeCanvas(128, 32);
+  const g = c.getContext('2d');
+  g.fillStyle = '#151515'; g.fillRect(0, 0, 128, 32);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 6, 128, 20);
+  g.fillStyle = '#c0392b';
+  g.fillRect(0, 4, 128, 3);
+  g.fillRect(0, 25, 128, 3);
+  const t = canvasToTexture(c, key);
+  t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
 function makePlateTexture() {
@@ -1863,7 +1911,10 @@ const CAR_SHAPES = {
  *   строятся только если spec.bodyKit==='sport' и сразу сливаются в staticColored.
  * @param {boolean} [spec.hasPlate=true]
  * @param {boolean} [spec.hasSign=false] - плафон "ТАКСИ"
- * @param {boolean} [spec.hasLivery=false] - шашечки по бортам
+ * @param {boolean} [spec.hasLivery=false] - шашечки по бортам. Для animated (игрок)
+ *   anchor-меш декали строится ВСЕГДА независимо от этого флага (built.refs.decal) —
+ *   hasLivery здесь ни на что не влияет (дефолт выбора декали считает upgrades.js).
+ *   Для НЕ-animated (трафик) поведение прежнее: anchor строится только при hasLivery===true.
  * @param {string|null} [spec.beacon] - 'police'|'ambulance'|null — маячок на крыше
  */
 function buildCarModel(spec) {
@@ -1938,16 +1989,26 @@ function buildCarModel(spec) {
     bodyGroup.add(new THREE.Mesh(pg, matPlate));
   }
 
-  // --- ливрея такси: полоса шашечек по обоим бортам ---
-  if (hasLivery && built.liveryStripe && matLivery) {
+  // --- декаль/ливрея: полоса по обоим бортам ---
+  // animated (игрок): anchor строится ВСЕГДА, независимо от hasLivery — декаль
+  // выбирается в гараже (см. player.js:_applyTuning, читает built.refs.decal),
+  // видимость и текстура matLivery.map переключаются без пересборки геометрии.
+  // hasLivery для animated тут больше не участвует — он лишь определяет
+  // ДЕФОЛТ выбора декали (taxi -> 'checker', остальные -> 'none', см.
+  // upgrades.js). НЕ-animated (трафик): поведение НЕ меняем — anchor строится
+  // только при hasLivery (запечённые шашечки такси), как и раньше.
+  if (built.liveryStripe && matLivery && (animated || hasLivery)) {
     const ls = built.liveryStripe;
+    const decalGroup = animated ? new THREE.Group() : null;
     for (const s of [-1, 1]) {
       const g = new THREE.PlaneGeometry(ls.w, ls.h);
       // нормаль плоскости по умолчанию (0,0,1); разворачиваем наружу от борта
       g.rotateY(s > 0 ? Math.PI / 2 : -Math.PI / 2);
       g.translate(s * (w / 2 + 0.012), ls.y, ls.z);
-      bodyGroup.add(new THREE.Mesh(g, matLivery));
+      const mesh = new THREE.Mesh(g, matLivery);
+      if (decalGroup) decalGroup.add(mesh); else bodyGroup.add(mesh);
     }
+    if (decalGroup) { bodyGroup.add(decalGroup); refs.decal = decalGroup; }
   }
 
   // --- плафон "ТАКСИ" на крыше ---
@@ -5760,6 +5821,15 @@ class PedGraph {
 
 const _tempPlayerCircleRes = { nx: 0, nz: 0, depth: 0 };
 
+/* Декаль -> генератор текстуры matLivery.map (см. utils.js). 'none' сюда не
+   входит — при decal==='none' anchor (built.refs.decal) просто скрывается
+   в _applyTuning(), без смены текстуры. */
+const DECAL_TEXTURE = {
+  checker: makeCheckerStripTexture,
+  stripe: () => makeStripeDecalTexture('#ffffff', '#1a1a1a'),
+  racing: makeRacingDecalTexture,
+};
+
 /* carType (config.js CARS[].base.carType) -> силуэт + габариты (carmodel.js CAR_SHAPES) */
 const CAR_TYPE_SHAPE = {
   taxi:     { shape: 'sedan', w: 1.9,  len: 4.3 },
@@ -5803,7 +5873,7 @@ class PlayerCar {
     this.offroadTimer = 0;
     this.passengerCount = 0;
     /** @type {import('./config.js').Tuning} параметры тюнинга */
-    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false, bodyKit: 'stock' };
+    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false, bodyKit: 'stock', decal: 'none' };
     this.groundY = 0.5;
     this._builtCarType = null;
     this._roll = 0; this._pitch = 0;
@@ -5874,6 +5944,10 @@ class PlayerCar {
     // боди-кит (сплиттер+пороги) приходит уже собранным из carmodel.js как
     // отдельная скрываемая группа — _applyTuning() переключает её visible
     this.bodyKitGroup = built.refs.bodyKit || null;
+    // anchor декали (полоса по бортам) — carmodel.js строит его ВСЕГДА для
+    // animated (независимо от hasLivery/типа машины), _applyTuning() решает
+    // видимость и текстуру (matLivery.map) по tuning.decal
+    this.decalGroup = built.refs.decal || null;
 
     this.scene.add(this.group);
     if (this.headSpot) this.group.add(this.headSpot, this.headTarget); // переносим фонарь-прожектор при пересборке
@@ -5897,6 +5971,17 @@ class PlayerCar {
     }
     if (this.spoilerGroup) this.spoilerGroup.visible = !!tuning.spoiler;
     if (this.bodyKitGroup) this.bodyKitGroup.visible = (tuning.bodyKit || 'stock') === 'sport';
+    // декаль: anchor всегда построен (см. _build()) — тут только видимость и,
+    // если нужно, смена текстуры matLivery.map (материал общий на обе стороны)
+    if (this.decalGroup) {
+      const decal = tuning.decal || 'none';
+      this.decalGroup.visible = decal !== 'none';
+      const texFn = DECAL_TEXTURE[decal];
+      if (texFn) {
+        const tex = texFn();
+        if (this.matLivery.map !== tex) { this.matLivery.map = tex; this.matLivery.needsUpdate = true; }
+      }
+    }
   }
 
   _disposeGroup(g) {
@@ -8913,11 +8998,21 @@ const Orders = PassengerManager;
 const OrdersManager = PassengerManager;
 
 /* ===== upgrades.js ===== */
+
+/* Индекс дефолтной декали для машины: 'taxi' -> 'checker' (сохраняет родные
+   шашечки стартовой «Пятёрочки»), остальные машины -> 'none'. Используется
+   только когда декаль ещё не выбрана явно (новая игра / старое сохранение
+   без поля tuning.decal) — см. constructor() и load() ниже. */
+function defaultDecalIndex(carId) {
+  const wantId = carId === 'taxi' ? 'checker' : 'none';
+  const idx = TUNING.decals.findIndex((d) => d.id === wantId);
+  return idx >= 0 ? idx : 0;
+}
 class UpgradeSystem {
   constructor() {
     this.levels = { engine: 0, suspension: 0, brakes: 0, armor: 0, tank: 0, capacity: 0 };
-    this.tuning = { color: '#f2c12e', rims: 0, spoiler: false, bodyKit: 0 };
     this.carId = 'taxi';
+    this.tuning = { color: '#f2c12e', rims: 0, spoiler: false, bodyKit: 0, decal: defaultDecalIndex(this.carId) };
     this.ownedCars = ['taxi'];
   }
 
@@ -8960,12 +9055,14 @@ class UpgradeSystem {
   tuningForCar() {
     const rims = TUNING.rims[this.tuning.rims];
     const kit = TUNING.bodyKits[this.tuning.bodyKit];
+    const decal = TUNING.decals[this.tuning.decal];
     return {
       color: parseInt(this.tuning.color.replace('#', ''), 16),
       rims: parseInt(rims.c.replace('#', ''), 16),
       rimStyle: rims.style || 'disc',
       spoiler: this.tuning.spoiler,
       bodyKit: (kit && kit.id) || 'stock',
+      decal: (decal && decal.id) || 'none',
     };
   }
 
@@ -8990,6 +9087,11 @@ class UpgradeSystem {
       this.tuning = { ...this.tuning, ...(d.tuning || {}) };
       this.carId = d.carId || 'taxi';
       this.ownedCars = d.ownedCars || ['taxi'];
+      // старые сохранения (до появления декалей) не содержат tuning.decal —
+      // считаем дефолт по фактическому carId сейчас, а не по 'taxi' из
+      // constructor() (иначе игрок, уже сменивший машину в старом сохранении,
+      // молча получил бы дефолтные шашечки такси на купленной машине)
+      if (!d.tuning || d.tuning.decal === undefined) this.tuning.decal = defaultDecalIndex(this.carId);
       if (d.sound !== undefined) window._sndPref = d.sound;
       if (d.music !== undefined) window._musPref = d.music;
       if (d.quality) CFG.quality = d.quality;
@@ -9539,6 +9641,20 @@ class UIManager {
         row4.appendChild(b);
       });
       list.appendChild(row4);
+      const row5 = document.createElement('div');
+      row5.className = 'tune-row';
+      row5.innerHTML = '<b style="font-size:13px">Декали:</b>';
+      TUNING.decals.forEach((dc, i) => {
+        const active = tune.decal === i;
+        const b = document.createElement('button');
+        b.textContent = dc.name;
+        b.style.cssText = 'padding:6px 12px;font-size:12.5px;border-radius:8px;cursor:pointer;' +
+          (active ? 'background:#f2c12e;color:#1a1a1a;border:1px solid #f2c12e;font-weight:700'
+                  : 'background:rgba(255,255,255,0.05);color:#9aa4b0;border:1px solid rgba(255,255,255,0.12)');
+        b.addEventListener('click', () => { upgrades.tuning.decal = i; this.game.applyTuning(); this.renderGarage(upgrades, money, player); });
+        row5.appendChild(b);
+      });
+      list.appendChild(row5);
     } else if (this._garageTab === 'cars') {
       for (const key in CARS) {
         const cc = CARS[key];

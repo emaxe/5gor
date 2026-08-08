@@ -311,7 +311,10 @@ export const CAR_SHAPES = {
  *   строятся только если spec.bodyKit==='sport' и сразу сливаются в staticColored.
  * @param {boolean} [spec.hasPlate=true]
  * @param {boolean} [spec.hasSign=false] - плафон "ТАКСИ"
- * @param {boolean} [spec.hasLivery=false] - шашечки по бортам
+ * @param {boolean} [spec.hasLivery=false] - шашечки по бортам. Для animated (игрок)
+ *   anchor-меш декали строится ВСЕГДА независимо от этого флага (built.refs.decal) —
+ *   hasLivery здесь ни на что не влияет (дефолт выбора декали считает upgrades.js).
+ *   Для НЕ-animated (трафик) поведение прежнее: anchor строится только при hasLivery===true.
  * @param {string|null} [spec.beacon] - 'police'|'ambulance'|null — маячок на крыше
  */
 export function buildCarModel(spec) {
@@ -386,16 +389,26 @@ export function buildCarModel(spec) {
     bodyGroup.add(new THREE.Mesh(pg, matPlate));
   }
 
-  // --- ливрея такси: полоса шашечек по обоим бортам ---
-  if (hasLivery && built.liveryStripe && matLivery) {
+  // --- декаль/ливрея: полоса по обоим бортам ---
+  // animated (игрок): anchor строится ВСЕГДА, независимо от hasLivery — декаль
+  // выбирается в гараже (см. player.js:_applyTuning, читает built.refs.decal),
+  // видимость и текстура matLivery.map переключаются без пересборки геометрии.
+  // hasLivery для animated тут больше не участвует — он лишь определяет
+  // ДЕФОЛТ выбора декали (taxi -> 'checker', остальные -> 'none', см.
+  // upgrades.js). НЕ-animated (трафик): поведение НЕ меняем — anchor строится
+  // только при hasLivery (запечённые шашечки такси), как и раньше.
+  if (built.liveryStripe && matLivery && (animated || hasLivery)) {
     const ls = built.liveryStripe;
+    const decalGroup = animated ? new THREE.Group() : null;
     for (const s of [-1, 1]) {
       const g = new THREE.PlaneGeometry(ls.w, ls.h);
       // нормаль плоскости по умолчанию (0,0,1); разворачиваем наружу от борта
       g.rotateY(s > 0 ? Math.PI / 2 : -Math.PI / 2);
       g.translate(s * (w / 2 + 0.012), ls.y, ls.z);
-      bodyGroup.add(new THREE.Mesh(g, matLivery));
+      const mesh = new THREE.Mesh(g, matLivery);
+      if (decalGroup) decalGroup.add(mesh); else bodyGroup.add(mesh);
     }
+    if (decalGroup) { bodyGroup.add(decalGroup); refs.decal = decalGroup; }
   }
 
   // --- плафон "ТАКСИ" на крыше ---

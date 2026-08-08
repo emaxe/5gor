@@ -1,10 +1,19 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { clamp, lerp, dist2D, circleAABB, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture } from './utils.js';
+import { clamp, lerp, dist2D, circleAABB, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture, makeStripeDecalTexture, makeRacingDecalTexture } from './utils.js';
 import { buildCarModel } from './carmodel.js';
 import { Events } from './eventbus.js';
 
 const _tempPlayerCircleRes = { nx: 0, nz: 0, depth: 0 };
+
+/* Декаль -> генератор текстуры matLivery.map (см. utils.js). 'none' сюда не
+   входит — при decal==='none' anchor (built.refs.decal) просто скрывается
+   в _applyTuning(), без смены текстуры. */
+const DECAL_TEXTURE = {
+  checker: makeCheckerStripTexture,
+  stripe: () => makeStripeDecalTexture('#ffffff', '#1a1a1a'),
+  racing: makeRacingDecalTexture,
+};
 
 /* carType (config.js CARS[].base.carType) -> силуэт + габариты (carmodel.js CAR_SHAPES) */
 const CAR_TYPE_SHAPE = {
@@ -49,7 +58,7 @@ export class PlayerCar {
     this.offroadTimer = 0;
     this.passengerCount = 0;
     /** @type {import('./config.js').Tuning} параметры тюнинга */
-    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false, bodyKit: 'stock' };
+    this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false, bodyKit: 'stock', decal: 'none' };
     this.groundY = 0.5;
     this._builtCarType = null;
     this._roll = 0; this._pitch = 0;
@@ -120,6 +129,10 @@ export class PlayerCar {
     // боди-кит (сплиттер+пороги) приходит уже собранным из carmodel.js как
     // отдельная скрываемая группа — _applyTuning() переключает её visible
     this.bodyKitGroup = built.refs.bodyKit || null;
+    // anchor декали (полоса по бортам) — carmodel.js строит его ВСЕГДА для
+    // animated (независимо от hasLivery/типа машины), _applyTuning() решает
+    // видимость и текстуру (matLivery.map) по tuning.decal
+    this.decalGroup = built.refs.decal || null;
 
     this.scene.add(this.group);
     if (this.headSpot) this.group.add(this.headSpot, this.headTarget); // переносим фонарь-прожектор при пересборке
@@ -143,6 +156,17 @@ export class PlayerCar {
     }
     if (this.spoilerGroup) this.spoilerGroup.visible = !!tuning.spoiler;
     if (this.bodyKitGroup) this.bodyKitGroup.visible = (tuning.bodyKit || 'stock') === 'sport';
+    // декаль: anchor всегда построен (см. _build()) — тут только видимость и,
+    // если нужно, смена текстуры matLivery.map (материал общий на обе стороны)
+    if (this.decalGroup) {
+      const decal = tuning.decal || 'none';
+      this.decalGroup.visible = decal !== 'none';
+      const texFn = DECAL_TEXTURE[decal];
+      if (texFn) {
+        const tex = texFn();
+        if (this.matLivery.map !== tex) { this.matLivery.map = tex; this.matLivery.needsUpdate = true; }
+      }
+    }
   }
 
   _disposeGroup(g) {

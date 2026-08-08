@@ -177,6 +177,40 @@ export function makeCheckerStripTexture() {
   return t;
 }
 
+/* Декаль-полоса из 2 цветов — по образцу makeCheckerStripTexture(), но
+   параметризована (цвета в ключе кэша), иначе смена цвета декали не
+   отрисуется — старая текстура возьмётся из кэша по фиксированному ключу */
+export function makeStripeDecalTexture(colorA, colorB) {
+  const key = 'stripeDecal_' + colorA + '_' + colorB;
+  if (_texCache.has(key)) return _texCache.get(key);
+  const c = makeCanvas(128, 32);
+  const g = c.getContext('2d');
+  g.fillStyle = colorA; g.fillRect(0, 0, 128, 32);
+  g.fillStyle = colorB;
+  g.fillRect(0, 9, 128, 6);
+  g.fillRect(0, 17, 128, 6);
+  const t = canvasToTexture(c, key);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/* Гоночная декаль — широкая центральная полоса с тонкими кантами (фикс.
+   цвета, без параметров — один ключ кэша, как у makeCheckerStripTexture) */
+export function makeRacingDecalTexture() {
+  const key = 'racingDecal';
+  if (_texCache.has(key)) return _texCache.get(key);
+  const c = makeCanvas(128, 32);
+  const g = c.getContext('2d');
+  g.fillStyle = '#151515'; g.fillRect(0, 0, 128, 32);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 6, 128, 20);
+  g.fillStyle = '#c0392b';
+  g.fillRect(0, 4, 128, 3);
+  g.fillRect(0, 25, 128, 3);
+  const t = canvasToTexture(c, key);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 export function makePlateTexture() {
   const key = 'plate';
   if (_texCache.has(key)) return _texCache.get(key);
