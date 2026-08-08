@@ -118,6 +118,22 @@ const insetAnchor = (a) => ({
 });
 const lampMesh = (a) => new THREE.BoxGeometry(a.w, a.h, a.d).translate(a.x, a.y, a.z);
 
+/* --- Относительные вариации силуэта -------------------------------------
+   Опция вида `<имя>Delta` не задаёт значение, а ПРИБАВЛЯЕТСЯ к базовому
+   значению одноимённой опции конкретного силуэта (базы у sedan/suv/coupe и
+   т.д. разные, см. CAR_SHAPES). Так одна таблица дельт работает на всё
+   семейство силуэтов, а вызывающая сторона (traffic.js) не обязана знать
+   базовые значения каждого силуэта. Механизм общий для threeBoxCar и
+   boxVanCar и автоматически подхватывает любую новую числовую опцию. */
+function applyOptDeltas(opt, o) {
+  for (const k in o) {
+    if (!k.endsWith('Delta')) continue;
+    const base = k.slice(0, -5);
+    if (typeof opt[base] === 'number') opt[base] += o[k];
+  }
+  return opt;
+}
+
 /* ========================================================================
    Профили силуэтов. threeBoxCar — легковые (капот/салон/багажник),
    boxVanCar — кабина-над-двигателем (фургон/автобус/пикап/грузовик).
@@ -128,7 +144,7 @@ const lampMesh = (a) => new THREE.BoxGeometry(a.w, a.h, a.d).translate(a.x, a.y,
 
 function threeBoxCar(dims, o = {}) {
   const { w, len } = dims;
-  const opt = {
+  const opt = applyOptDeltas({
     deckY: 0.72, deckH: 0.42, beltW: 0.98,
     hoodFrac: 0.32, hoodRise: -0.30,
     trunkFrac: 0.28, trunkRise: -0.30,
@@ -136,7 +152,7 @@ function threeBoxCar(dims, o = {}) {
     roofW: 0.78, roofH: 0.1, roofY: 1.58, roofFrac: 0.4, roofDZfrac: -0.02,
     chromeBumper: false, chromeTrim: false, wheelR: 0.38,
     ...o,
-  };
+  }, o);
   const parts = [], glass = [];
   const add = (g, role) => parts.push({ g, role });
   const hoodLen = len * opt.hoodFrac, trunkLen = len * opt.trunkFrac;
@@ -185,13 +201,13 @@ function threeBoxCar(dims, o = {}) {
 
 function boxVanCar(dims, o = {}) {
   const { w, len } = dims;
-  const opt = {
+  const opt = applyOptDeltas({
     deckY: 0.62, deckH: 0.4,
     cabLenFrac: 0.22, cabH: 0.9, cabY: 1.05, windshieldRise: -0.28,
     cargoLenFrac: 0.68, cargoH: 1.5, cargoY: 1.35,
     openBed: false, bedWallH: 0.35, sideGlass: false, wheelR: 0.38,
     ...o,
-  };
+  }, o);
   const parts = [], glass = [];
   const add = (g, role) => parts.push({ g, role });
   const cabLen = len * opt.cabLenFrac;
@@ -239,38 +255,121 @@ function boxVanCar(dims, o = {}) {
   };
 }
 
+/* Второй аргумент (o) — внешние опции силуэта (spec.shapeOpts в buildCarModel):
+   прозрачно доходят до threeBoxCar/boxVanCar и ПЕРЕКРЫВАЮТ базовые опции
+   конкретного силуэта. Без него (игрок, старые вызовы) поведение прежнее. */
 export const CAR_SHAPES = {
-  sedan: (d) => threeBoxCar(d, {}),
-  hatch: (d) => threeBoxCar(d, {
-    trunkFrac: 0.13, trunkRise: -0.36, roofFrac: 0.52, cabDZfrac: -0.06, roofDZfrac: -0.08,
+  sedan: (d, o) => threeBoxCar(d, { ...o }),
+  hatch: (d, o) => threeBoxCar(d, {
+    trunkFrac: 0.13, trunkRise: -0.36, roofFrac: 0.52, cabDZfrac: -0.06, roofDZfrac: -0.08, ...o,
   }),
-  wagon: (d) => threeBoxCar(d, {
-    trunkFrac: 0.22, trunkRise: -0.05, roofFrac: 0.62, roofDZfrac: -0.1, cabTopWfrac: 0.94,
+  wagon: (d, o) => threeBoxCar(d, {
+    trunkFrac: 0.22, trunkRise: -0.05, roofFrac: 0.62, roofDZfrac: -0.1, cabTopWfrac: 0.94, ...o,
   }),
-  coupe: (d) => threeBoxCar(d, {
+  coupe: (d, o) => threeBoxCar(d, {
     deckY: 0.66, deckH: 0.38, cabY: 1.2, cabH: 0.4, roofY: 1.42,
-    hoodFrac: 0.4, trunkFrac: 0.34, cabDZfrac: -0.08, cabTopWfrac: 0.8, roofFrac: 0.24,
+    hoodFrac: 0.4, trunkFrac: 0.34, cabDZfrac: -0.08, cabTopWfrac: 0.8, roofFrac: 0.24, ...o,
   }),
-  suv: (d) => threeBoxCar(d, {
+  suv: (d, o) => threeBoxCar(d, {
     deckY: 0.92, deckH: 0.5, cabY: 1.58, cabH: 0.56, roofY: 1.9, roofH: 0.12,
-    roofFrac: 0.58, cabTopWfrac: 0.96, hoodFrac: 0.28, trunkFrac: 0.24, wheelR: 0.44,
+    roofFrac: 0.58, cabTopWfrac: 0.96, hoodFrac: 0.28, trunkFrac: 0.24, wheelR: 0.44, ...o,
   }),
-  retro: (d) => threeBoxCar(d, {
-    cabTopWfrac: 0.96, cabDZfrac: 0, roofFrac: 0.34, hoodRise: -0.16, trunkRise: -0.16, chromeBumper: true,
+  retro: (d, o) => threeBoxCar(d, {
+    cabTopWfrac: 0.96, cabDZfrac: 0, roofFrac: 0.34, hoodRise: -0.16, trunkRise: -0.16, chromeBumper: true, ...o,
   }),
-  premium: (d) => threeBoxCar(d, {
+  premium: (d, o) => threeBoxCar(d, {
     deckY: 0.68, deckH: 0.4, cabY: 1.22, cabH: 0.42, roofY: 1.46,
-    hoodFrac: 0.4, trunkFrac: 0.32, cabTopWfrac: 0.86, roofFrac: 0.3, chromeTrim: true,
+    hoodFrac: 0.4, trunkFrac: 0.32, cabTopWfrac: 0.86, roofFrac: 0.3, chromeTrim: true, ...o,
   }),
-  van: (d) => boxVanCar(d, { sideGlass: true }),
-  bus: (d) => boxVanCar(d, {
-    cabLenFrac: 0.16, cabH: 1.1, cabY: 1.15, cargoLenFrac: 0.8, cargoH: 1.65, cargoY: 1.45, sideGlass: true,
+  van: (d, o) => boxVanCar(d, { sideGlass: true, ...o }),
+  bus: (d, o) => boxVanCar(d, {
+    cabLenFrac: 0.16, cabH: 1.1, cabY: 1.15, cargoLenFrac: 0.8, cargoH: 1.65, cargoY: 1.45, sideGlass: true, ...o,
   }),
-  pickup: (d) => boxVanCar(d, { openBed: true, cabLenFrac: 0.36, cabH: 1.0 }),
-  truck: (d) => boxVanCar(d, {
-    cabLenFrac: 0.2, cabH: 1.15, cabY: 1.2, cargoLenFrac: 0.72, cargoH: 1.9, cargoY: 1.58, sideGlass: false,
+  pickup: (d, o) => boxVanCar(d, { openBed: true, cabLenFrac: 0.36, cabH: 1.0, ...o }),
+  truck: (d, o) => boxVanCar(d, {
+    cabLenFrac: 0.2, cabH: 1.15, cabY: 1.2, cargoLenFrac: 0.72, cargoH: 1.9, cargoY: 1.58, sideGlass: false, ...o,
   }),
 };
+
+/* --- Таблицы дискретных вариантов силуэта (борьба с клоновостью) ---------
+   Вариация НЕ случайный float, а фиксированный индекс в маленькой таблице —
+   иначе cacheKey (см. carGeoCacheKey) стал бы бесконечным множеством, и
+   _bodyGeoCache рос бы на каждый спавн. Значения — ОТНОСИТЕЛЬНЫЕ дельты
+   (см. applyOptDeltas), поэтому одна таблица корректна для всего семейства
+   силуэтов: coupe с hoodFrac 0.4 и suv с 0.28 получают одинаковый по смыслу
+   разброс "±2 шага" от своей базы. Вариант 0 — базовый силуэт (пустые опции). */
+const VARIANTS_THREEBOX = [  // шаг 0.02 по hoodFrac/roofFrac
+  {},
+  { hoodFracDelta: 0.04, roofFracDelta: -0.02 },
+  { hoodFracDelta: -0.04, roofFracDelta: 0.02 },
+  { hoodFracDelta: 0.02, roofFracDelta: 0.04 },
+  { hoodFracDelta: -0.02, roofFracDelta: -0.04 },
+];
+/* У boxVanCar нет hoodFrac/roofFrac — вариация идёт по длине кабины/кузова и
+   высоте фургона. cabLen и cargoLen меняются в противофазе, чтобы сумма
+   "кабина+кузов" не вылезала за габарит len. cargoH у pickup (openBed) не
+   используется — поэтому у каждого варианта СВОЯ дельта cabLenFrac, иначе
+   пикапы разных вариантов дали бы одинаковую геометрию под разными ключами. */
+const VARIANTS_BOXVAN = [    // шаг 0.015 по длинам, 0.08 по высоте кузова
+  {},
+  { cabLenFracDelta: 0.03, cargoLenFracDelta: -0.03, cargoHDelta: 0.08 },
+  { cabLenFracDelta: -0.03, cargoLenFracDelta: 0.03, cargoHDelta: -0.08 },
+  { cabLenFracDelta: 0.015, cargoLenFracDelta: -0.015, cargoHDelta: -0.16 },
+  { cabLenFracDelta: -0.015, cargoLenFracDelta: 0.015, cargoHDelta: 0.16 },
+];
+const _variantsFor = (keys, table) => Object.fromEntries(keys.map((k) => [k, table]));
+
+/** Силуэт (ключ CAR_SHAPES) -> таблица вариантов; индекс в таблице = variantIdx. */
+export const SHAPE_VARIANTS = {
+  ..._variantsFor(['sedan', 'hatch', 'wagon', 'coupe', 'suv', 'retro', 'premium'], VARIANTS_THREEBOX),
+  ..._variantsFor(['van', 'bus', 'pickup', 'truck'], VARIANTS_BOXVAN),
+};
+
+/** Таблица вариантов силуэта (для неизвестного силуэта — как у sedan). */
+export function shapeVariants(shape) {
+  return SHAPE_VARIANTS[shape] || VARIANTS_THREEBOX;
+}
+
+/* --- Ключ кэша слитой геометрии ------------------------------------------
+   ЕДИНСТВЕННЫЙ источник правды о том, "что влияет на слитую геометрию".
+   Здесь перечислены поля spec, попадающие в staticColored -> mergeColored()
+   (кузов/тёмные/хром-детали/обвес/колёса + запечённые в вершины цвета), и их
+   дефолты — те же самые значения используются деструктуризацией в
+   buildCarModel ниже, чтобы дефолты не разъехались.
+   Стёкла, фары/стопы, номер, плафон такси, маячок и decal-anchor кэш НЕ
+   затрагивают (это отдельные меши вне staticColored) — их в ключе нет.
+   Добавляешь новый геометрический параметр (напр. hasRoofRack) — дописываешь
+   ОДНУ строку сюда, и он автоматически попадает в ключ во всех вызовах. */
+const GEO_SPEC_DEFAULTS = {
+  shape: 'sedan', w: 0, len: 0,
+  bodyColor: 0xcccccc, darkColor: 0x22262c, chromeColor: 0xc8c8c8,
+  tireColor: 0x18181a, rimColor: 0xc4c8cc,
+  rimStyle: 'disc', bodyKit: 'stock',
+  shapeOpts: null,
+};
+
+/* Значения сериализуем рекурсивно: объекты (shapeOpts) — по отсортированным
+   ключам, чтобы порядок полей не менял ключ. */
+function _geoKeyVal(v) {
+  if (v === null || typeof v !== 'object') return String(v);
+  return Object.keys(v).sort().map((k) => `${k}=${_geoKeyVal(v[k])}`).join(',');
+}
+
+/**
+ * Детерминированный ключ кэша слитой геометрии кузова по spec.
+ * Одинаковый spec -> одинаковый ключ; любое отличие в геометрически значимом
+ * поле -> другой ключ (см. GEO_SPEC_DEFAULTS).
+ * @param {Object} spec - тот же объект, что уходит в buildCarModel
+ * @returns {string}
+ */
+export function carGeoCacheKey(spec) {
+  // неизвестный силуэт собирается как sedan (см. buildCarModel) — нормализуем,
+  // чтобы ключ описывал ФАКТИЧЕСКИ построенную геометрию
+  const shape = CAR_SHAPES[spec.shape] ? spec.shape : 'sedan';
+  return Object.keys(GEO_SPEC_DEFAULTS)
+    .map((k) => _geoKeyVal((k === 'shape' ? shape : spec[k]) ?? GEO_SPEC_DEFAULTS[k]))
+    .join('|');
+}
 
 /**
  * Собрать 3D-модель машины.
@@ -309,6 +408,11 @@ export const CAR_SHAPES = {
  *   (built.refs.bodyKit), spec.bodyKit задаёт только начальную видимость — переключение
  *   без пересборки идёт через player.js:_applyTuning(). Для НЕ-animated (трафик) детали
  *   строятся только если spec.bodyKit==='sport' и сразу сливаются в staticColored.
+ * @param {Object} [spec.shapeOpts] - доп. опции силуэта, прозрачно доходят до
+ *   threeBoxCar/boxVanCar и перекрывают базовые опции силуэта (см. CAR_SHAPES).
+ *   Опции вида `<имя>Delta` прибавляются к базовому значению соответствующей
+ *   опции (см. applyOptDeltas) — так работает дискретная вариация силуэта
+ *   трафика (SHAPE_VARIANTS). Игрок его не передаёт — геометрия как раньше.
  * @param {boolean} [spec.hasPlate=true]
  * @param {boolean} [spec.hasSign=false] - плафон "ТАКСИ"
  * @param {boolean} [spec.hasLivery=false] - шашечки по бортам. Для animated (игрок)
@@ -324,13 +428,16 @@ export function buildCarModel(spec) {
     matHead, matStop, matTurnA, matTurnB, matReverse,
     matRim, matHub, matPlate, matSign, matLivery,
     matBeaconRed, matBeaconBlue,
-    bodyColor = 0xcccccc, darkColor = 0x22262c, chromeColor = 0xc8c8c8, tireColor = 0x18181a, rimColor = 0xc4c8cc,
-    rimStyle = 'disc', bodyKit = 'stock',
+    bodyColor = GEO_SPEC_DEFAULTS.bodyColor, darkColor = GEO_SPEC_DEFAULTS.darkColor,
+    chromeColor = GEO_SPEC_DEFAULTS.chromeColor, tireColor = GEO_SPEC_DEFAULTS.tireColor,
+    rimColor = GEO_SPEC_DEFAULTS.rimColor,
+    rimStyle = GEO_SPEC_DEFAULTS.rimStyle, bodyKit = GEO_SPEC_DEFAULTS.bodyKit,
+    shapeOpts = null,
     hasPlate = true, hasSign = false, hasLivery = false, beacon = null,
   } = spec;
 
   const shapeFn = CAR_SHAPES[shape] || CAR_SHAPES.sedan;
-  const built = shapeFn({ w, len });
+  const built = shapeFn({ w, len }, shapeOpts || {});
 
   const group = new THREE.Group();
   const bodyGroup = new THREE.Group();
@@ -512,8 +619,10 @@ export function buildCarModel(spec) {
       staticColored.push({ g: wheelGeo(wr, wtw, 10).translate(sx, wr, sz), c: tireColor });
       staticColored.push({ g: buildStaticRimGeo(rimStyle, wr * 0.58, wtw + 0.035, 8).translate(sx, wr, sz), c: rimBakedColor });
     }
-    const cacheKey = spec.cacheKey || `${shape}|${w}|${len}|${bodyColor}|${darkColor}|${chromeColor}|${tireColor}|${rimColor}|${rimStyle}|${bodyKit}`;
-    const mergedGeo = getBodyGeometry(cacheKey, () => mergeColored(staticColored));
+    // ключ считает carGeoCacheKey по самому spec — единственное место, знающее
+    // список геометрически значимых полей (см. GEO_SPEC_DEFAULTS). Вызывающая
+    // сторона свой ключ не собирает (иначе два шаблона разъедутся).
+    const mergedGeo = getBodyGeometry(carGeoCacheKey(spec), () => mergeColored(staticColored));
     bodyGroup.add(new THREE.Mesh(mergedGeo, matBody));
   }
 

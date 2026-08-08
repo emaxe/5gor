@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
 import { rand, clamp, choice, lerpAngle, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture, makeSpeechSprite, updateSpeechSprite } from './utils.js';
-import { buildCarModel } from './carmodel.js';
+import { buildCarModel, shapeVariants } from './carmodel.js';
 import { Events } from './eventbus.js';
 
 const _tempTrafficWp = { x: 0, z: 0 };
@@ -128,15 +128,20 @@ export class TrafficManager {
     const bodyColor = def.forceColor ? def.colors[0] : choice(def.colors);
     const darkColor = 0x22262c;
     const chromeColor = def.shape === 'retro' ? 0xd8d8d8 : 0xc8c8c8;
+    // дискретная вариация силуэта: индекс в маленькой фиксированной таблице
+    // своего семейства силуэтов (carmodel.js SHAPE_VARIANTS), а не случайный
+    // float — число различных геометрий на тип остаётся конечным и малым,
+    // _bodyGeoCache не растёт неограниченно (ключ считает carGeoCacheKey)
+    const variants = shapeVariants(def.shape);
+    const shapeOpts = variants[(Math.random() * variants.length) | 0];
     const built = buildCarModel({
       shape: def.shape, w: def.w, len: def.len, animated: false,
       matBody: this.matColored, matGlass: this.matGlass,
       matHead: this.matHead, matStop: this.matStop,
       matPlate: this.matPlate, matSign: this.matSign, matLivery: this.matLivery,
       matBeaconRed: this.matBeaconRed, matBeaconBlue: this.matBeaconBlue,
-      bodyColor, darkColor, chromeColor, bodyKit: def.bodyKit || 'stock',
+      bodyColor, darkColor, chromeColor, bodyKit: def.bodyKit || 'stock', shapeOpts,
       hasPlate: true, hasSign: !!def.livery, hasLivery: !!def.livery, beacon: def.beacon || null,
-      cacheKey: `${def.name}|${bodyColor}`,
     });
     built.group.userData.type = def.name;
     built.group.userData.refs = built.refs;
