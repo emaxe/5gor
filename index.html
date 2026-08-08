@@ -1726,11 +1726,23 @@ const lampMesh = (a) => new THREE.BoxGeometry(a.w, a.h, a.d).translate(a.x, a.y,
    семейство силуэтов, а вызывающая сторона (traffic.js) не обязана знать
    базовые значения каждого силуэта. Механизм общий для threeBoxCar и
    boxVanCar и автоматически подхватывает любую новую числовую опцию. */
+const _badDeltaWarned = new Set();
 function applyOptDeltas(opt, o) {
   for (const k in o) {
     if (!k.endsWith('Delta')) continue;
     const base = k.slice(0, -5);
-    if (typeof opt[base] === 'number') opt[base] += o[k];
+    if (typeof opt[base] === 'number') { opt[base] += o[k]; continue; }
+    /* Нераспознанную дельту (опечатка `cargoHeighDelta`, дельта к нечисловой
+       опции `openBedDelta`) проглатывать нельзя: геометрия не изменится, а
+       carGeoCacheKey всё равно сериализует ДРУГОЙ shapeOpts — в кэше появится
+       запись, байт-в-байт дублирующая существующую геометрию, а вариант тихо
+       станет "мёртвым". Это ровно тот класс рассинхрона, который лечит
+       carGeoCacheKey, поэтому шумим. Один раз на ключ — иначе спам на каждый
+       спавн машины. */
+    if (!_badDeltaWarned.has(k)) {
+      _badDeltaWarned.add(k);
+      console.warn(`carmodel: дельта "${k}" не применена — опции "${base}" нет у силуэта или она не числовая`);
+    }
   }
   return opt;
 }
@@ -1932,17 +1944,23 @@ function shapeVariants(shape) {
 }
 
 /* --- Ключ кэша слитой геометрии ------------------------------------------
-   ЕДИНСТВЕННЫЙ источник правды о том, "что влияет на слитую геометрию".
-   Здесь перечислены поля spec, попадающие в staticColored -> mergeColored()
-   (кузов/тёмные/хром-детали/обвес/колёса + запечённые в вершины цвета), и их
-   дефолты — те же самые значения используются деструктуризацией в
-   buildCarModel ниже, чтобы дефолты не разъехались.
+   ЕДИНСТВЕННЫЙ источник правды о том, "что влияет на слитую геометрию":
+   поля spec, попадающие в staticColored -> mergeColored() (кузов/тёмные/
+   хром-детали/обвес/колёса + запечённые в вершины цвета).
    Стёкла, фары/стопы, номер, плафон такси, маячок и decal-anchor кэш НЕ
    затрагивают (это отдельные меши вне staticColored) — их в ключе нет.
+
+   Геометрические поля БЕЗ дефолта (обязан задать вызывающий) — перечислены
+   в GEO_SPEC_REQUIRED и уходят в ключ как есть: подставлять им фиктивный
+   дефолт нельзя, иначе spec с забытым w (геометрия NaN) получил бы тот же
+   ключ, что и валидный spec с w из дефолта.
+   Поля С дефолтом — в GEO_SPEC_DEFAULTS; ЭТИ ЖЕ значения используются как
+   дефолты деструктуризации в buildCarModel ниже (все до единого), поэтому
+   разъехаться они не могут.
    Добавляешь новый геометрический параметр (напр. hasRoofRack) — дописываешь
-   ОДНУ строку сюда, и он автоматически попадает в ключ во всех вызовах. */
+   ОДНУ строку в один из двух списков, и он автоматически попадает в ключ. */
+const GEO_SPEC_REQUIRED = ['shape', 'w', 'len'];
 const GEO_SPEC_DEFAULTS = {
-  shape: 'sedan', w: 0, len: 0,
   bodyColor: 0xcccccc, darkColor: 0x22262c, chromeColor: 0xc8c8c8,
   tireColor: 0x18181a, rimColor: 0xc4c8cc,
   rimStyle: 'disc', bodyKit: 'stock',
@@ -1967,9 +1985,9 @@ function carGeoCacheKey(spec) {
   // неизвестный силуэт собирается как sedan (см. buildCarModel) — нормализуем,
   // чтобы ключ описывал ФАКТИЧЕСКИ построенную геометрию
   const shape = CAR_SHAPES[spec.shape] ? spec.shape : 'sedan';
-  return Object.keys(GEO_SPEC_DEFAULTS)
-    .map((k) => _geoKeyVal((k === 'shape' ? shape : spec[k]) ?? GEO_SPEC_DEFAULTS[k]))
-    .join('|');
+  const req = GEO_SPEC_REQUIRED.map((k) => _geoKeyVal(k === 'shape' ? shape : spec[k]));
+  const opt = Object.keys(GEO_SPEC_DEFAULTS).map((k) => _geoKeyVal(spec[k] ?? GEO_SPEC_DEFAULTS[k]));
+  return [...req, ...opt].join('|');
 }
 
 /**
@@ -2033,7 +2051,7 @@ function buildCarModel(spec) {
     chromeColor = GEO_SPEC_DEFAULTS.chromeColor, tireColor = GEO_SPEC_DEFAULTS.tireColor,
     rimColor = GEO_SPEC_DEFAULTS.rimColor,
     rimStyle = GEO_SPEC_DEFAULTS.rimStyle, bodyKit = GEO_SPEC_DEFAULTS.bodyKit,
-    shapeOpts = null,
+    shapeOpts = GEO_SPEC_DEFAULTS.shapeOpts,
     hasPlate = true, hasSign = false, hasLivery = false, beacon = null,
   } = spec;
 
