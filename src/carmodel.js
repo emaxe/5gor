@@ -227,9 +227,16 @@ function threeBoxCar(dims, o = {}) {
     add(new THREE.BoxGeometry(w * opt.beltW + 0.02, 0.035, len * 0.7).translate(0, opt.deckY + opt.deckH * 0.5, 0), 'chrome');
   }
   if (opt.hasExhaust) {
-    // выхлопная труба — маленький цилиндр под задним бампером (sedan/coupe/hatch)
+    // выхлопная труба — маленький цилиндр под задним бампером (sedan/coupe/hatch).
+    // Y считаем ОТ САМОГО БАМПЕРА (см. bumperRole-блок выше: центр
+    // deckY - deckH*0.42, полу-высота 0.08), а не от deckY напрямую — иначе
+    // при разных deckY/deckH у sedan/coupe/hatch труба рискует снова
+    // оказаться внутри bounding box бампера. -0.15 = -0.08 (низ бампера) -
+    // 0.05 (радиус трубы) - 0.02 (зазор) — труба гарантированно ЦЕЛИКОМ
+    // ниже бампера по Y (не спрятана внутри его объёма), Z чуть смещён
+    // назад, чтобы кончик трубы также торчал за задний край бампера.
     add(new THREE.CylinderGeometry(0.05, 0.05, 0.16, 8).rotateX(Math.PI / 2)
-      .translate(w * 0.22, opt.deckY - opt.deckH * 0.44, -(len / 2 + 0.02)), 'dark');
+      .translate(w * 0.22, opt.deckY - opt.deckH * 0.42 - 0.15, -(len / 2 + 0.10)), 'dark');
   }
 
   const lampFront = [-1, 1].map((s) => ({ x: s * w * 0.32, y: opt.deckY, z: len / 2 + 0.045, w: 0.28, h: 0.15, d: 0.08 }));
