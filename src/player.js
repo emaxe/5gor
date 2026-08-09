@@ -339,7 +339,7 @@ export class PlayerCar {
     // трафик
     if (traffic) {
       for (const car of traffic.cars) {
-        if (!car.alive) continue;
+        if (!car.alive || !car.mesh.visible) continue;
         const d = dist2D(this.x, this.z, car.x, car.z);
         const rr = r + car.radius;
         if (d < rr && d > 1e-4) {
@@ -375,6 +375,7 @@ export class PlayerCar {
 
   _collidePed(p, r, world) {
     if (p.alive === false || p.x === undefined || p.z === undefined) return;
+    if (p.mesh && !p.mesh.visible) return;
     const d = dist2D(this.x, this.z, p.x, p.z);
     const rr = r + 0.55;
     if (d >= rr || d < 1e-4) return;
