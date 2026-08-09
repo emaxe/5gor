@@ -3,7 +3,7 @@ import { CFG } from './config.js';
 import { rand, clamp, lerp, choice, buildPedMesh, makeSpeechSprite, updateSpeechSprite, isInPlayerView } from './utils.js';
 import { Events } from './eventbus.js';
 import { PedGraph } from './pedgraph.js';
-import { probeForwardBlocked, FORWARD_DISTANCES } from './pedavoid.js';
+import { probeForwardBlocked, FORWARD_DISTANCES, segmentBlocked } from './pedavoid.js';
 
 const _tempPedWp = { x: 0, z: 0 };
 const _tempPedWpSync = { x: 0, z: 0 };
@@ -178,6 +178,7 @@ export class PedestrianManager {
         active: false, nearZone: false, laneOff: 0,
         route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
         idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
+        _blockedTurnIsec: null,
       };
       this.cars.push(ped);
       this.scene.add(mesh);
@@ -578,9 +579,14 @@ export class PedestrianManager {
     } else if (e.kind === 'turn') {
       p.mode = 'turn';
       p.cross = null;
+      // Начало дуги — текущая мировая позиция пешехода, не запечённые e.x0/e.z0:
+      // если позицию перед поворотом сдвинул _nudgeOutOfObstacle (Task 7) или выход
+      // с зебры (Task 6), запечённые координаты телепортировали бы пешехода обратно
+      // в исходную точку в момент старта анимации (grill-plan G3).
+      const wp0 = this._worldPos(p, _tempPedWpTurn);
       p.turn = {
-        x0: e.x0, z0: e.z0, x1: e.x1, z1: e.z1, t: 0,
-        dur: Math.hypot(e.x1 - e.x0, e.z1 - e.z0) / Math.max(p.speed, 0.5),
+        x0: wp0.x, z0: wp0.z, x1: e.x1, z1: e.z1, t: 0,
+        dur: Math.hypot(e.x1 - wp0.x, e.z1 - wp0.z) / Math.max(p.speed, 0.5),
       };
       p._turnTo = e;
     }
@@ -660,11 +666,21 @@ export class PedestrianManager {
 
   /* Осознанный выбор действия на перекрёстке */
   _decide(p, isec) {
-    // Если животное — оно часто просто перебегает дорогу или поворачивает
+    // Анти-flip-flop (ревью 2.2): если пешеход ушёл от заблокированного
+    // перекрёстка — обнулить. Если всё ещё на нём — не пытаться повернуть.
+    if (p._blockedTurnIsec !== null && Math.abs(isec - p._blockedTurnIsec) > CFG.CELL * 0.5) {
+      p._blockedTurnIsec = null;
+    }
+    // Если животное — оно часто просто перебегает дорогу или поворачивает.
+    // turnBlocked-гейт как в человеческой ветке ниже (grill-plan G5): без
+    // него животное в составном случае (заблокировано и по ходу через
+    // _avoidStatic — speed=0, и на повороте) может флип-флопить на том же
+    // перекрёстке — turnT=1.2 истечёт, а _decide попробует _startTurn снова.
     if (p.isAnimal) {
       const animalRoll = Math.random();
+      const turnBlocked = p._blockedTurnIsec === isec;
       if (animalRoll < 0.35) { this._startCross(p); return; }
-      if (animalRoll < 0.70) { this._startTurn(p, isec); return; }
+      if (!turnBlocked && animalRoll < 0.70) { this._startTurn(p, isec); return; }
       p.turnT = rand(0.4, 0.9);
       return;
     }
@@ -672,18 +688,19 @@ export class PedestrianManager {
     // Для человека: если достиг целевого перекрёстка — выбирает поворот или переход для продолжения пути
     const reachedTarget = p.targetIsec !== null && Math.abs(isec - p.targetIsec) < CFG.CELL * 0.5;
     const roll = Math.random();
+    const turnBlocked = p._blockedTurnIsec === isec;
 
     if (reachedTarget) {
       this._assignNewTarget(p);
-      if (roll < 0.45) { this._startTurn(p, isec); return; }
+      if (!turnBlocked && roll < 0.45) { this._startTurn(p, isec); return; }
       if (roll < 0.85) { this._startCross(p); return; }
       p.turnT = 1.0;
       return;
     }
 
     // Проходной перекрёсток — преимущественно идём прямо
-    if (roll < 0.10) { this._startCross(p); return; }
-    if (roll < 0.25) { this._startTurn(p, isec); return; }
+    if (!turnBlocked && roll < 0.10) { this._startCross(p); return; }
+    if (!turnBlocked && roll < 0.25) { this._startTurn(p, isec); return; }
     p.turnT = rand(0.5, 1.2);
   }
 
@@ -757,7 +774,10 @@ export class PedestrianManager {
     }
   }
 
-  /* Поворот на перекрёстке */
+  /* Поворот на перекрёстке. Перед поворотом проверяет дугу (прямую от
+     текущей позиции до новой) на препятствия — на углах стоят светофоры,
+     знаки, фонари. Если занято: отказ от поворота, запоминаем заблокированный
+     перекрёсток в p._blockedTurnIsec (анти-flip-flop, ревью 2.2), идём прямо. */
   _startTurn(p, isec) {
     const wp0 = this._worldPos(p, _tempPedWpTurn);
     const side = p.side;
@@ -766,16 +786,24 @@ export class PedestrianManager {
     if (p.axis === 'z') {
       x1 = oldCoord;
       z1 = isec + side * PED_SIDE;
-      p.axis = 'x'; p.coord = isec; p.pos = oldCoord;
     } else {
       x1 = isec + side * PED_SIDE;
       z1 = oldCoord;
-      p.axis = 'z'; p.coord = isec; p.pos = oldCoord;
     }
+    // Проверить дугу поворота. Радиус корпуса пешехода 0.4 уже учтён в
+    // _obstacleAt (_checkPropCollision(x, z, 0.4)) — отдельная ширина дуги
+    // не нужна (ревью 2.4).
+    if (this.world && segmentBlocked(wp0.x, wp0.z, x1, z1, (x, z) => this._obstacleAt(x, z), 8)) {
+      p._blockedTurnIsec = isec;
+      p.turnT = 1.2;
+      return;
+    }
+    if (p.axis === 'z') { p.axis = 'x'; p.coord = isec; p.pos = oldCoord; }
+    else { p.axis = 'z'; p.coord = isec; p.pos = oldCoord; }
     p.mode = 'turn';
     p.turn = {
       x0: wp0.x, z0: wp0.z, x1, z1, t: 0,
-      dur: Math.hypot(x1 - wp0.x, z1 - wp0.z) / p.speed,
+      dur: Math.hypot(x1 - wp0.x, z1 - wp0.z) / Math.max(p.speed, 0.5),
     };
   }
 
@@ -1154,6 +1182,7 @@ export class PedestrianManager {
       active: false, nearZone: false, laneOff: 0,
       route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
       idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
+      _blockedTurnIsec: null,
     };
     ped.fx = x; ped.fz = z;
     this._snapToSidewalk(ped);
