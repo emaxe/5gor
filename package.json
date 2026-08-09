@@ -1,5 +1,13 @@
 {
   "name": "5gor",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.8.1",
+    "globals": "^17.9.0"
+  }
 }

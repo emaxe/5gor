@@ -3,6 +3,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .skill-hub.local.json
+node_modules/
 
 # сервер
 .server.log
@@ -19,5 +20,7 @@ __pycache__/
 .worktrees/
 .superpowers/
 
-# duma — рабочие директории спора нескольких моделей
+# grill-plan — рабочие директории спора нескольких моделей
+.grill-plan/
+# legacy: прогоны до переименования скилла (duma → grill-plan)
 .duma/
