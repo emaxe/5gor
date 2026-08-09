@@ -776,6 +776,23 @@ export class PedestrianManager {
       p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
       p.cross = null;
       p.turnT = 2.2;
+      // Если точка выхода занята статикой — сдвинуться вдоль тротуара
+      // в направлении движения (p.dir сохранён с до перехода).
+      if (this.world) {
+        const outOff = p.side * PED_SIDE;
+        const ox = p.axis === 'z' ? p.coord + outOff : p.pos;
+        const oz = p.axis === 'z' ? p.pos : p.coord + outOff;
+        if (this._obstacleAt(ox, oz)) {
+          for (const step of [1.5, -1.5, 3.0, -3.0]) {
+            const tx = p.axis === 'z' ? ox : ox + step * p.dir;
+            const tz = p.axis === 'z' ? oz + step * p.dir : oz;
+            if (!this._obstacleAt(tx, tz)) {
+              p.pos = p.axis === 'z' ? tz : tx;
+              break;
+            }
+          }
+        }
+      }
     }
   }
 
