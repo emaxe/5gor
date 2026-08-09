@@ -417,6 +417,30 @@ export class PedestrianManager {
     }
   }
 
+  /* Если пешеход стоит внутри препятствия — попытаться сдвинуть его
+     вдоль ленты (±1.5, ±3.0) и поперёк (±1.0). Возвращает true если
+     удалось найти свободную точку. Используется в _activate: дальний
+     пешеход (без _avoidStatic) мог зайти в AABB, и при активации маршрут
+     стартует изнутри статики — 1.5 с пешеход стоит в лавочке. */
+  _nudgeOutOfObstacle(p) {
+    if (!this.world) return false;
+    const wp = this._worldPos(p, _tempPedWp);
+    if (!this._obstacleAt(wp.x, wp.z)) return true;
+    for (const along of [0, 1.5, -1.5, 3.0, -3.0]) {
+      for (const across of [0, 1.0, -1.0]) {
+        const off = p.side * PED_SIDE + across;
+        const tx = p.axis === 'z' ? p.coord + off : wp.x + along * p.dir;
+        const tz = p.axis === 'z' ? wp.z + along * p.dir : p.coord + off;
+        if (!this._obstacleAt(tx, tz)) {
+          if (p.axis === 'z') { p.pos = tz; p.laneOff = across; }
+          else { p.pos = tx; p.laneOff = across; }
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
   /* Активировать: узел входа на СВОЕЙ ленте -> цель -> маршрут.
      Ранний выход при отлёте/убегании/пинке — не обрывает их сменой mode.
      Ровно один проход Dijkstra (routesFrom) на активацию — дальше выбор
@@ -426,6 +450,8 @@ export class PedestrianManager {
     if (!this.graph || p.isAnimal) return;
     if (p.knockT > 0 || p.mode === 'flee' || p.mode === 'kick') return;
     p.route = null; p.routeIdx = 0; p.laneOff = 0;
+    this._nudgeOutOfObstacle(p);  // сдвинуться из препятствия если стоит внутри — ПОСЛЕ
+                                   // сброса laneOff, иначе боковой сдвиг затирается (G4)
 
     const fromId = this.graph.nodeOnLane(p.axis, p.coord, p.side, p.pos);
     if (fromId == null) { p.active = false; p._reroute = 2.0; return; }
