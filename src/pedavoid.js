@@ -45,3 +45,24 @@ export function buildForwardProbes(x0, z0, dirX, dirZ, distances) {
   }
   return out;
 }
+
+/**
+ * Проверяет, пересекает ли отрезок (x0,z0)-(x1,z1) препятствие.
+ * Сэмплит N точек вдоль отрезка (включая концы) и проверяет каждую.
+ * ВНИМАНИЕ: радиус корпуса пешехода НЕ закладён — obstacleFn должен сам
+ * добавлять радиус (как _obstacleAt → _checkPropCollision(x, z, 0.4)).
+ * @param {number} x0 — старт x
+ * @param {number} z0 — старт z
+ * @param {number} x1 — конец x
+ * @param {number} z1 — конец z
+ * @param {(x: number, z: number) => boolean} obstacleFn
+ * @param {number} [steps=6] — число точек сэмплинга
+ * @returns {boolean} true если хотя бы одна точка занята
+ */
+export function segmentBlocked(x0, z0, x1, z1, obstacleFn, steps = 6) {
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    if (obstacleFn(x0 + (x1 - x0) * t, z0 + (z1 - z0) * t)) return true;
+  }
+  return false;
+}
