@@ -23,6 +23,7 @@ MODULES = [
     "input.js",
     "citygen.js",
     "pedgraph.js",
+    "pedavoid.js",
     "player.js",
     "traffic.js",
     "peds.js",
