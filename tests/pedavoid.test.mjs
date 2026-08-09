@@ -62,3 +62,32 @@ test('segmentBlocked: шаги по умолчанию = 6 (7 вызовов)', 
   segmentBlocked(0, 0, 10, 0, obs);
   assert.equal(calls, 7);  // 0..6 включительно
 });
+
+import { reachableTarget } from '../src/pedavoid.js';
+
+test('reachableTarget: цель в пределах сетки — без изменений', () => {
+  assert.equal(reachableTarget(64, 64, 192), 64);
+  assert.equal(reachableTarget(-128, 64, 192), -128);
+});
+
+test('reachableTarget: цель 256 обрезается до 192', () => {
+  assert.equal(reachableTarget(256, 64, 192), 192);
+  assert.equal(reachableTarget(-256, 64, 192), -192);
+});
+
+test('reachableTarget: цель 300 обрезается до 192', () => {
+  assert.equal(reachableTarget(300, 64, 192), 192);
+});
+
+test('reachableTarget: промежуточная цель округляется к ближайшему перекрёстку', () => {
+  // JS Math.round округляет половинку вверх (к +Infinity): Math.round(96/64) ===
+  // Math.round(1.5) === 2, значит 96 округляется к 128, не к 64 (grill-plan G7,
+  // проверено node -e "console.log(Math.round(96/64))").
+  assert.equal(reachableTarget(96, 64, 192), 128);
+  assert.equal(reachableTarget(97, 64, 192), 128);
+});
+
+test('reachableTarget: maxReachable вычисляется из PED_TURN_LIMIT и step', () => {
+  // Math.floor(232 / 64) * 64 === 192
+  assert.equal(Math.floor(232 / 64) * 64, 192);
+});

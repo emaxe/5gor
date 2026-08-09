@@ -66,3 +66,21 @@ export function segmentBlocked(x0, z0, x1, z1, obstacleFn, steps = 6) {
   }
   return false;
 }
+
+/**
+ * Возвращает ближайший допустимый перекрёсток к желаемой цели.
+ * Перекрёстки в городе: k*step, где step=CFG.CELL (64). Достижимые:
+ * от -maxReachable до +maxReachable (пешеход разворачивается на
+ * PED_TURN_LIMIT, так что крайний перекрёсток — Math.floor(PED_TURN_LIMIT / step) * step).
+ * @param {number} desired — желаемая координата перекрёстка
+ * @param {number} step — шаг сетки (CFG.CELL)
+ * @param {number} maxReachable — максимальный достижимый перекрёсток (±),
+ *        вычислять как Math.floor(PED_TURN_LIMIT / step) * step, не хардкодить
+ * @returns {number}
+ */
+export function reachableTarget(desired, step, maxReachable) {
+  const maxK = Math.floor(maxReachable / step);
+  const k = Math.round(desired / step);
+  const clampedK = Math.max(-maxK, Math.min(maxK, k));
+  return clampedK * step;
+}

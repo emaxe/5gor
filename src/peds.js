@@ -3,7 +3,7 @@ import { CFG } from './config.js';
 import { rand, clamp, lerp, choice, buildPedMesh, makeSpeechSprite, updateSpeechSprite, isInPlayerView } from './utils.js';
 import { Events } from './eventbus.js';
 import { PedGraph } from './pedgraph.js';
-import { probeForwardBlocked, FORWARD_DISTANCES, segmentBlocked } from './pedavoid.js';
+import { probeForwardBlocked, FORWARD_DISTANCES, segmentBlocked, reachableTarget } from './pedavoid.js';
 
 const _tempPedWp = { x: 0, z: 0 };
 const _tempPedWpSync = { x: 0, z: 0 };
@@ -12,6 +12,7 @@ const _tempPedProbe = { x: 0, z: 0 };
 
 const PED_COLORS = [0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30];
 const PED_SIDE = CFG.HALF + CFG.SIDE / 2; // 8 — центр тротуара от оси дороги
+const PED_TURN_LIMIT = 232; // граница разворота пешехода в _updateWalk (раньше хардкод)
 
 const IDLE_QUOTES = [
   "Пятигорск сегодня прекрасен!",
@@ -273,12 +274,16 @@ export class PedestrianManager {
     this._assignNewTarget(p);
   }
 
-  /* Назначение целевого пункта для пешехода */
+  /* Назначение целевого перекрёстка для пешехода. Цель ограничена достижимым
+     диапазоном — пешеход разворачивается на PED_TURN_LIMIT (232), так что
+     перекрёсток 256 никогда не достигается, и бесконечная корректировка
+     направления в _updateWalk заставляла его топтаться на краю. maxReachable
+     вычисляется из PED_TURN_LIMIT и CFG.CELL, не хардкодится (ревью 2.3). */
   _assignNewTarget(p) {
     const isecStep = CFG.CELL;
-    // Выбираем целевой перекрёсток впереди по вектору или на расстоянии 2-4 блоков
+    const maxReachable = Math.floor(PED_TURN_LIMIT / isecStep) * isecStep; // 192
     const targetIsec = Math.round((p.pos + p.dir * rand(isecStep * 1.5, isecStep * 3.5)) / isecStep) * isecStep;
-    p.targetIsec = clamp(targetIsec, -256, 256);
+    p.targetIsec = reachableTarget(targetIsec, isecStep, maxReachable);
   }
 
   /* Мировые координаты в зависимости от режима */
@@ -643,9 +648,9 @@ export class PedestrianManager {
     }
     p.pos += p.speed * dt * p.dir;
     if (p.turnT > 0) { p.turnT -= dt; return; }
-    if (Math.abs(p.pos) > 232) {
+    if (Math.abs(p.pos) > PED_TURN_LIMIT) {
       p.dir = -p.dir;
-      p.pos = clamp(p.pos, -232, 232);
+      p.pos = clamp(p.pos, -PED_TURN_LIMIT, PED_TURN_LIMIT);
       p.turnT = 0.5;
       this._assignNewTarget(p);
       return;

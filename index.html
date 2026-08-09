@@ -6981,6 +6981,24 @@ function segmentBlocked(x0, z0, x1, z1, obstacleFn, steps = 6) {
   }
   return false;
 }
+
+/**
+ * Возвращает ближайший допустимый перекрёсток к желаемой цели.
+ * Перекрёстки в городе: k*step, где step=CFG.CELL (64). Достижимые:
+ * от -maxReachable до +maxReachable (пешеход разворачивается на
+ * PED_TURN_LIMIT, так что крайний перекрёсток — Math.floor(PED_TURN_LIMIT / step) * step).
+ * @param {number} desired — желаемая координата перекрёстка
+ * @param {number} step — шаг сетки (CFG.CELL)
+ * @param {number} maxReachable — максимальный достижимый перекрёсток (±),
+ *        вычислять как Math.floor(PED_TURN_LIMIT / step) * step, не хардкодить
+ * @returns {number}
+ */
+function reachableTarget(desired, step, maxReachable) {
+  const maxK = Math.floor(maxReachable / step);
+  const k = Math.round(desired / step);
+  const clampedK = Math.max(-maxK, Math.min(maxK, k));
+  return clampedK * step;
+}
 /* ===== player.js ===== */
 
 
@@ -7982,6 +8000,7 @@ const _tempPedProbe = { x: 0, z: 0 };
 
 const PED_COLORS = [0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30];
 const PED_SIDE = CFG.HALF + CFG.SIDE / 2; // 8 — центр тротуара от оси дороги
+const PED_TURN_LIMIT = 232; // граница разворота пешехода в _updateWalk (раньше хардкод)
 
 const IDLE_QUOTES = [
   "Пятигорск сегодня прекрасен!",
@@ -8243,12 +8262,16 @@ class PedestrianManager {
     this._assignNewTarget(p);
   }
 
-  /* Назначение целевого пункта для пешехода */
+  /* Назначение целевого перекрёстка для пешехода. Цель ограничена достижимым
+     диапазоном — пешеход разворачивается на PED_TURN_LIMIT (232), так что
+     перекрёсток 256 никогда не достигается, и бесконечная корректировка
+     направления в _updateWalk заставляла его топтаться на краю. maxReachable
+     вычисляется из PED_TURN_LIMIT и CFG.CELL, не хардкодится (ревью 2.3). */
   _assignNewTarget(p) {
     const isecStep = CFG.CELL;
-    // Выбираем целевой перекрёсток впереди по вектору или на расстоянии 2-4 блоков
+    const maxReachable = Math.floor(PED_TURN_LIMIT / isecStep) * isecStep; // 192
     const targetIsec = Math.round((p.pos + p.dir * rand(isecStep * 1.5, isecStep * 3.5)) / isecStep) * isecStep;
-    p.targetIsec = clamp(targetIsec, -256, 256);
+    p.targetIsec = reachableTarget(targetIsec, isecStep, maxReachable);
   }
 
   /* Мировые координаты в зависимости от режима */
@@ -8613,9 +8636,9 @@ class PedestrianManager {
     }
     p.pos += p.speed * dt * p.dir;
     if (p.turnT > 0) { p.turnT -= dt; return; }
-    if (Math.abs(p.pos) > 232) {
+    if (Math.abs(p.pos) > PED_TURN_LIMIT) {
       p.dir = -p.dir;
-      p.pos = clamp(p.pos, -232, 232);
+      p.pos = clamp(p.pos, -PED_TURN_LIMIT, PED_TURN_LIMIT);
       p.turnT = 0.5;
       this._assignNewTarget(p);
       return;
