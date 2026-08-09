@@ -7953,6 +7953,7 @@ let WORLD_INTERSECTIONS = [];
 
 
 
+
 const _tempPedWp = { x: 0, z: 0 };
 const _tempPedWpSync = { x: 0, z: 0 };
 const _tempPedWpTurn = { x: 0, z: 0 };
@@ -8022,6 +8023,7 @@ class PedestrianManager {
     this._count = 0;
     this.graph = null;
     this._classifyTimer = 0;
+    this._obstacleAtBound = (x, z) => this._obstacleAt(x, z);
   }
 
   /* Реплика над головой пешехода / животного */
@@ -8782,32 +8784,32 @@ class PedestrianManager {
     return false;
   }
 
-  /* Боковое смещение вокруг статики (активная и ближняя зоны). laneOff
-     ограничен ±1.5 (полуширина тротуара 2 м минус запас на корпус пешехода —
-     значение согласовано со спекой, было ±1.9 у пешехода при ширине тротуара
-     2 м, что вылезало на проезжую часть). Полная блокировка дольше 1.5 с —
-     явная реакция (не бесконечная заморозка speed=0): активный пересчитывает
-     маршрут, пассивный разворачивается — см. спеку, «Обход препятствий». */
+  /* Боковое смещение вокруг статики (активная и ближняя зоны). Multi-probe:
+     три точки вперёд (0.6, 1.4, 2.2 м) — один probe на 2.2 м пропускал узкие
+     столбы/урны в слепой зоне ~1.4 м. probeForwardBlocked — zero-alloc, для
+     hot-path. laneOff ограничен ±1.5 (полуширина тротуара 2 м минус запас
+     на корпус пешехода). Полная блокировка дольше 1.5 с — явная реакция:
+     активный пересчитывает маршрут, пассивный разворачивается. */
   _avoidStatic(p, dt) {
     if (!this.world || (!p.nearZone && !p.active)) return;
-    const look = 2.2;
     const dirX = p.axis === 'z' ? 0 : p.dir;
     const dirZ = p.axis === 'z' ? p.dir : 0;
-    const probe = this._lanePoint(p, p.laneOff || 0);
-    probe.x += dirX * look;
-    probe.z += dirZ * look;
-    if (!this._obstacleAt(probe.x, probe.z)) {
+    const baseOff = p.laneOff || 0;
+    const probe0 = this._lanePoint(p, baseOff);
+    // this._obstacleAtBound — захостен один раз в конструкторе (grill-plan G9), не
+    // аллоцировать замыкание здесь каждый кадр на каждого пешехода.
+    if (!probeForwardBlocked(probe0.x, probe0.z, dirX, dirZ, FORWARD_DISTANCES, this._obstacleAtBound)) {
       p.laneOff *= Math.max(0, 1 - 4 * dt);
       if (Math.abs(p.laneOff) < 0.02) p.laneOff = 0;
       p._stuckT = 0;
       return;
     }
     for (const o of [1.4, -1.4, 2.4, -2.4]) {
-      const cand = clamp((p.laneOff || 0) + o, -1.5, 1.5);
-      const pr = this._lanePoint(p, cand);
-      pr.x += dirX * look;
-      pr.z += dirZ * look;
-      if (!this._obstacleAt(pr.x, pr.z)) { p.laneOff = cand; p._stuckT = 0; return; }
+      const cand = clamp(baseOff + o, -1.5, 1.5);
+      const pr0 = this._lanePoint(p, cand);
+      if (!probeForwardBlocked(pr0.x, pr0.z, dirX, dirZ, FORWARD_DISTANCES, this._obstacleAtBound)) {
+        p.laneOff = cand; p._stuckT = 0; return;
+      }
     }
     // заблокировано с обеих сторон
     p.speed = 0;
@@ -8905,6 +8907,11 @@ class PedestrianManager {
     // не поднимает speed обратно к baseSpeed.
     p.speed = p.baseSpeed;
     this._avoidStatic(p, dt);
+    // Деактивация зависшего пешехода внутри _avoidStatic (p.active=false; p.route=null)
+    // не сбрасывает p._edgeKind — без этого return код ниже может дойти до
+    // _finishEdge -> _startEdge -> p.route.length на null и уронить update() кадра
+    // (grill-plan G2).
+    if (!p.active || !p.route) return;
     this._avoidPeds(p, dt);
     p.pos += p.speed * dt * p.dir;
     if (p._edgeKind === 'walk' && Math.abs(p.pos - p.edgeEnd) < 0.7) {
