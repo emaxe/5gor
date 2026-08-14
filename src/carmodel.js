@@ -73,7 +73,9 @@ function wheelGeo(r, tw, seg = 12) { return new THREE.CylinderGeometry(r, r, tw,
    НЕ-animated геометрии, mesh.rotation.z для animated). */
 function rimSpokeBars(r, tw, count = 5) {
   const barLen = r * 0.94, barW = r * 0.16, barH = tw + 0.05;
-  const bars = [];
+  const bars = [
+    new THREE.BoxGeometry(r * 0.45, barH + 0.02, r * 0.45),
+  ];
   for (let i = 0; i < count; i++) {
     bars.push(new THREE.BoxGeometry(barW, barH, barLen).translate(0, 0, barLen / 2).rotateY(i * (Math.PI * 2 / count)));
   }
@@ -184,13 +186,16 @@ function threeBoxCar(dims, o = {}) {
     cabW: 0.86, cabH: 0.46, cabY: 1.32, cabTopWfrac: 0.9, cabDZfrac: -0.02,
     roofW: 0.78, roofH: 0.1, roofY: 1.58, roofFrac: 0.4, roofDZfrac: -0.02,
     chromeBumper: false, chromeTrim: false, wheelR: 0.38,
-    hasExhaust: false, roofRackOk: false,
+    hasExhaust: false, roofRackOk: false, isCoupe: false,
     ...o,
   }, o);
   const parts = [], glass = [];
   const add = (g, role) => parts.push({ g, role });
   const hoodLen = len * opt.hoodFrac, trunkLen = len * opt.trunkFrac;
+  const cabLen = len - hoodLen - trunkLen;
+  const cabZ = (hoodLen - trunkLen) / 2;
 
+  // Базовые блоки кузова (капот, салон, багажник, крыша)
   add(taperedBox(w * opt.beltW, opt.deckH, len, { y: opt.deckY }), 'body');
   add(taperedBox(w * 0.92, opt.deckH * 0.9, hoodLen, {
     frontRise: opt.hoodRise, y: opt.deckY + 0.02, z: len / 2 - hoodLen / 2,
@@ -198,47 +203,118 @@ function threeBoxCar(dims, o = {}) {
   add(taperedBox(w * 0.92, opt.deckH * 0.9, trunkLen, {
     backRise: opt.trunkRise, y: opt.deckY + 0.02, z: -(len / 2 - trunkLen / 2),
   }), 'body');
-
-  // "теплица" салона — единый тонированный блок (окна+стойки), как в исходном стиле
-  glass.push(taperedBox(w * opt.cabW, opt.cabH, len - hoodLen - trunkLen, {
-    topW: w * opt.cabW * opt.cabTopWfrac, topD: (len - hoodLen - trunkLen) * 0.92,
-    topDZ: len * opt.cabDZfrac, y: opt.cabY,
-  }));
   add(taperedBox(w * opt.roofW, opt.roofH, len * opt.roofFrac, {
     y: opt.roofY, z: len * opt.roofDZfrac,
   }), 'body');
 
+  // "Теплица" салона: стёкла (лобовое, заднее, боковые + тонированный сердечник)
+  const wsW = w * opt.cabW * 0.94;
+  const wsH = opt.cabH * 0.86;
+  const wsZ = cabZ + cabLen * 0.42;
+  const rwW = w * opt.cabW * 0.92;
+  const rwH = opt.cabH * 0.84;
+  const rwZ = cabZ - cabLen * 0.42;
+  const swLen = cabLen * 0.76;
+
+  glass.push(taperedBox(w * opt.cabW * 0.96, opt.cabH * 0.96, cabLen * 0.94, {
+    topW: w * opt.cabW * opt.cabTopWfrac * 0.96, topD: cabLen * 0.88,
+    topDZ: len * opt.cabDZfrac, y: opt.cabY, z: cabZ + len * opt.cabDZfrac,
+  }));
+  glass.push(taperedBox(wsW, wsH, 0.06, {
+    topW: wsW * opt.cabTopWfrac, frontRise: -0.16, y: opt.cabY, z: wsZ,
+  }));
+  glass.push(taperedBox(rwW, rwH, 0.06, {
+    topW: rwW * opt.cabTopWfrac, backRise: -0.14, y: opt.cabY, z: rwZ,
+  }));
+
+  // Стойки кузова (A, B, C) и верхние рельсы окон
+  for (const s of [-1, 1]) {
+    add(new THREE.BoxGeometry(0.06, opt.cabH * 0.9, 0.08).rotateX(0.24)
+      .translate(s * (w * opt.cabW * 0.47), opt.cabY, wsZ + 0.03), 'dark');
+    add(new THREE.BoxGeometry(0.04, opt.cabH * 0.84, 0.06)
+      .translate(s * (w * opt.cabW * 0.49), opt.cabY, cabZ + len * opt.cabDZfrac), 'dark');
+    add(new THREE.BoxGeometry(0.07, opt.cabH * 0.9, 0.09).rotateX(-0.22)
+      .translate(s * (w * opt.cabW * 0.47), opt.cabY, rwZ - 0.03), opt.chromeTrim ? 'chrome' : 'dark');
+    add(new THREE.BoxGeometry(0.05, 0.04, swLen + 0.1)
+      .translate(s * (w * opt.cabW * 0.45), opt.roofY - opt.roofH / 2, cabZ + len * opt.cabDZfrac), 'dark');
+  }
+
+  // Решётка радиатора и рамки фар
+  const grilleW = w * 0.38, grilleH = opt.deckH * 0.55;
+  const grilleRole = (opt.chromeTrim || opt.chromeBumper) ? 'chrome' : 'dark';
+  add(new THREE.BoxGeometry(grilleW, grilleH, 0.05).translate(0, opt.deckY, len / 2 + 0.03), grilleRole);
+  if (grilleRole === 'chrome') {
+    add(new THREE.BoxGeometry(grilleW * 0.88, grilleH * 0.7, 0.06).translate(0, opt.deckY, len / 2 + 0.035), 'dark');
+  }
+  for (const s of [-1, 1]) {
+    add(new THREE.BoxGeometry(0.32, 0.19, 0.04).translate(s * w * 0.32, opt.deckY, len / 2 + 0.03), grilleRole);
+    add(new THREE.BoxGeometry(0.30, 0.17, 0.04).translate(s * w * 0.32, opt.deckY, -(len / 2 + 0.03)), 'dark');
+  }
+
+  // Колёсные арки (тёмные ниши в кузове)
+  const archW = 0.12, archH = opt.wheelR * 1.15, archD = opt.wheelR * 2.2;
+  for (const sx of [-1, 1]) {
+    for (const sz of [len * 0.31, -len * 0.31]) {
+      add(new THREE.BoxGeometry(archW, archH, archD).translate(sx * (w * 0.44), opt.deckY - opt.deckH * 0.25, sz), 'dark');
+    }
+  }
+
+  // Бамперы
   const bumperRole = opt.chromeBumper ? 'chrome' : 'dark';
   for (const s of [1, -1]) {
     add(new THREE.BoxGeometry(w * 1.04, 0.16, 0.16).translate(0, opt.deckY - opt.deckH * 0.42, s * (len / 2 + 0.07)), bumperRole);
+    if (!opt.chromeBumper) {
+      add(new THREE.BoxGeometry(w * 0.98, 0.05, 0.18).translate(0, opt.deckY - opt.deckH * 0.42 - 0.09, s * (len / 2 + 0.06)), 'dark');
+    }
   }
+
+  // Зеркала, дверные ручки, молдинги, швы дверей
+  const handleRole = (opt.chromeTrim || opt.chromeBumper) ? 'chrome' : 'dark';
+  const handleZPositions = opt.isCoupe ? [len * 0.04] : [len * 0.12, -len * 0.10];
   for (const s of [-1, 1]) {
-    // зеркало: корпус (тот же anchor, что и у прежнего плейсхолдера) + ножка
-    // крепления между бортом и корпусом зеркала — ножка всегда 'dark'
-    // (пластиковый кронштейн), даже если сам корпус хромирован (chromeTrim)
     add(new THREE.BoxGeometry(0.14, 0.1, 0.16).translate(s * (w / 2 + 0.07), opt.cabY - opt.cabH * 0.3, len * 0.12), opt.chromeTrim ? 'chrome' : 'dark');
     add(new THREE.BoxGeometry(0.05, 0.045, 0.05).translate(s * (w / 2 + 0.03), opt.cabY - opt.cabH * 0.3, len * 0.12), 'dark');
-    add(new THREE.BoxGeometry(0.03, 0.06, 0.32).translate(s * (w * opt.beltW / 2 + 0.015), opt.deckY + 0.1, 0), 'dark');
-    // шов дверей — тонкая инсетная тёмная полоса вдоль борта (тот же приём,
-    // что у chromeTrim ниже, но безусловная НОВАЯ деталь, не завязанная на
-    // chromeTrim: вертикальная линия у границы дверей, а не горизонтальный пояс)
+    add(new THREE.BoxGeometry(0.01, 0.08, 0.13).translate(s * (w / 2 + 0.135), opt.cabY - opt.cabH * 0.3, len * 0.12 - 0.01), 'chrome');
     add(new THREE.BoxGeometry(0.025, opt.deckH * 0.86, 0.03).translate(s * (w * opt.beltW / 2 + 0.008), opt.deckY, len * 0.02), 'dark');
+    for (const hz of handleZPositions) {
+      add(new THREE.BoxGeometry(0.04, 0.045, 0.14).translate(s * (w * opt.beltW / 2 + 0.018), opt.deckY + opt.deckH * 0.22, hz), handleRole);
+    }
+    add(new THREE.BoxGeometry(0.03, 0.04, len * 0.65).translate(s * (w * opt.beltW / 2 + 0.012), opt.deckY - opt.deckH * 0.2, 0), handleRole);
   }
+
   if (opt.chromeTrim) {
     add(new THREE.BoxGeometry(w * opt.beltW + 0.02, 0.035, len * 0.7).translate(0, opt.deckY + opt.deckH * 0.5, 0), 'chrome');
   }
-  if (opt.hasExhaust) {
-    // выхлопная труба — маленький цилиндр под задним бампером (sedan/coupe/hatch).
-    // Y считаем ОТ САМОГО БАМПЕРА (см. bumperRole-блок выше: центр
-    // deckY - deckH*0.42, полу-высота 0.08), а не от deckY напрямую — иначе
-    // при разных deckY/deckH у sedan/coupe/hatch труба рискует снова
-    // оказаться внутри bounding box бампера. -0.15 = -0.08 (низ бампера) -
-    // 0.05 (радиус трубы) - 0.02 (зазор) — труба гарантированно ЦЕЛИКОМ
-    // ниже бампера по Y (не спрятана внутри его объёма), Z чуть смещён
-    // назад, чтобы кончик трубы также торчал за задний край бампера.
-    add(new THREE.CylinderGeometry(0.05, 0.05, 0.16, 8).rotateX(Math.PI / 2)
-      .translate(w * 0.22, opt.deckY - opt.deckH * 0.42 - 0.15, -(len / 2 + 0.10)), 'dark');
+
+  // Швы капота и багажника
+  add(new THREE.BoxGeometry(w * opt.beltW * 0.88, 0.02, 0.025).translate(0, opt.deckY + opt.deckH * 0.46, len / 2 - hoodLen + 0.02), 'dark');
+  add(new THREE.BoxGeometry(w * opt.beltW * 0.88, 0.02, 0.025).translate(0, opt.deckY + opt.deckH * 0.46, -(len / 2 - trunkLen - 0.02)), 'dark');
+
+  // Дворники
+  for (const s of [-0.22, 0.18]) {
+    add(new THREE.BoxGeometry(0.02, 0.02, 0.38).rotateY(s > 0 ? 0.3 : 0.25)
+      .translate(s * w, opt.deckY + opt.deckH * 0.48, len / 2 - hoodLen - 0.04), 'dark');
   }
+
+  // Антенна на крыше
+  add(new THREE.CylinderGeometry(0.012, 0.018, 0.22, 6).rotateX(-0.35)
+    .translate(0, opt.roofY + opt.roofH / 2 + 0.1, -(len * opt.roofFrac * 0.4)), 'dark');
+
+  // Лючок бензобака
+  add(new THREE.BoxGeometry(0.02, 0.1, 0.1).translate(w * opt.beltW / 2 + 0.01, opt.deckY + 0.05, -(len / 2 - trunkLen * 0.7)), 'dark');
+
+  // Выхлопная труба с двойным контуром (хром снаружи, тёмный внутри)
+  if (opt.hasExhaust) {
+    const exX = w * 0.22;
+    const exY = opt.deckY - opt.deckH * 0.42 - 0.15;
+    const exZ = -(len / 2 + 0.10);
+    add(new THREE.CylinderGeometry(0.055, 0.055, 0.18, 8).rotateX(Math.PI / 2).translate(exX, exY, exZ), 'chrome');
+    add(new THREE.CylinderGeometry(0.04, 0.04, 0.19, 8).rotateX(Math.PI / 2).translate(exX, exY, exZ), 'dark');
+  }
+
+  // Рамка номерного знака (спереди и сзади)
+  add(new THREE.BoxGeometry(0.74, 0.28, 0.03).translate(0, opt.deckY - 0.06, -(len / 2 + 0.04)), 'dark');
+  add(new THREE.BoxGeometry(0.74, 0.28, 0.03).translate(0, opt.deckY - opt.deckH * 0.35, len / 2 + 0.05), 'dark');
 
   const lampFront = [-1, 1].map((s) => ({ x: s * w * 0.32, y: opt.deckY, z: len / 2 + 0.045, w: 0.28, h: 0.15, d: 0.08 }));
   const lampRear = [-1, 1].map((s) => ({ x: s * w * 0.32, y: opt.deckY, z: -(len / 2 + 0.045), w: 0.26, h: 0.13, d: 0.08 }));
@@ -248,8 +324,6 @@ function threeBoxCar(dims, o = {}) {
     wheel: { r: opt.wheelR, tw: 0.3, front: { x: w * 0.47, z: len * 0.31 }, rear: { x: w * 0.47, z: -len * 0.31 } },
     lampFront, lampRear,
     roofSign: { x: 0, y: opt.roofY + opt.roofH / 2 + 0.11, z: len * opt.roofDZfrac },
-    // anchor только когда силуэт разрешает багажник (wagon/suv, roofRackOk
-    // в CAR_SHAPES) — buildCarModel строит геометрию лишь при наличии anchor'а
     roofRack: opt.roofRackOk
       ? { x: 0, y: opt.roofY + opt.roofH / 2 + 0.05, z: len * opt.roofDZfrac, len: len * opt.roofFrac * 0.85 }
       : null,
@@ -265,7 +339,7 @@ function boxVanCar(dims, o = {}) {
     cabLenFrac: 0.22, cabH: 0.9, cabY: 1.05, windshieldRise: -0.28,
     cargoLenFrac: 0.68, cargoH: 1.5, cargoY: 1.35,
     openBed: false, bedWallH: 0.35, sideGlass: false, wheelR: 0.38,
-    roofRackOk: false,
+    roofRackOk: false, isTruck: false, isBus: false,
     ...o,
   }, o);
   const parts = [], glass = [];
@@ -273,50 +347,98 @@ function boxVanCar(dims, o = {}) {
   const cabLen = len * opt.cabLenFrac;
   const cargoLen = len * opt.cargoLenFrac;
   const cargoZ = -(len / 2 - cabLen - cargoLen / 2 - 0.04);
+  const cabZ = len / 2 - cabLen / 2;
 
   add(new THREE.BoxGeometry(w * 0.96, opt.deckH, len).translate(0, opt.deckY, 0), 'body');
   add(taperedBox(w * 0.94, opt.cabH, cabLen, {
-    frontRise: opt.windshieldRise * 0.35, y: opt.cabY, z: len / 2 - cabLen / 2,
+    frontRise: opt.windshieldRise * 0.35, y: opt.cabY, z: cabZ,
   }), 'body');
   glass.push(taperedBox(w * 0.86, opt.cabH * 0.55, cabLen * 0.75, {
     frontRise: opt.windshieldRise, y: opt.cabY + opt.cabH * 0.16, z: len / 2 - cabLen * 0.32,
   }));
 
+  for (const s of [-1, 1]) {
+    add(new THREE.BoxGeometry(0.06, opt.cabH * 0.6, 0.08).rotateX(0.2)
+      .translate(s * (w * 0.45), opt.cabY + opt.cabH * 0.15, len / 2 - cabLen * 0.2), 'dark');
+    add(new THREE.BoxGeometry(0.04, opt.cabH * 0.5, 0.06)
+      .translate(s * (w * 0.46), opt.cabY + opt.cabH * 0.1, len / 2 - cabLen * 0.7), 'dark');
+  }
+
   if (opt.openBed) {
     const bedLen = Math.max(0.6, len - cabLen - 0.15);
     const bedZ = -(len / 2 - cabLen - bedLen / 2 - 0.06);
     add(new THREE.BoxGeometry(w * 0.94, opt.bedWallH, bedLen).translate(0, opt.deckY + opt.deckH / 2 + opt.bedWallH / 2, bedZ), 'body');
+    add(new THREE.BoxGeometry(w * 0.84, 0.04, bedLen * 0.92).translate(0, opt.deckY + opt.deckH / 2 + 0.02, bedZ), 'dark');
+    add(new THREE.BoxGeometry(0.18, 0.06, 0.04).translate(0, opt.deckY + opt.deckH / 2 + opt.bedWallH * 0.6, bedZ - bedLen / 2 - 0.02), 'dark');
+    glass.push(new THREE.BoxGeometry(w * 0.7, opt.cabH * 0.35, 0.04).translate(0, opt.cabY + opt.cabH * 0.2, cabZ - cabLen / 2 + 0.02));
   } else {
     add(new THREE.BoxGeometry(w * 0.98, opt.cargoH, cargoLen).translate(0, opt.cargoY, cargoZ), 'body');
     if (opt.sideGlass) {
       for (const s of [-1, 1]) {
         glass.push(new THREE.BoxGeometry(0.02, opt.cargoH * 0.34, cargoLen * 0.82).translate(s * w * 0.49, opt.cargoY + opt.cargoH * 0.1, cargoZ));
+        if (opt.isBus) {
+          for (const dz of [-0.25, 0, 0.25]) {
+            add(new THREE.BoxGeometry(0.03, opt.cargoH * 0.36, 0.04).translate(s * w * 0.495, opt.cargoY + opt.cargoH * 0.1, cargoZ + cargoLen * dz), 'dark');
+          }
+        }
       }
     }
+    if (opt.isTruck) {
+      for (const s of [-1, 1]) {
+        add(new THREE.BoxGeometry(0.06, opt.cargoH, 0.06).translate(s * (w * 0.49), opt.cargoY, cargoZ - cargoLen / 2 + 0.03), 'dark');
+        add(new THREE.BoxGeometry(0.06, opt.cargoH, 0.06).translate(s * (w * 0.49), opt.cargoY, cargoZ + cargoLen / 2 - 0.03), 'dark');
+        add(new THREE.BoxGeometry(0.04, 0.3, 0.04).translate(s * (w * 0.2), opt.cargoY, cargoZ - cargoLen / 2 - 0.02), 'dark');
+      }
+      add(new THREE.BoxGeometry(w * 0.92, 0.08, 0.25).translate(0, opt.cabY + opt.cabH / 2 + 0.04, len / 2 - cabLen * 0.4), 'dark');
+    }
+  }
+
+  const grilleW = w * 0.46, grilleH = opt.cabH * 0.38;
+  const grilleY = opt.deckY + opt.deckH * 0.2;
+  const grilleZ = len / 2 + 0.02;
+  add(new THREE.BoxGeometry(grilleW, grilleH, 0.05).translate(0, grilleY, grilleZ), opt.isTruck ? 'chrome' : 'dark');
+  for (const s of [-1, 1]) {
+    add(new THREE.BoxGeometry(0.30, 0.18, 0.04).translate(s * w * 0.34, grilleY, grilleZ), 'dark');
   }
 
   for (const s of [1, -1]) {
     add(new THREE.BoxGeometry(w * 1.02, 0.16, 0.16).translate(0, opt.deckY - opt.deckH * 0.4, s * (len / 2 + 0.07)), 'dark');
   }
   for (const s of [-1, 1]) {
-    // зеркало: корпус (тот же anchor, что и у прежнего плейсхолдера) + ножка
-    // крепления, тот же приём, что в threeBoxCar
+    add(new THREE.BoxGeometry(0.14, 0.05, cabLen * 0.7).translate(s * (w / 2 + 0.04), opt.deckY - opt.deckH * 0.3, cabZ), 'dark');
+  }
+
+  const wheelX = w * 0.44;
+  const wheelFZ = len / 2 - cabLen * 0.55;
+  const wheelRZ = -(len / 2 - cabLen - (opt.openBed ? (len - cabLen) * 0.4 : cargoLen * 0.35));
+  for (const sx of [-1, 1]) {
+    for (const sz of [wheelFZ, wheelRZ]) {
+      add(new THREE.BoxGeometry(0.12, opt.wheelR * 1.15, opt.wheelR * 2.2).translate(sx * wheelX, opt.deckY - opt.deckH * 0.25, sz), 'dark');
+    }
+  }
+
+  for (const s of [-1, 1]) {
     add(new THREE.BoxGeometry(0.14, 0.1, 0.16).translate(s * (w / 2 + 0.07), opt.cabY - 0.05, len / 2 - cabLen * 0.5), 'dark');
     add(new THREE.BoxGeometry(0.05, 0.045, 0.05).translate(s * (w / 2 + 0.03), opt.cabY - 0.05, len / 2 - cabLen * 0.5), 'dark');
-    // шов дверей — тонкая инсетная тёмная полоса вдоль борта кабины
+    add(new THREE.BoxGeometry(0.01, 0.08, 0.13).translate(s * (w / 2 + 0.135), opt.cabY - 0.05, len / 2 - cabLen * 0.5 - 0.01), 'chrome');
+    add(new THREE.BoxGeometry(0.04, 0.045, 0.14).translate(s * (w * 0.94 / 2 + 0.018), opt.cabY, len / 2 - cabLen * 0.6), 'dark');
     add(new THREE.BoxGeometry(0.025, opt.cabH * 0.55, 0.03).translate(s * (w * 0.94 / 2 + 0.008), opt.cabY - opt.cabH * 0.05, len / 2 - cabLen * 0.5), 'dark');
   }
+
+  add(new THREE.CylinderGeometry(0.012, 0.018, 0.22, 6).rotateX(-0.35)
+    .translate(0, opt.cabY + opt.cabH / 2 + 0.1, len / 2 - cabLen * 0.7), 'dark');
+
+  add(new THREE.BoxGeometry(0.74, 0.28, 0.03).translate(0, opt.deckY - 0.04, -(len / 2 + 0.04)), 'dark');
+  add(new THREE.BoxGeometry(0.74, 0.28, 0.03).translate(0, opt.deckY - opt.deckH * 0.35, len / 2 + 0.05), 'dark');
 
   const lampFront = [-1, 1].map((s) => ({ x: s * w * 0.34, y: opt.deckY, z: len / 2 + 0.045, w: 0.26, h: 0.16, d: 0.08 }));
   const lampRear = [-1, 1].map((s) => ({ x: s * w * 0.34, y: opt.deckY, z: -(len / 2 + 0.045), w: 0.24, h: 0.15, d: 0.08 }));
 
   return {
     parts, glass,
-    wheel: { r: opt.wheelR, tw: 0.3, front: { x: w * 0.47, z: len / 2 - cabLen * 0.55 }, rear: { x: w * 0.47, z: -(len / 2 - cabLen - (opt.openBed ? (len - cabLen) * 0.4 : cargoLen * 0.35)) } },
+    wheel: { r: opt.wheelR, tw: 0.3, front: { x: w * 0.47, z: wheelFZ }, rear: { x: w * 0.47, z: wheelRZ } },
     lampFront, lampRear,
     roofSign: { x: 0, y: opt.cabY + opt.cabH / 2 + 0.13, z: len / 2 - cabLen * 0.5 },
-    // над ГРУЗОВЫМ ОТСЕКОМ (не над кабиной, как roofSign) — иначе накладывался
-    // бы на плафон такси/маячок у машин с hasSign/beacon (см. бриф Task 7)
     roofRack: opt.roofRackOk
       ? { x: 0, y: opt.cargoY + opt.cargoH / 2 + 0.06, z: cargoZ, len: cargoLen * 0.8 }
       : null,
@@ -325,9 +447,6 @@ function boxVanCar(dims, o = {}) {
   };
 }
 
-/* Второй аргумент (o) — внешние опции силуэта (spec.shapeOpts в buildCarModel):
-   прозрачно доходят до threeBoxCar/boxVanCar и ПЕРЕКРЫВАЮТ базовые опции
-   конкретного силуэта. Без него (игрок, старые вызовы) поведение прежнее. */
 export const CAR_SHAPES = {
   sedan: (d, o) => threeBoxCar(d, { hasExhaust: true, ...o }),
   hatch: (d, o) => threeBoxCar(d, {
@@ -338,26 +457,26 @@ export const CAR_SHAPES = {
   }),
   coupe: (d, o) => threeBoxCar(d, {
     deckY: 0.66, deckH: 0.38, cabY: 1.2, cabH: 0.4, roofY: 1.42,
-    hoodFrac: 0.4, trunkFrac: 0.34, cabDZfrac: -0.08, cabTopWfrac: 0.8, roofFrac: 0.24, hasExhaust: true, ...o,
+    hoodFrac: 0.4, trunkFrac: 0.34, cabDZfrac: -0.08, cabTopWfrac: 0.8, roofFrac: 0.24, hasExhaust: true, isCoupe: true, ...o,
   }),
   suv: (d, o) => threeBoxCar(d, {
     deckY: 0.92, deckH: 0.5, cabY: 1.58, cabH: 0.56, roofY: 1.9, roofH: 0.12,
     roofFrac: 0.58, cabTopWfrac: 0.96, hoodFrac: 0.28, trunkFrac: 0.24, wheelR: 0.44, roofRackOk: true, ...o,
   }),
   retro: (d, o) => threeBoxCar(d, {
-    cabTopWfrac: 0.96, cabDZfrac: 0, roofFrac: 0.34, hoodRise: -0.16, trunkRise: -0.16, chromeBumper: true, ...o,
+    cabTopWfrac: 0.96, cabDZfrac: 0, roofFrac: 0.34, hoodRise: -0.16, trunkRise: -0.16, chromeBumper: true, chromeTrim: true, ...o,
   }),
   premium: (d, o) => threeBoxCar(d, {
     deckY: 0.68, deckH: 0.4, cabY: 1.22, cabH: 0.42, roofY: 1.46,
-    hoodFrac: 0.4, trunkFrac: 0.32, cabTopWfrac: 0.86, roofFrac: 0.3, chromeTrim: true, ...o,
+    hoodFrac: 0.4, trunkFrac: 0.32, cabTopWfrac: 0.86, roofFrac: 0.3, chromeTrim: true, hasExhaust: true, ...o,
   }),
   van: (d, o) => boxVanCar(d, { sideGlass: true, roofRackOk: true, ...o }),
   bus: (d, o) => boxVanCar(d, {
-    cabLenFrac: 0.16, cabH: 1.1, cabY: 1.15, cargoLenFrac: 0.8, cargoH: 1.65, cargoY: 1.45, sideGlass: true, ...o,
+    cabLenFrac: 0.16, cabH: 1.1, cabY: 1.15, cargoLenFrac: 0.8, cargoH: 1.65, cargoY: 1.45, sideGlass: true, isBus: true, ...o,
   }),
   pickup: (d, o) => boxVanCar(d, { openBed: true, cabLenFrac: 0.36, cabH: 1.0, ...o }),
   truck: (d, o) => boxVanCar(d, {
-    cabLenFrac: 0.2, cabH: 1.15, cabY: 1.2, cargoLenFrac: 0.72, cargoH: 1.9, cargoY: 1.58, sideGlass: false, ...o,
+    cabLenFrac: 0.2, cabH: 1.15, cabY: 1.2, cargoLenFrac: 0.72, cargoH: 1.9, cargoY: 1.58, sideGlass: false, isTruck: true, ...o,
   }),
 };
 
