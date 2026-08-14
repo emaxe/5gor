@@ -193,7 +193,12 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
   display: flex; flex-direction: column; gap: 10px;
   min-width: 300px; max-width: 92vw; max-height: 88vh; overflow-y: auto;
   box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.2) transparent;
 }
+.card::-webkit-scrollbar { width: 8px; }
+.card::-webkit-scrollbar-track { background: transparent; }
+.card::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+.card::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.35); }
 .card h1 {
   font-size: 52px; text-align: center; letter-spacing: 2px;
   background: linear-gradient(135deg, #f2c12e, #e06020);
@@ -301,6 +306,14 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 .ach-desc { font-size: 11px; color: #8b949e; }
 
 /* ---------- Тосты ---------- */
+/* Скроллбары для вложенных областей прокрутки */
+#garage-list, #ach-list, #err-text {
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.18) transparent;
+}
+#garage-list::-webkit-scrollbar, #ach-list::-webkit-scrollbar, #err-text::-webkit-scrollbar { width: 6px; }
+#garage-list::-webkit-scrollbar-track, #ach-list::-webkit-scrollbar-track, #err-text::-webkit-scrollbar-track { background: transparent; }
+#garage-list::-webkit-scrollbar-thumb, #ach-list::-webkit-scrollbar-thumb, #err-text::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.18); border-radius: 3px; }
+#garage-list::-webkit-scrollbar-thumb:hover, #ach-list::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.3); }
 #toasts { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
 .toast {
   background: rgba(16,22,32,0.92); border: 1px solid rgba(255,255,255,0.14);

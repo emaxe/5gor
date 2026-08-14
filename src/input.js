@@ -65,6 +65,8 @@ export class InputManager {
     });
     window.addEventListener('pointerup', () => { dragging = false; });
     window.addEventListener('wheel', (e) => {
+      // Не перехватывать скролл внутри меню/экранов — пусть карточки скроллятся
+      if (e.target.closest('.screen, .card, #ach-list, #garage-list, #se-stats, #err-text')) return;
       e.preventDefault();
       this.camZoomDelta += e.deltaY > 0 ? 0.7 : -0.7;
     }, { passive: false });
