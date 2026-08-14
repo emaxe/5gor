@@ -12,6 +12,8 @@ import { UpgradeSystem } from './upgrades.js';
 import { UIManager } from './ui.js';
 import { AudioManager } from './audio.js';
 import { InputManager } from './input.js';
+import { PoliceManager } from './police.js';
+import { AchievementManager } from './achievements.js';
 
 // Таблица цвета неба по часу суток + переиспользуемые Color-объекты для
 // _updateTime (каждый кадр) — вместо new THREE.Color(...) на каждый вызов (OPT-18)
@@ -96,6 +98,10 @@ export class Game {
     this.input = new InputManager(this.canvas);
     this.audio = new AudioManager();
 
+    // полицейские штрафы и достижения
+    this.police = new PoliceManager();
+    this.achievements = new AchievementManager();
+
     // прогресс игрока (апгрейды, машины) — до построения машины
     this.upgrades = new UpgradeSystem();
     const save = this.upgrades.load();
@@ -113,6 +119,8 @@ export class Game {
     if (save) {
       this.money = save.money; this.rating = save.rating; this.day = save.day || 1;
       this.stats = save.stats || { orders: 0, earned: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+      // Загружаем накопленную статистику в менеджер достижений
+      this.achievements.loadStats(this.stats);
       this.soundOn = save.sound !== undefined ? save.sound : true;
       this.musicOn = save.music !== undefined ? save.music : true;
       this.weather = save.weather || this.weather;
@@ -326,6 +334,9 @@ export class Game {
       // Посылка не прерывается при сбитии пешехода — пассажира в машине нет
       if (this.orders.active && this.orders.active.type !== 'package') this.orders.fail(this.orders.active, 'ped');
       this.ui.toast('Вы сбили пешехода! -300 ₽, рейтинг -15', '#ff6b6b');
+      // Полиция может выписать дополнительный штраф если рядом патруль
+      this.police.checkHitPed(this.player, this.traffic);
+      this.achievements.checkAll();
       // сам пешеход (отлёт/лежание) обрабатывается в peds._knockDown
     });
     events.on('ped:kick', () => {
@@ -344,6 +355,16 @@ export class Game {
       this.ui.toast('Пассажир сел. Поехали!', '#7ee787');
     });
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
+
+    events.on('police:fine', (v) => {
+      this.addMoney(-v.fine);
+      this.setRating(this.rating - v.ratingLoss);
+    });
+
+    events.on('achievement:unlocked', (ach) => {
+      // Достижение уже показывает тост из AchievementManager.checkAll()
+      // Здесь можно добавить звук в будущем
+    });
 
     events.on('spatial:shout', (d) => {
       if (d.text && this.player) {
@@ -376,6 +397,12 @@ export class Game {
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
       this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay) + bonus, '#7ee787');
       if (this.rating >= 100) this.ui.toast('Максимальный рейтинг! Пятигорск ваш! ⭐', '#ffd75e');
+      // Ночной заказ — событие для достижений
+      if (this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour) {
+        Events.emit('night:order');
+      }
+      // Проверка достижений
+      this.achievements.checkAll();
     });
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
@@ -420,6 +447,7 @@ export class Game {
     const s = newGameState();
     this.money = s.money; this.rating = s.rating; this.day = 1;
     this.stats = { orders: 0, earned: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+    this.achievements._initStats();
     this.ui.$('btn-continue').classList.add('hidden');
     this._startShift(1);
   }
@@ -433,6 +461,7 @@ export class Game {
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
     this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+    this.police.reset();
     this.weather = pickWeighted([
       { v: 'clear', w: 55 }, { v: 'rain', w: 25 }, { v: 'fog', w: 20 },
     ]);
@@ -451,6 +480,7 @@ export class Game {
   }
 
   endShift() {
+    this.achievements.checkAll();
     this.setState('shiftend');
     this.save();
     Events.emit('shift:ended');
@@ -700,6 +730,16 @@ export class Game {
 
   /* ---------- Сохранение ---------- */
   save() {
+    // Обновляем общую статистику из менеджера достижений
+    const achStats = this.achievements.exportStats();
+    this.stats = {
+      ...this.stats,
+      orders: achStats.orders,
+      earned: achStats.earned,
+      tips: achStats.tips,
+      missions: achStats.missions,
+      km: achStats.km,
+    };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,
       sound: this.soundOn, music: this.musicOn, weather: this.weather,
@@ -886,8 +926,13 @@ export class Game {
 
     // трафик и пешеходы
     const density = w.traffic * (this.hour >= 22 || this.hour < 6 ? 0.55 : 1);
+    // Ночная экономика: больше пьяных пешеходов (нарушителей ПДД)
+    const isNight = this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour;
+    const prevViolator = CFG.pedViolatorChance;
+    if (isNight) CFG.pedViolatorChance = Math.min(0.35, prevViolator * 1.4);
     this.traffic.update(dt, this.player, this.world, density, this.peds);
     this.peds.update(dt, this.player, this.traffic, this.world);
+    CFG.pedViolatorChance = prevViolator;
 
     // камера
     this.chaseCam.applyInput(this.input, dt);
@@ -920,6 +965,14 @@ export class Game {
 
     // километраж
     this.shiftStats.km += this.player.speed * dt / 1000;
+
+    // полиция: проверка нарушений
+    this.police.update(dt);
+    this.police.checkSpeeding(this.player, this.traffic);
+    this.police.checkRedLight(this.player, this.traffic, this.world.lights);
+
+    // достижения: живая статистика
+    this.achievements.updateLiveStats(this.player, this.rating, dt);
 
     // звук — единый per-frame апдейт (движок, скид, гудок, позиция слушателя)
     const st = this.player.stats;

@@ -31,6 +31,8 @@ MODULES = [
     "dialogues.js",
     "orders.js",
     "upgrades.js",
+    "police.js",
+    "achievements.js",
     "ui.js",
     "game.js",
     "main.js",

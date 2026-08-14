@@ -187,14 +187,25 @@ class PassengerManager {
     }
 
     // обычный заказ
+    const isNight = hour >= CFG.nightStartHour || hour < CFG.nightEndHour;
     const typeRoll = Math.random();
     let type = 'normal';
-    if (typeRoll < 0.20) type = 'urgent';
-    else if (typeRoll < 0.32) type = 'vip';
-    else if (typeRoll < 0.44) type = 'package';
-    else if (typeRoll < 0.52) type = 'drunk';
-    else if (typeRoll < 0.62 && capacity >= 2) type = 'group';
-    else if (typeRoll < 0.70 && rating >= 15) type = 'tour';
+    if (isNight) {
+      // Ночь: больше срочных и пьяных, меньше VIP/экскурсий, нет групп
+      if (typeRoll < 0.30) type = 'urgent';
+      else if (typeRoll < 0.42) type = 'vip';
+      else if (typeRoll < 0.52) type = 'package';
+      else if (typeRoll < 0.72) type = 'drunk';       // 20% — пьяные пассажиры
+      else if (typeRoll < 0.78 && rating >= 15) type = 'tour';
+      // остальное — normal
+    } else {
+      if (typeRoll < 0.20) type = 'urgent';
+      else if (typeRoll < 0.32) type = 'vip';
+      else if (typeRoll < 0.44) type = 'package';
+      else if (typeRoll < 0.52) type = 'drunk';
+      else if (typeRoll < 0.62 && capacity >= 2) type = 'group';
+      else if (typeRoll < 0.70 && rating >= 15) type = 'tour';
+    }
 
     const pickD = choice(unDistricts);
     let pickup = this._randPoint(pickD.id, player);
@@ -427,11 +438,13 @@ class PassengerManager {
 
   /* --- Обновление --- */
   update(dt, player, hour, rating, capacity, world) {
-    // спавн новых заказов
+    // спавн новых заказов — ночью реже
+    const isNight = hour >= CFG.nightStartHour || hour < CFG.nightEndHour;
     this._spawnT -= dt;
     if (this._spawnT <= 0) {
       this.spawn(rating, hour, capacity, player);
-      this._spawnT = CFG.orderSpawnEverySec + rand(0, 4);
+      const nightGap = isNight ? CFG.orderSpawnEverySec * 1.6 : CFG.orderSpawnEverySec;
+      this._spawnT = nightGap + rand(0, 4);
     }
     // таймеры открытых заказов
     for (let i = this.open.length - 1; i >= 0; i--) {

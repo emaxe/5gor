@@ -53,6 +53,8 @@ export class UIManager {
     on('btn-resume', () => this.game.togglePause());
     on('btn-pause-garage', () => this.game.openGarage('pause'));
     on('btn-pause-settings', () => this.game.openSettings('pause'));
+    on('btn-achievements', () => this.showAchievements());
+    on('btn-ach-back', () => this.hideAchievements());
     on('btn-evac', () => this.game.evacuate());
     on('btn-endshift', () => this.game.endShift());
     on('btn-menu', () => this.game.toMenu());
@@ -601,11 +603,41 @@ export class UIManager {
     this.$('btn-refuel').disabled = player.fuel >= st.tank - 1;
   }
 
+  /* ---------- Достижения ---------- */
+  showAchievements() {
+    const ach = this.game.achievements;
+    if (!ach) return;
+    const list = ach.list();
+    const count = ach.count();
+    const html = list.map(a =>
+      `<div class="ach-item ${a.unlocked ? 'unlocked' : 'locked'}">` +
+      `<span class="ach-icon">${a.icon}</span>` +
+      `<div class="ach-info"><div class="ach-name">${a.unlocked ? a.name : '???'}</div>` +
+      `<div class="ach-desc">${a.desc}</div></div></div>`
+    ).join('');
+    this.$('ach-list').innerHTML =
+      `<div style="margin-bottom:12px;font-size:14px;color:#ffd75e;">Открыто: ${count.unlocked} / ${count.total}</div>` + html;
+    this.$('achievements-screen').classList.remove('hidden');
+  }
+
+  hideAchievements() {
+    this.$('achievements-screen').classList.add('hidden');
+  }
+
   /* ---------- Итоги смены ---------- */
   renderShiftEnd(gameState, shiftStats) {
     const s = shiftStats;
     const g = gameState;
     const stars = '★'.repeat(Math.round(g.rating / 20)) + '☆'.repeat(5 - Math.round(g.rating / 20));
+    // Достижения
+    const ach = this.game.achievements;
+    const achCount = ach ? ach.count() : { unlocked: 0, total: 0 };
+    const achList = ach ? ach.list().filter(a => a.unlocked) : [];
+    let achHtml = '';
+    if (achList.length) {
+      achHtml = '<div class="ach-section"><div class="ach-title">🏆 Достижения (' + achCount.unlocked + '/' + achCount.total + ')</div>';
+      achHtml += '<div class="ach-grid">' + achList.map(a => `<span class="ach-badge" title="${a.desc}">${a.icon} ${a.name}</span>`).join('') + '</div></div>';
+    }
     this.$('se-stats').innerHTML =
       '<div class="big">+ ' + fmtMoney(s.earned) + '</div>' +
       'Выполнено заказов: <b>' + s.orders + '</b> (провалено: ' + s.failed + ')<br>' +
@@ -614,7 +646,8 @@ export class UIManager {
       'Аварий: <b>' + s.crashes + '</b> · Пешеходов задето: <b>' + s.peds + '</b><br>' +
       'Рейтинг: <b>' + Math.round(g.rating) + '</b> ' + stars + '<br>' +
       'Миссий выполнено: <b>' + s.missions + '</b><br>' +
-      'Накоплено: <b>' + fmtMoney(g.money) + '</b>';
+      'Накоплено: <b>' + fmtMoney(g.money) + '</b>' +
+      achHtml;
   }
 
   /* ---------- Настройки ---------- */

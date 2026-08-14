@@ -288,6 +288,26 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 #se-stats { font-size: 15px; line-height: 1.8; background: rgba(255,255,255,0.05); border-radius: 12px; padding: 14px 18px; min-width: 260px; }
 #se-stats .big { font-size: 20px; font-weight: 800; color: #7ee787; }
 
+/* ---------- Достижения ---------- */
+.ach-section { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(255,255,255,0.1); }
+.ach-title { font-size: 15px; font-weight: 700; color: #ffd75e; margin-bottom: 8px; }
+.ach-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+.ach-badge {
+  background: rgba(255,215,94,0.12); border: 1px solid rgba(255,215,94,0.3);
+  border-radius: 8px; padding: 4px 10px; font-size: 12px; color: #ffd75e; cursor: default;
+}
+
+/* ---------- Экран достижений ---------- */
+#ach-list { max-width: 380px; max-height: 60vh; overflow-y: auto; }
+.ach-item { display: flex; align-items: center; gap: 10px; padding: 8px 12px; margin-bottom: 6px; border-radius: 10px; }
+.ach-item.unlocked { background: rgba(255,215,94,0.1); border: 1px solid rgba(255,215,94,0.25); }
+.ach-item.locked { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); opacity: 0.6; }
+.ach-icon { font-size: 22px; flex-shrink: 0; }
+.ach-info { flex: 1; min-width: 0; }
+.ach-name { font-size: 13px; font-weight: 700; color: #ffd75e; }
+.ach-item.locked .ach-name { color: #6e7681; }
+.ach-desc { font-size: 11px; color: #8b949e; }
+
 /* ---------- Тосты ---------- */
 #toasts { position: fixed; top: 64px; left: 50%; transform: translateX(-50%); z-index: 30; display: flex; flex-direction: column; gap: 8px; align-items: center; pointer-events: none; }
 .toast {
@@ -428,6 +448,7 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
     <button id="btn-resume">▶ Продолжить</button>
     <button id="btn-pause-garage">🔧 Гараж</button>
     <button id="btn-pause-settings">⚙ Настройки</button>
+    <button id="btn-achievements">🏆 Достижения</button>
     <button id="btn-evac">🚑 Эвакуатор (400 ₽)</button>
     <button id="btn-endshift">🌙 Завершить смену</button>
     <button id="btn-menu">🏠 В меню</button>
@@ -541,6 +562,14 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
     <div id="se-stats"></div>
     <button id="btn-next-shift">🌅 Новая смена</button>
     <button id="btn-se-menu">🏠 В меню</button>
+  </div>
+</div>
+
+<div id="achievements-screen" class="screen hidden">
+  <div class="card">
+    <h2>🏆 Достижения</h2>
+    <div id="ach-list"></div>
+    <button id="btn-ach-back">← Назад</button>
   </div>
 </div>
 
@@ -9815,14 +9844,25 @@ class PassengerManager {
     }
 
     // обычный заказ
+    const isNight = hour >= CFG.nightStartHour || hour < CFG.nightEndHour;
     const typeRoll = Math.random();
     let type = 'normal';
-    if (typeRoll < 0.20) type = 'urgent';
-    else if (typeRoll < 0.32) type = 'vip';
-    else if (typeRoll < 0.44) type = 'package';
-    else if (typeRoll < 0.52) type = 'drunk';
-    else if (typeRoll < 0.62 && capacity >= 2) type = 'group';
-    else if (typeRoll < 0.70 && rating >= 15) type = 'tour';
+    if (isNight) {
+      // Ночь: больше срочных и пьяных, меньше VIP/экскурсий, нет групп
+      if (typeRoll < 0.30) type = 'urgent';
+      else if (typeRoll < 0.42) type = 'vip';
+      else if (typeRoll < 0.52) type = 'package';
+      else if (typeRoll < 0.72) type = 'drunk';       // 20% — пьяные пассажиры
+      else if (typeRoll < 0.78 && rating >= 15) type = 'tour';
+      // остальное — normal
+    } else {
+      if (typeRoll < 0.20) type = 'urgent';
+      else if (typeRoll < 0.32) type = 'vip';
+      else if (typeRoll < 0.44) type = 'package';
+      else if (typeRoll < 0.52) type = 'drunk';
+      else if (typeRoll < 0.62 && capacity >= 2) type = 'group';
+      else if (typeRoll < 0.70 && rating >= 15) type = 'tour';
+    }
 
     const pickD = choice(unDistricts);
     let pickup = this._randPoint(pickD.id, player);
@@ -10055,11 +10095,13 @@ class PassengerManager {
 
   /* --- Обновление --- */
   update(dt, player, hour, rating, capacity, world) {
-    // спавн новых заказов
+    // спавн новых заказов — ночью реже
+    const isNight = hour >= CFG.nightStartHour || hour < CFG.nightEndHour;
     this._spawnT -= dt;
     if (this._spawnT <= 0) {
       this.spawn(rating, hour, capacity, player);
-      this._spawnT = CFG.orderSpawnEverySec + rand(0, 4);
+      const nightGap = isNight ? CFG.orderSpawnEverySec * 1.6 : CFG.orderSpawnEverySec;
+      this._spawnT = nightGap + rand(0, 4);
     }
     // таймеры открытых заказов
     for (let i = this.open.length - 1; i >= 0; i--) {
@@ -10420,6 +10462,349 @@ function newGameState() {
   };
 }
 
+/* ===== police.js ===== */
+/* ============================================================
+ * 5GOR — Полицейские штрафы
+ * police.js — детект нарушений ПДД игроком при наличии патрульной машины рядом
+ * ============================================================ */
+
+
+
+/**
+ * @typedef {Object} ViolationConfig
+ * @property {string} id - Идентификатор нарушения
+ * @property {string} label - Текст для тоста
+ * @property {number} fine - Сумма штрафа
+ * @property {number} ratingLoss - Потеря рейтинга
+ * @property {number} cooldown - Кулдаун между штрафами этого типа, сек
+ */
+
+const VIOLATIONS = {
+  speeding:  { id: 'speeding',  label: 'Превышение скорости!',            fine: 300,  ratingLoss: 3,  cooldown: 8 },
+  redLight:  { id: 'redLight',  label: 'Проезд на красный свет!',          fine: 500,  ratingLoss: 5,  cooldown: 10 },
+  hitPed:    { id: 'hitPed',    label: 'Сбит пешеход! Штраф от полиции.',   fine: 800,  ratingLoss: 10, cooldown: 12 },
+};
+
+/** Радиус детекции нарушений патрульной машиной */
+const POLICE_DETECT_RADIUS = 60;
+/** Порог скорости для превышения (в игровых ед/с, ~108 км/ч) */
+const SPEED_THRESHOLD = 30;
+
+/**
+ * Менеджер полицейских штрафов: отслеживает нарушения игрока,
+ * если патрульная машина находится в радиусе детекции.
+ */
+class PoliceManager {
+  constructor() {
+    /** @type {Object<string, number>} кулдауны по типам нарушений (timestamp) */
+    this._cooldowns = {};
+    /** @type {number} секунд до истечения текущего кулдауна */
+    this._cdTimers = {};
+  }
+
+  /**
+   * Проверить, есть ли полицейская машина рядом с игроком.
+   * @param {import('./player.js').PlayerCar} player - Машина игрока
+   * @param {import('./traffic.js').TrafficManager} traffic - Менеджер трафика
+   * @returns {boolean}
+   */
+  _policeNearby(player, traffic) {
+    for (const car of traffic.cars) {
+      if (!car.mesh.visible || !car.beaconRed) continue;
+      const d = dist2D(car.x, car.z, player.x, player.z);
+      if (d < POLICE_DETECT_RADIUS) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Проверить нарушение скоростного режима.
+   * @param {import('./player.js').PlayerCar} player
+   * @param {import('./traffic.js').TrafficManager} traffic
+   */
+  checkSpeeding(player, traffic) {
+    if (this._onCooldown('speeding')) return;
+    if (Math.abs(player.speed) < SPEED_THRESHOLD) return;
+    // Только на дороге — не штрафуем за езду по бездорожью (там и так медленно)
+    if (!this._policeNearby(player, traffic)) return;
+    this._fine(VIOLATIONS.speeding);
+  }
+
+  /**
+   * Проверить проезд на красный свет.
+   * Вызывается из game._drive() когда игрок пересекает перекрёсток.
+   * @param {import('./player.js').PlayerCar} player
+   * @param {import('./traffic.js').TrafficManager} traffic
+   * @param {Array} lights - Список светофоров мира
+   */
+  checkRedLight(player, traffic, lights) {
+    if (this._onCooldown('redLight')) return;
+    if (Math.abs(player.speed) < 3) return; // Стоит — не нарушение
+    if (!this._policeNearby(player, traffic)) return;
+
+    // Проверяем: игрок на перекрёстке, и для его оси движения горит красный (state === 2)
+    const px = player.x, pz = player.z;
+    for (const l of lights) {
+      const d = dist2D(px, pz, l.isec.x, l.isec.z);
+      if (d > 12) continue; // только если игрок на перекрёстке
+      // state: 0 = зелёный, 1 = жёлтый, 2 = красный
+      // Нужно определить ось движения игрока
+      const movingAlongZ = Math.abs(Math.sin(player.heading)) > Math.abs(Math.cos(player.heading));
+      // Светофор l.axis === 'z' контролирует движение вдоль Z
+      if (movingAlongZ && l.axis === 'z' && l.state === 2) {
+        this._fine(VIOLATIONS.redLight);
+        return;
+      }
+      if (!movingAlongZ && l.axis === 'x' && l.state === 2) {
+        this._fine(VIOLATIONS.redLight);
+        return;
+      }
+    }
+  }
+
+  /**
+   * Сбита пешехода — штраф от полиции если рядом патруль.
+   * @param {import('./player.js').PlayerCar} player
+   * @param {import('./traffic.js').TrafficManager} traffic
+   */
+  checkHitPed(player, traffic) {
+    if (this._onCooldown('hitPed')) return;
+    if (!this._policeNearby(player, traffic)) return;
+    this._fine(VIOLATIONS.hitPed);
+  }
+
+  /**
+   * Применить штраф: списать деньги, понизить рейтинг, показать тост.
+   * @param {ViolationConfig} v
+   */
+  _fine(v) {
+    this._cdTimers[v.id] = v.cooldown;
+    Events.emit('police:fine', v);
+    Events.emit('toast', { text: `🚨 ${v.label} Штраф: ${v.fine} ₽, рейтинг -${v.ratingLoss}`, color: '#ff6b6b' });
+  }
+
+  /**
+   * Проверить кулдаун нарушения.
+   * @param {string} id
+   * @returns {boolean}
+   */
+  _onCooldown(id) {
+    return (this._cdTimers[id] || 0) > 0;
+  }
+
+  /**
+   * Обновление кулдаунов (вызывается каждый кадр).
+   * @param {number} dt
+   */
+  update(dt) {
+    for (const id in this._cdTimers) {
+      if (this._cdTimers[id] > 0) {
+        this._cdTimers[id] -= dt;
+        if (this._cdTimers[id] < 0) this._cdTimers[id] = 0;
+      }
+    }
+  }
+
+  /**
+   * Сброс состояния (новая смена).
+   */
+  reset() {
+    this._cdTimers = {};
+  }
+}
+/* ===== achievements.js ===== */
+/* ============================================================
+ * 5GOR — Достижения
+ * achievements.js — отслеживание и начисление ачивок, сохранение в localStorage
+ * ============================================================ */
+
+/**
+ * @typedef {Object} Achievement
+ * @property {string} id - Уникальный идентификатор
+ * @property {string} name - Название (для отображения)
+ * @property {string} desc - Описание
+ * @property {string} icon - Emoji-иконка
+ * @property {function(Object): boolean} check - Функция проверки: true = достижение получено
+ */
+
+const ACHIEVEMENTS = [
+  // --- Заказы ---
+  { id: 'first_order',   name: 'Первый заработок',     desc: 'Выполните первый заказ',                icon: '🚕', check: s => s.totalOrders >= 1 },
+  { id: 'orders_50',     name: 'Опытный таксист',      desc: 'Выполните 50 заказов',                  icon: ' taxi',   check: s => s.totalOrders >= 50 },
+  { id: 'orders_100',    name: 'Ветеран дорог',        desc: 'Выполните 100 заказов',                 icon: '🏆', check: s => s.totalOrders >= 100 },
+  { id: 'orders_250',    name: 'Легенда Пятигорска',   desc: 'Выполните 250 заказов',                 icon: '👑', check: s => s.totalOrders >= 250 },
+  // --- Деньги ---
+  { id: 'earn_10k',      name: 'Первая тыща',          desc: 'Заработайте 10 000 ₽ за все время',     icon: '💰', check: s => s.totalEarned >= 10000 },
+  { id: 'earn_50k',      name: 'Состоятельный водитель', desc: 'Заработайте 50 000 ₽ за все время',   icon: '💎', check: s => s.totalEarned >= 50000 },
+  { id: 'earn_100k',     name: 'Магнат такси',         desc: 'Заработайте 100 000 ₽ за все время',    icon: '🏛️', check: s => s.totalEarned >= 100000 },
+  // --- Стиль ---
+  { id: 'clean_shift',   name: 'Идеальная смена',      desc: 'Смена без аварий и сбитых пешеходов',   icon: '✨', check: s => s.shiftOrders >= 5 && s.shiftCrashes === 0 && s.shiftPeds === 0 },
+  { id: 'max_speed',     name: 'Шумахер',              desc: 'Разгонитесь до 150 км/ч',               icon: '⚡', check: s => s.maxSpeedKmh >= 150 },
+  { id: 'max_rating',    name: 'Звезда Пятигорска',    desc: 'Достигните максимального рейтинга',     icon: '⭐', check: s => s.maxRating >= 100 },
+  // --- Особые ---
+  { id: 'missions_5',    name: 'Герой города',         desc: 'Выполните 5 уникальных миссий',         icon: '🎖️', check: s => s.totalMissions >= 5 },
+  { id: 'night_owl',     name: 'Ночная сова',          desc: 'Выполните 10 ночных заказов',           icon: '🦉', check: s => s.nightOrders >= 10 },
+  { id: 'km_500',        name: 'Путешественник',       desc: 'Проедьте 500 км за все время',          icon: '🛣️', check: s => s.totalKm >= 500 },
+  { id: 'police_fined',  name: 'Враг народа',          desc: 'Получите 5 штрафов от полиции',         icon: '🚨', check: s => s.policeFines >= 5 },
+  { id: 'tips_5k',       name: 'Любимец клиентов',     desc: 'Заработайте 5 000 ₽ чаевых',            icon: '🎁', check: s => s.totalTips >= 5000 },
+];
+
+const STORAGE_KEY = '5gor_achievements_v1';
+
+/**
+ * Менеджер достижений: отслеживает статистику, проверяет условия, сохраняет в localStorage.
+ */
+class AchievementManager {
+  constructor() {
+    /** @type {string[]} ID полученных достижений */
+    this.unlocked = [];
+    this._load();
+
+    // Накапливаемая статистика
+    this._initStats();
+
+    // Подписки на события
+    Events.on('order:completed', (r) => {
+      this.stats.totalOrders++;
+      this.stats.shiftOrders++;
+      this.stats.totalEarned += r.pay + r.tips;
+      this.stats.totalTips += r.tips;
+      if (r.missionId) this.stats.totalMissions++;
+    });
+    Events.on('order:failed', () => {
+      // просто триггер — проверка в checkAll
+    });
+    Events.on('crash', () => {
+      this.stats.shiftCrashes++;
+    });
+    Events.on('hitPed', () => {
+      this.stats.shiftPeds++;
+    });
+    Events.on('police:fine', () => {
+      this.stats.policeFines++;
+      this.checkAll();
+    });
+    Events.on('shift:started', () => {
+      this.stats.shiftOrders = 0;
+      this.stats.shiftCrashes = 0;
+      this.stats.shiftPeds = 0;
+    });
+    Events.on('night:order', () => {
+      this.stats.nightOrders++;
+    });
+  }
+
+  _initStats() {
+    this.stats = {
+      totalOrders: 0,
+      shiftOrders: 0,
+      totalEarned: 0,
+      totalTips: 0,
+      totalMissions: 0,
+      totalKm: 0,
+      maxSpeedKmh: 0,
+      maxRating: 0,
+      nightOrders: 0,
+      policeFines: 0,
+      shiftCrashes: 0,
+      shiftPeds: 0,
+    };
+  }
+
+  /**
+   * Обновить живую статистику (вызывается из game._drive).
+   * @param {import('./player.js').PlayerCar} player
+   * @param {number} rating
+   * @param {number} dt
+   */
+  updateLiveStats(player, rating, dt) {
+    const kmh = Math.abs(player.speed) * 3.6;
+    if (kmh > this.stats.maxSpeedKmh) this.stats.maxSpeedKmh = kmh;
+    if (rating > this.stats.maxRating) this.stats.maxRating = rating;
+    this.stats.totalKm += player.speed * dt / 1000;
+  }
+
+  /**
+   * Проверить все достижения. Вызывается после значимых событий.
+   * @returns {Array<string>} ID новых открытых достижений
+   */
+  checkAll() {
+    const newly = [];
+    for (const ach of ACHIEVEMENTS) {
+      if (this.unlocked.includes(ach.id)) continue;
+      if (ach.check(this.stats)) {
+        this.unlocked.push(ach.id);
+        newly.push(ach.id);
+        Events.emit('achievement:unlocked', ach);
+        Events.emit('toast', { text: `${ach.icon} Достижение: ${ach.name}!`, color: '#ffd75e' });
+      }
+    }
+    if (newly.length) this._save();
+    return newly;
+  }
+
+  /**
+   * Получить список всех достижений с флагом открытости.
+   * @returns {Array<{id, name, desc, icon, unlocked: boolean}>}
+   */
+  list() {
+    return ACHIEVEMENTS.map(a => ({
+      id: a.id, name: a.name, desc: a.desc, icon: a.icon,
+      unlocked: this.unlocked.includes(a.id),
+    }));
+  }
+
+  /**
+   * Количество открытых / всего.
+   */
+  count() {
+    return { unlocked: this.unlocked.length, total: ACHIEVEMENTS.length };
+  }
+
+  _load() {
+    try {
+      const raw = localStorage.getItem(STORAGE_KEY);
+      if (raw) this.unlocked = JSON.parse(raw) || [];
+    } catch (e) { this.unlocked = []; }
+  }
+
+  _save() {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(this.unlocked));
+    } catch (e) { /* localStorage может быть недоступен */ }
+  }
+
+  /**
+   * Загрузить накопленную статистику из сохранения игры.
+   * @param {Object} stats - Статистика из save
+   */
+  loadStats(stats) {
+    if (!stats) return;
+    this.stats.totalOrders = stats.orders || 0;
+    this.stats.totalEarned = stats.earned || 0;
+    this.stats.totalTips = stats.tips || 0;
+    this.stats.totalMissions = stats.missions || 0;
+    this.stats.totalKm = stats.km || 0;
+  }
+
+  /**
+   * Экспортировать статистику для сохранения в game.save().
+   * @returns {Object}
+   */
+  exportStats() {
+    return {
+      orders: this.stats.totalOrders,
+      earned: this.stats.totalEarned,
+      tips: this.stats.totalTips,
+      missions: this.stats.totalMissions,
+      km: this.stats.totalKm,
+      maxSpeed: this.stats.maxSpeedKmh,
+      maxRating: this.stats.maxRating,
+      nightOrders: this.stats.nightOrders,
+      policeFines: this.stats.policeFines,
+    };
+  }
+}
 /* ===== ui.js ===== */
 
 
@@ -10475,6 +10860,8 @@ class UIManager {
     on('btn-resume', () => this.game.togglePause());
     on('btn-pause-garage', () => this.game.openGarage('pause'));
     on('btn-pause-settings', () => this.game.openSettings('pause'));
+    on('btn-achievements', () => this.showAchievements());
+    on('btn-ach-back', () => this.hideAchievements());
     on('btn-evac', () => this.game.evacuate());
     on('btn-endshift', () => this.game.endShift());
     on('btn-menu', () => this.game.toMenu());
@@ -11023,11 +11410,41 @@ class UIManager {
     this.$('btn-refuel').disabled = player.fuel >= st.tank - 1;
   }
 
+  /* ---------- Достижения ---------- */
+  showAchievements() {
+    const ach = this.game.achievements;
+    if (!ach) return;
+    const list = ach.list();
+    const count = ach.count();
+    const html = list.map(a =>
+      `<div class="ach-item ${a.unlocked ? 'unlocked' : 'locked'}">` +
+      `<span class="ach-icon">${a.icon}</span>` +
+      `<div class="ach-info"><div class="ach-name">${a.unlocked ? a.name : '???'}</div>` +
+      `<div class="ach-desc">${a.desc}</div></div></div>`
+    ).join('');
+    this.$('ach-list').innerHTML =
+      `<div style="margin-bottom:12px;font-size:14px;color:#ffd75e;">Открыто: ${count.unlocked} / ${count.total}</div>` + html;
+    this.$('achievements-screen').classList.remove('hidden');
+  }
+
+  hideAchievements() {
+    this.$('achievements-screen').classList.add('hidden');
+  }
+
   /* ---------- Итоги смены ---------- */
   renderShiftEnd(gameState, shiftStats) {
     const s = shiftStats;
     const g = gameState;
     const stars = '★'.repeat(Math.round(g.rating / 20)) + '☆'.repeat(5 - Math.round(g.rating / 20));
+    // Достижения
+    const ach = this.game.achievements;
+    const achCount = ach ? ach.count() : { unlocked: 0, total: 0 };
+    const achList = ach ? ach.list().filter(a => a.unlocked) : [];
+    let achHtml = '';
+    if (achList.length) {
+      achHtml = '<div class="ach-section"><div class="ach-title">🏆 Достижения (' + achCount.unlocked + '/' + achCount.total + ')</div>';
+      achHtml += '<div class="ach-grid">' + achList.map(a => `<span class="ach-badge" title="${a.desc}">${a.icon} ${a.name}</span>`).join('') + '</div></div>';
+    }
     this.$('se-stats').innerHTML =
       '<div class="big">+ ' + fmtMoney(s.earned) + '</div>' +
       'Выполнено заказов: <b>' + s.orders + '</b> (провалено: ' + s.failed + ')<br>' +
@@ -11036,7 +11453,8 @@ class UIManager {
       'Аварий: <b>' + s.crashes + '</b> · Пешеходов задето: <b>' + s.peds + '</b><br>' +
       'Рейтинг: <b>' + Math.round(g.rating) + '</b> ' + stars + '<br>' +
       'Миссий выполнено: <b>' + s.missions + '</b><br>' +
-      'Накоплено: <b>' + fmtMoney(g.money) + '</b>';
+      'Накоплено: <b>' + fmtMoney(g.money) + '</b>' +
+      achHtml;
   }
 
   /* ---------- Настройки ---------- */
@@ -11098,6 +11516,8 @@ class UIManager {
 }
 
 /* ===== game.js ===== */
+
+
 
 
 
@@ -11195,6 +11615,10 @@ class Game {
     this.input = new InputManager(this.canvas);
     this.audio = new AudioManager();
 
+    // полицейские штрафы и достижения
+    this.police = new PoliceManager();
+    this.achievements = new AchievementManager();
+
     // прогресс игрока (апгрейды, машины) — до построения машины
     this.upgrades = new UpgradeSystem();
     const save = this.upgrades.load();
@@ -11212,6 +11636,8 @@ class Game {
     if (save) {
       this.money = save.money; this.rating = save.rating; this.day = save.day || 1;
       this.stats = save.stats || { orders: 0, earned: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+      // Загружаем накопленную статистику в менеджер достижений
+      this.achievements.loadStats(this.stats);
       this.soundOn = save.sound !== undefined ? save.sound : true;
       this.musicOn = save.music !== undefined ? save.music : true;
       this.weather = save.weather || this.weather;
@@ -11425,6 +11851,9 @@ class Game {
       // Посылка не прерывается при сбитии пешехода — пассажира в машине нет
       if (this.orders.active && this.orders.active.type !== 'package') this.orders.fail(this.orders.active, 'ped');
       this.ui.toast('Вы сбили пешехода! -300 ₽, рейтинг -15', '#ff6b6b');
+      // Полиция может выписать дополнительный штраф если рядом патруль
+      this.police.checkHitPed(this.player, this.traffic);
+      this.achievements.checkAll();
       // сам пешеход (отлёт/лежание) обрабатывается в peds._knockDown
     });
     events.on('ped:kick', () => {
@@ -11443,6 +11872,16 @@ class Game {
       this.ui.toast('Пассажир сел. Поехали!', '#7ee787');
     });
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
+
+    events.on('police:fine', (v) => {
+      this.addMoney(-v.fine);
+      this.setRating(this.rating - v.ratingLoss);
+    });
+
+    events.on('achievement:unlocked', (ach) => {
+      // Достижение уже показывает тост из AchievementManager.checkAll()
+      // Здесь можно добавить звук в будущем
+    });
 
     events.on('spatial:shout', (d) => {
       if (d.text && this.player) {
@@ -11475,6 +11914,12 @@ class Game {
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
       this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay) + bonus, '#7ee787');
       if (this.rating >= 100) this.ui.toast('Максимальный рейтинг! Пятигорск ваш! ⭐', '#ffd75e');
+      // Ночной заказ — событие для достижений
+      if (this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour) {
+        Events.emit('night:order');
+      }
+      // Проверка достижений
+      this.achievements.checkAll();
     });
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
@@ -11519,6 +11964,7 @@ class Game {
     const s = newGameState();
     this.money = s.money; this.rating = s.rating; this.day = 1;
     this.stats = { orders: 0, earned: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+    this.achievements._initStats();
     this.ui.$('btn-continue').classList.add('hidden');
     this._startShift(1);
   }
@@ -11532,6 +11978,7 @@ class Game {
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
     this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+    this.police.reset();
     this.weather = pickWeighted([
       { v: 'clear', w: 55 }, { v: 'rain', w: 25 }, { v: 'fog', w: 20 },
     ]);
@@ -11550,6 +11997,7 @@ class Game {
   }
 
   endShift() {
+    this.achievements.checkAll();
     this.setState('shiftend');
     this.save();
     Events.emit('shift:ended');
@@ -11799,6 +12247,16 @@ class Game {
 
   /* ---------- Сохранение ---------- */
   save() {
+    // Обновляем общую статистику из менеджера достижений
+    const achStats = this.achievements.exportStats();
+    this.stats = {
+      ...this.stats,
+      orders: achStats.orders,
+      earned: achStats.earned,
+      tips: achStats.tips,
+      missions: achStats.missions,
+      km: achStats.km,
+    };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,
       sound: this.soundOn, music: this.musicOn, weather: this.weather,
@@ -11985,8 +12443,13 @@ class Game {
 
     // трафик и пешеходы
     const density = w.traffic * (this.hour >= 22 || this.hour < 6 ? 0.55 : 1);
+    // Ночная экономика: больше пьяных пешеходов (нарушителей ПДД)
+    const isNight = this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour;
+    const prevViolator = CFG.pedViolatorChance;
+    if (isNight) CFG.pedViolatorChance = Math.min(0.35, prevViolator * 1.4);
     this.traffic.update(dt, this.player, this.world, density, this.peds);
     this.peds.update(dt, this.player, this.traffic, this.world);
+    CFG.pedViolatorChance = prevViolator;
 
     // камера
     this.chaseCam.applyInput(this.input, dt);
@@ -12019,6 +12482,14 @@ class Game {
 
     // километраж
     this.shiftStats.km += this.player.speed * dt / 1000;
+
+    // полиция: проверка нарушений
+    this.police.update(dt);
+    this.police.checkSpeeding(this.player, this.traffic);
+    this.police.checkRedLight(this.player, this.traffic, this.world.lights);
+
+    // достижения: живая статистика
+    this.achievements.updateLiveStats(this.player, this.rating, dt);
 
     // звук — единый per-frame апдейт (движок, скид, гудок, позиция слушателя)
     const st = this.player.stats;
