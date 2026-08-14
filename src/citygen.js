@@ -274,7 +274,6 @@ export class World {
     this._wasteBins();
     this._kiosks();
     this._playgrounds();
-    this._pedestrianFences();
     this._parkedCars();
     this._collectPickupPoints();
   }
@@ -2591,44 +2590,6 @@ export class World {
       g.position.set(sp.x, 0, sp.z);
       this.scene.add(g);
       this.addPropAABB({ x0: sp.x - 3.5, z0: sp.z - 3.5, x1: sp.x + 3.5, z1: sp.z + 3.5 });
-    }
-  }
-
-  /* --- Пешеходные металлоограждения вдоль тротуаров --- */
-  _pedestrianFences() {
-    const fenceGeo = new THREE.BoxGeometry(2.8, 0.85, 0.08);
-    fenceGeo.translate(0, 0.425, 0);
-    const fenceMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b8 });
-    const items = [];
-
-    const OFF = 9.6;
-    for (let i = 2; i < 7; i++) {
-      for (let j = 2; j < 7; j++) {
-        if ((i + j) % 2 !== 0) continue;
-        const x = -256 + i * CFG.CELL;
-        const z = -256 + j * CFG.CELL;
-        for (const sx of [-1, 1]) {
-          for (const sz of [-15, 15]) {
-            const fx = x + sx * OFF;
-            const fz = z + sz;
-            if (this.isPositionValid(fx, fz, 0.5)) {
-              items.push({ x: fx, z: fz, rot: 0 });
-              this.addPropAABB({ x0: fx - 0.2, z0: fz - 1.5, x1: fx + 0.2, z1: fz + 1.5 });
-            }
-          }
-        }
-      }
-    }
-
-    if (items.length) {
-      const mesh = new THREE.InstancedMesh(fenceGeo, fenceMat, items.length);
-      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(1, 1, 1);
-      items.forEach((it, idx) => {
-        e.set(0, it.rot, 0); q.setFromEuler(e);
-        m4.compose(new THREE.Vector3(it.x, 0.1, it.z), q, s);
-        mesh.setMatrixAt(idx, m4);
-      });
-      this.scene.add(mesh);
     }
   }
 
