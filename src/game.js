@@ -968,8 +968,8 @@ export class Game {
 
     // полиция: проверка нарушений
     this.police.update(dt);
-    this.police.checkSpeeding(this.player, this.traffic);
-    this.police.checkRedLight(this.player, this.traffic, this.world.lights);
+    this.police.checkSpeeding(this.player, this.traffic, this.world);
+    this.police.checkRedLight(this.player, this.traffic, this.world.lights, this.world);
 
     // достижения: живая статистика
     this.achievements.updateLiveStats(this.player, this.rating, dt);
@@ -1019,7 +1019,7 @@ export class Game {
     this._minimapAccum = (this._minimapAccum || 0) + dt;
     if (this._minimapAccum >= 1 / 20) {
       this._minimapAccum = 0;
-      this.ui.renderMinimap(this.player, this.orders, this.world);
+      this.ui.renderMinimap(this.player, this.orders, this.world, this.traffic);
     }
 
     // автосохранение

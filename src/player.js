@@ -228,6 +228,7 @@ export class PlayerCar {
   update(dt, input, world, traffic) {
     const st = this.stats;
     const onRoad = world.onRoad(this.x, this.z);
+    this.onRoad = onRoad;
     const slope = world.heightAt(this.x, this.z) > 0.5;
     const gripMul = (onRoad ? 1 : 0.55) * (slope ? 0.85 : 1);
     const weatherGrip = this._weatherGrip || 1;

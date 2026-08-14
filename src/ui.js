@@ -261,7 +261,7 @@ export class UIManager {
   }
 
   /* ---------- Мини-карта (heading-up: карта вращается, стрелка всегда вверх) ---------- */
-  renderMinimap(player, orders, world) {
+  renderMinimap(player, orders, world, traffic) {
     const c = this.$('minimap');
     const g = c.getContext('2d');
     const W = c.width;
@@ -297,6 +297,18 @@ export class UIManager {
       g.lineTo(rx(vx), rz(activeDrop.z));
       g.lineTo(rx(activeDrop.x), rz(activeDrop.z));
       g.stroke();
+    }
+    // полицейские машины
+    if (traffic && traffic.cars) {
+      const flash = Math.floor(Date.now() / 300) % 2 === 0;
+      for (const car of traffic.cars) {
+        if (!car.alive || !car.mesh || !car.mesh.visible || car.beacon !== 'police') continue;
+        const cx = car.x * scale, cy = car.z * scale;
+        g.fillStyle = flash ? '#ff4040' : '#4a6aff';
+        g.beginPath(); g.arc(cx, cy, 4.5, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = 'rgba(0, 0, 0, 0.8)'; g.lineWidth = 1;
+        g.beginPath(); g.arc(cx, cy, 4.5, 0, Math.PI * 2); g.stroke();
+      }
     }
     // заказы
     for (const o of orders.open) {

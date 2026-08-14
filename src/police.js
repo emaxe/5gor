@@ -46,8 +46,9 @@ export class PoliceManager {
    * @returns {boolean}
    */
   _policeNearby(player, traffic) {
+    if (!traffic || !traffic.cars) return false;
     for (const car of traffic.cars) {
-      if (!car.mesh.visible || car.beacon !== 'police') continue;
+      if (!car.alive || !car.mesh || !car.mesh.visible || car.beacon !== 'police') continue;
       const d = dist2D(car.x, car.z, player.x, player.z);
       if (d < POLICE_DETECT_RADIUS) return true;
     }
@@ -58,11 +59,14 @@ export class PoliceManager {
    * Проверить нарушение скоростного режима.
    * @param {import('./player.js').PlayerCar} player
    * @param {import('./traffic.js').TrafficManager} traffic
+   * @param {import('./citygen.js').World} [world]
    */
-  checkSpeeding(player, traffic) {
+  checkSpeeding(player, traffic, world) {
     if (this._onCooldown('speeding')) return;
     if (Math.abs(player.speed) < SPEED_THRESHOLD) return;
     // Только на дороге — не штрафуем за езду по бездорожью (там и так медленно)
+    const onRoad = world ? world.onRoad(player.x, player.z) : player.onRoad;
+    if (!onRoad) return;
     if (!this._policeNearby(player, traffic)) return;
     this._fine(VIOLATIONS.speeding);
   }
@@ -73,21 +77,31 @@ export class PoliceManager {
    * @param {import('./player.js').PlayerCar} player
    * @param {import('./traffic.js').TrafficManager} traffic
    * @param {Array} lights - Список светофоров мира
+   * @param {import('./citygen.js').World} [world]
    */
-  checkRedLight(player, traffic, lights) {
+  checkRedLight(player, traffic, lights, world) {
     if (this._onCooldown('redLight')) return;
-    if (Math.abs(player.speed) < 3) return; // Стоит — не нарушение
+    if (Math.abs(player.speed) < 3) return; // Стоит/медленно едет — не нарушение
+    const onRoad = world ? world.onRoad(player.x, player.z) : player.onRoad;
+    if (onRoad !== undefined && !onRoad) return; // Вне дороги светофоров нет
     if (!this._policeNearby(player, traffic)) return;
+    if (!lights || !lights.length) return;
 
     // Проверяем: игрок на перекрёстке, и для его оси движения горит красный (state === 2)
     const px = player.x, pz = player.z;
+    // Вектор курса: forward = (sin h, cos h)
+    // Движение вдоль Z если |cos(h)| > |sin(h)|, движение вдоль X если |sin(h)| > |cos(h)|
+    const absCos = Math.abs(Math.cos(player.heading));
+    const absSin = Math.abs(Math.sin(player.heading));
+    const movingAlongZ = absCos > absSin;
+
     for (const l of lights) {
+      if (!l.isec) continue;
       const d = dist2D(px, pz, l.isec.x, l.isec.z);
       if (d > 12) continue; // только если игрок на перекрёстке
+
       // state: 0 = зелёный, 1 = жёлтый, 2 = красный
-      // Нужно определить ось движения игрока
-      const movingAlongZ = Math.abs(Math.sin(player.heading)) > Math.abs(Math.cos(player.heading));
-      // Светофор l.axis === 'z' контролирует движение вдоль Z
+      // Светофор l.axis === 'z' контролирует движение вдоль Z, l.axis === 'x' — вдоль X
       if (movingAlongZ && l.axis === 'z' && l.state === 2) {
         this._fine(VIOLATIONS.redLight);
         return;
