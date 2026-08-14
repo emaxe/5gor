@@ -1034,7 +1034,8 @@ export class Game {
       const drop = a.drops[a.dropIdx];
       if (dist2D(this.player.x, this.player.z, drop.x, drop.z) < 7) {
         const stops = a.drops.length > 1 ? ' (стоп ' + (a.dropIdx + 1) + '/' + a.drops.length + ')' : '';
-        this.interact = { label: 'Высадить' + stops, cb: () => this.completeOrder() };
+        const action = a.type === 'package' ? 'Отдать посылку' : 'Высадить';
+        this.interact = { label: action + stops, cb: () => this.completeOrder() };
       }
     } else {
       // ближайший свободный заказ в радиусе (маркеры могут перекрываться —

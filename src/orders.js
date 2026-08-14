@@ -420,6 +420,17 @@ class PassengerManager {
     player.passengerCount = order.type === 'package' ? 0 : 1;
     player.style = 0.7;
     player.styleTimer = 0;
+
+    // Для посылки: спавним получателя у точки доставки — он ждёт посылку
+    if (order.type === 'package') {
+      const drop = order.drops[order.drops.length - 1];
+      const rMesh = buildPedMesh();
+      const h = this.world ? this.world.heightAt(drop.x, drop.z) : 0;
+      rMesh.position.set(drop.x, h + 0.02, drop.z);
+      this._faceRoad(rMesh, drop.x, drop.z);
+      this.world.scene.add(rMesh);
+      order.recipient = { mesh: rMesh, state: 'wait', x: drop.x, z: drop.z, t: rand(0, 6) };
+    }
     Events.emit('order:accepted', { order, player });
     const dlg = getPassengerDialogue('pickup', order);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: dlg.color });
@@ -503,6 +514,12 @@ class PassengerManager {
       }
       // у VIP клиент выходит при аварии
       // (обрабатывается через Events.crash в game)
+      // анимация ожидания получателя посылки
+      if (a.recipient && a.recipient.state === 'wait') {
+        a.recipient.t += dt;
+        const h = this.world ? this.world.heightAt(a.recipient.x, a.recipient.z) : 0;
+        a.recipient.mesh.position.y = h + 0.02 + Math.abs(Math.sin(a.recipient.t * 2)) * 0.05;
+      }
     } else {
       this._hideDropMarker();
     }
@@ -572,15 +589,24 @@ class PassengerManager {
     this._cabOut();
 
     if (a.type === 'package') {
-      // Для посылки у точки доставки создаём получателя и вручаем ему коробку —
-      // он берёт посылку в руки и уходит по своим делам как обычный пешеход
-      const recipientMesh = buildPedMesh();
-      const h = this.world ? this.world.heightAt(drop.x, drop.z) : 0;
-      recipientMesh.position.set(drop.x, h + 0.02, drop.z);
-      this.world.scene.add(recipientMesh);
-      attachParcelBox(recipientMesh);
-      if (this.world && this.world.peds) {
-        this.world.peds.adoptPedestrian(recipientMesh, drop.x, drop.z);
+      // Для посылки: передаём коробку ожидающему получателю (спавнится при accept)
+      // и он уходит по своим делам как обычный пешеход
+      if (a.recipient && a.recipient.mesh) {
+        attachParcelBox(a.recipient.mesh);
+        if (this.world && this.world.peds) {
+          this.world.peds.adoptPedestrian(a.recipient.mesh, drop.x, drop.z);
+        }
+        a.recipient = null;
+      } else {
+        // Фолбэк: если получатель пропал (фол от старого кода), создаём нового
+        const recipientMesh = buildPedMesh();
+        const h = this.world ? this.world.heightAt(drop.x, drop.z) : 0;
+        recipientMesh.position.set(drop.x, h + 0.02, drop.z);
+        this.world.scene.add(recipientMesh);
+        attachParcelBox(recipientMesh);
+        if (this.world && this.world.peds) {
+          this.world.peds.adoptPedestrian(recipientMesh, drop.x, drop.z);
+        }
       }
     } else {
       // Для пассажира: высаживаем его из машины, он выходит на тротуар и уходит
@@ -635,6 +661,11 @@ class PassengerManager {
     this._hideDropMarker();
     this._cabOut();
     this._removePassenger(a);
+    // Удаляем ожидающего получателя посылки
+    if (a.recipient && a.recipient.mesh) {
+      if (a.recipient.mesh.parent) this.world.scene.remove(a.recipient.mesh);
+      a.recipient = null;
+    }
     Events.emit('order:failed', { reason, order: a });
     Events.emit('toast', { text: reason === 'time' ? 'Заказ провален: время вышло!' : 'Пассажир ушёл!', color: '#e05050' });
   }
@@ -671,6 +702,10 @@ class PassengerManager {
 
   reset() {
     for (const o of this.open) { this._removeMarker(o); this._removePassenger(o); }
+    // Удаляем получателя посылки если активный заказ был типа package
+    if (this.active && this.active.recipient && this.active.recipient.mesh) {
+      if (this.active.recipient.mesh.parent) this.world.scene.remove(this.active.recipient.mesh);
+    }
     this.open = [];
     this.active = null;
     this.completed = [];
