@@ -7621,7 +7621,7 @@ const TRAFFIC_TYPES = [
   // --- общественный/спецтранспорт ---
   { name: 'marshrutka', shape: 'van', r: 2.3, len: 5.4, w: 2.05, weight: 4, colors: [0xf0f0f0], forceColor: true },
   { name: 'bus', shape: 'bus', r: 2.9, len: 8.5, w: 2.35, weight: 2, colors: [0xe4e4e4], forceColor: true },
-  { name: 'police', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 1.5, colors: [0x1c2430], forceColor: true, beacon: 'police' },
+  { name: 'police', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 6, colors: [0x1c2430], forceColor: true, beacon: 'police' },
   { name: 'ambulance', shape: 'van', r: 2.3, len: 5.0, w: 2.0, weight: 1, colors: [0xf4f4f0], forceColor: true, beacon: 'ambulance' },
   // --- ретро/советские ---
   { name: 'zhiguli', shape: 'retro', r: 1.9, len: 4.1, w: 1.75, weight: 9, colors: [0xd8c088, 0x6a4a6a, 0xa8c8d8, 0xc03030, 0xe8e4d0] },
@@ -7710,8 +7710,16 @@ class TrafficManager {
 
   /* --- Заполнить пул --- */
   spawn(count, player) {
+    const policeIdx = TRAFFIC_TYPES.findIndex(t => t.beacon === 'police');
     while (this.cars.length < count) {
-      const typeIdx = pickTrafficType();
+      // Гарантируем хотя бы 1 патрульную машину в трафике
+      let typeIdx;
+      const hasPolice = this.cars.some(c => TRAFFIC_TYPES[c.type].beacon === 'police');
+      if (policeIdx >= 0 && !hasPolice && this.cars.length === count - 1) {
+        typeIdx = policeIdx;
+      } else {
+        typeIdx = pickTrafficType();
+      }
       const def = TRAFFIC_TYPES[typeIdx];
       const mesh = this._buildCar(typeIdx);
       const refs = mesh.userData.refs || {};
