@@ -243,14 +243,16 @@ export class UIManager {
     if (target) {
       nw.classList.remove('hidden');
       const dx = target.x - player.x, dz = target.z - player.z;
-      // ➤ указывает вправо при rotate(0) — смещаем на 90°, чтобы «вперёд» было вверх.
-      // Считаем относительно КУРСА МАШИНЫ (heading), а не камеры — иначе при вращении
-      // камеры мышью стрелка показывает не туда. Вектор курса машины (sin h, cos h),
-      // относительный угол цели = atan2(dx,dz) - heading (МИНУС — раньше был плюс,
-      // стрелка отзеркаливалась: влево вместо вправо, назад вместо прямо).
-      // Нормализуем в [-π, π], чтобы стрелка доворачивалась кратчайшим путём.
-      let ang = Math.atan2(dx, dz) - player.heading - Math.PI / 2;
-      ang = Math.atan2(Math.sin(ang), Math.cos(ang));
+      // ➤ указывает вправо при rotate(0) — «вперёд» = -90°.
+      // Раскладываем вектор к цели по осям машины: forward=(sin h,cos h),
+      // right=(-cos h,sin h) — ПРАВО ИНВЕРТИРОВАНО (-X): камера сзади, поэтому
+      // atan2(dx,dz)-heading (вправо=+X) давал инверсию влево/вправо.
+      // Угол от оси right: ang = -atan2(forward_comp, right_comp).
+      const h = player.heading;
+      const fwdC = dx * Math.sin(h) + dz * Math.cos(h);
+      const rgtC = -dx * Math.cos(h) + dz * Math.sin(h);
+      let ang = -Math.atan2(fwdC, rgtC);
+      ang = Math.atan2(Math.sin(ang), Math.cos(ang)); // кратчайший доворот в [-π,π]
       els['nav-arrow'].style.transform = 'rotate(' + Math.round(ang * 180 / Math.PI * 10) / 10 + 'deg)';
       els['nav-dist'].textContent = Math.round(dist2D(player.x, player.z, target.x, target.z)) + ' м';
     } else {
