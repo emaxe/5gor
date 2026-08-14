@@ -20,7 +20,7 @@ const MISSION_TEMPLATES = [
     id: 'grandma', type: 'mission', title: 'Бабушка на рынок', rating: 10, pay: 900, icon: 'Б', color: '#e87a3a', time: 0,
     desc: 'Бабушка Зинаида просит отвезти её на рынок «Лира». Она щедрая!',
     make(world) {
-      return { pickup: Orders.pickPoint(world, 'center'), drops: [{ x: 96, z: -32, name: 'Рынок «Лира»' }] };
+      return { pickup: Orders.pickPoint(world, 'center'), drops: [{ x: 96, z: -8, name: 'Рынок «Лира»' }] };
     },
   },
   {

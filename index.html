@@ -879,7 +879,7 @@ const LANDMARKS = [
   { id: 'cvetnik',   name: 'Цветник',            x: -32, z: 18,   desc: 'Парк с фонтаном и гротом' },
   { id: 'grot',      name: 'Грот Лермонтова',    x: -52, z: 8,    desc: 'Каменный грот в парке' },
   { id: 'narzan',    name: 'Нарзанные ванны',    x: -32, z: -15,  desc: 'Купол галереи с нарзаном' },
-  { id: 'rynok',     name: 'Рынок «Лира»',       x: 96,  z: -32,  desc: 'Главный рынок города' },
+  { id: 'rynok',     name: 'Рынок «Лира»',       x: 96,  z: -8,   desc: 'Главный рынок города' },
   { id: 'vokzal',    name: 'Ж/д вокзал',         x: 160, z: 96,   desc: 'Вокзал с часами на башне' },
   { id: 'cable',     name: 'Канатная дорога',    x: 20,  z: -288, desc: 'Подъёмник на Машук' },
   { id: 'gazebo',    name: 'Эолова арфа',        x: 12,  z: -350, desc: 'Беседка на склоне Машука' },
@@ -9752,7 +9752,7 @@ const MISSION_TEMPLATES = [
     id: 'grandma', type: 'mission', title: 'Бабушка на рынок', rating: 10, pay: 900, icon: 'Б', color: '#e87a3a', time: 0,
     desc: 'Бабушка Зинаида просит отвезти её на рынок «Лира». Она щедрая!',
     make(world) {
-      return { pickup: Orders.pickPoint(world, 'center'), drops: [{ x: 96, z: -32, name: 'Рынок «Лира»' }] };
+      return { pickup: Orders.pickPoint(world, 'center'), drops: [{ x: 96, z: -8, name: 'Рынок «Лира»' }] };
     },
   },
   {
