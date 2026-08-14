@@ -2,7 +2,7 @@
    кеш шумовых буферов, пул панеров, voice-limiting. Не зависит от THREE
    и DOM — тестируется в node на заглушке AudioContext. */
 
-export const AU_DEFAULT_VOL = { master: 0.8, music: 0.32, sfx: 0.85, engine: 0.55, ambient: 0.45, ui: 0.7, voice: 0.85 };
+export const AU_DEFAULT_VOL = { master: 0.10, music: 0.20, sfx: 0.30, engine: 0.15, ambient: 0.25, ui: 0.30, voice: 0.40 };
 export const AU_BUDGET = { total: 28, horn: 3, crash: 2, ped: 3, voice: 3, click: 4, siren: 2 };
 export const AU_COOLDOWN = { horn: 140, crash: 80, pedHit: 120, thud: 90, click: 40, step: 60 };
 export const AU_NOISE_LENGTHS = [0.25, 1, 2, 3];
