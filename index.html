@@ -6855,13 +6855,24 @@ class World {
 
     // Анимация кабинок фуникулёра
     if (this.cableCars && this._cableHeads) {
-      for (const car of this.cableCars) {
+      // перпендикуляр к линии троса (для бокового смещения кабинки к одному из тросов)
+      const cableDir = new THREE.Vector3().subVectors(this._cableTop, this._cableBase).normalize();
+      const perp = new THREE.Vector3(-cableDir.z, 0, cableDir.x);
+      for (let ci = 0; ci < this.cableCars.length; ci++) {
+        const car = this.cableCars[ci];
         car.t += car.dir * car.speed * dt;
         if (car.t >= 0.92) { car.t = 0.92; car.dir = -1; }
         if (car.t <= 0.05) { car.t = 0.05; car.dir = 1; }
         // позиция на ломаной линии через головы опор
         const pos = this._cablePointAt(car.t);
-        car.group.position.copy(pos);
+        // боковое смещение к одному из двух тросов (±1.4м)
+        const sideOff = ci === 0 ? -1.4 : 1.4;
+        // ролик (y=2.7 в локальных координатах) должен быть на тросе → опускаем групп
+        car.group.position.set(
+          pos.x + perp.x * sideOff,
+          pos.y - 2.7,
+          pos.z + perp.z * sideOff
+        );
         // ориентация кабинки вдоль направления троса
         const next = this._cablePointAt(Math.min(0.99, car.t + 0.01));
         const lookDir = new THREE.Vector3().subVectors(next, pos);
