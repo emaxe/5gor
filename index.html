@@ -6475,35 +6475,138 @@ class World {
     const top = new THREE.Vector3(this.hill.x, this.heightAt(this.hill.x, this.hill.z) + 12, this.hill.z);
     const dir = new THREE.Vector3().subVectors(top, base);
     const len = dir.length();
-    const cableMat = new THREE.MeshLambertMaterial({ color: 0x3a3a3a });
+    const dirN = dir.clone().normalize();
+
+    // материалы
+    const cableMat = new THREE.MeshLambertMaterial({ color: 0x2a2a2a });
+    const towerMat = new THREE.MeshLambertMaterial({ color: 0x8a6a44 });
+    const darkMat = new THREE.MeshLambertMaterial({ color: 0x4a3a2a });
+    const stationMat = new THREE.MeshLambertMaterial({ color: 0xc8b898 });
+
+    // Точки крепления тросов на опорах (по линии base→top)
+    // Каждая опора: { t (0..1), height (высота головы опоры над землёй) }
+    const towerTs = [0.0, 0.28, 0.55, 0.78, 1.0]; // включая базу и вершину
+    const towerHeads = []; // позиции голов опор для крепления тросов
+
+    for (let i = 0; i < towerTs.length; i++) {
+      const t = towerTs[i];
+      const p = new THREE.Vector3().lerpVectors(base, top, t);
+      const groundY = this.heightAt(p.x, p.z);
+
+      if (i === 0) {
+        // Нижняя станция — здание, трос крепится к крыше
+        const st = new THREE.Mesh(new THREE.BoxGeometry(10, 6, 8), stationMat);
+        st.position.set(p.x, groundY + 3, p.z);
+        this.scene.add(st);
+        // крыша-платформа
+        const roof = new THREE.Mesh(new THREE.BoxGeometry(8, 0.4, 6), darkMat);
+        roof.position.set(p.x, groundY + 6.2, p.z);
+        this.scene.add(roof);
+        this.addPropAABB({ x0: p.x - 5, z0: p.z - 4, x1: p.x + 5, z1: p.z + 4 });
+        towerHeads.push(new THREE.Vector3(p.x, groundY + 6.4, p.z));
+        continue;
+      }
+
+      if (i === towerTs.length - 1) {
+        // Верхняя станция — площадка на вершине Машука
+        const plat = new THREE.Mesh(new THREE.BoxGeometry(6, 0.5, 6), darkMat);
+        plat.position.set(p.x, groundY + 0.3, p.z);
+        this.scene.add(plat);
+        towerHeads.push(new THREE.Vector3(p.x, groundY + 0.6, p.z));
+        continue;
+      }
+
+      // Промежуточная опора: А-образная конструкция
+      const towerH = Math.max(6, p.y - groundY + 2);
+      const baseW = 2.2; // ширина основания
+      // две ноги (наклонные)
+      for (const sx of [-1, 1]) {
+        const legGeo = new THREE.CylinderGeometry(0.12, 0.18, towerH, 6);
+        // наклон ноги: основание на ±baseW, верх на ±0.3
+        const bx = p.x + sx * baseW;
+        const tx = p.x + sx * 0.3;
+        const midX = (bx + tx) / 2;
+        const legDir = new THREE.Vector3(tx - bx, towerH, 0);
+        const leg = new THREE.Mesh(legGeo, towerMat);
+        leg.position.set(midX, groundY + towerH / 2, p.z);
+        leg.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), legDir.clone().normalize());
+        this.scene.add(leg);
+      }
+      // поперечина (горизонтальная перекладина на верхушке)
+      const cross = new THREE.Mesh(new THREE.BoxGeometry(baseW * 2 + 0.6, 0.3, 0.4), darkMat);
+      cross.position.set(p.x, groundY + towerH, p.z);
+      this.scene.add(cross);
+      // голова опоры — точки крепления тросов
+      towerHeads.push(new THREE.Vector3(p.x, groundY + towerH + 0.2, p.z));
+    }
+
+    // Тросы: два параллельных, крепятся к головам опор
+    // Трос идёт не по прямой base→top, а по ломаной через головы опор
     for (const off of [-1.4, 1.4]) {
-      const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, len, 5), cableMat);
-      const mid = new THREE.Vector3().lerpVectors(base, top, 0.5);
-      mid.x += off;
-      cable.position.copy(mid);
-      cable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
-      this.scene.add(cable);
+      for (let i = 0; i < towerHeads.length - 1; i++) {
+        const a = towerHeads[i].clone();
+        const b = towerHeads[i + 1].clone();
+        // смещение перпендикулярно линии троса
+        const perpX = -dirN.z * off;
+        const perpZ = dirN.x * off;
+        a.x += perpX; a.z += perpZ;
+        b.x += perpX; b.z += perpZ;
+        const segLen = a.distanceTo(b);
+        const segDir = new THREE.Vector3().subVectors(b, a).normalize();
+        const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, segLen, 5), cableMat);
+        const mid = new THREE.Vector3().lerpVectors(a, b, 0.5);
+        cable.position.copy(mid);
+        cable.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), segDir);
+        this.scene.add(cable);
+      }
     }
-    // опоры — точки подобраны в стороне от коридора серпантина (dist > 15м)
-    for (const t of [0.28, 0.6, 0.85]) {
-      const p = new THREE.Vector3().lerpVectors(base, top, t);
-      const h = Math.max(4, p.y - this.heightAt(p.x, p.z) + 4);
-      const tower = new THREE.Mesh(new THREE.BoxGeometry(1, h, 1), new THREE.MeshLambertMaterial({ color: 0x8a6a44 }));
-      tower.position.set(p.x, this.heightAt(p.x, p.z) + h / 2, p.z);
-      this.scene.add(tower);
-    }
-    // кабинки
-    for (const t of [0.35, 0.62]) {
-      const p = new THREE.Vector3().lerpVectors(base, top, t);
-      const cab = new THREE.Mesh(new THREE.BoxGeometry(1.7, 1.3, 1.5), new THREE.MeshLambertMaterial({ color: 0xe86030 }));
-      cab.position.set(p.x, p.y - 2, p.z);
+
+    // Кабинки: подвешены к тросу на подвесе (тонкая тяга + корпус)
+    // Сохраняем в this.cableCars для анимации в update()
+    this.cableCars = [];
+    for (const t0 of [0.20, 0.55]) {
+      const cab = this._buildCableCarCab();
       this.scene.add(cab);
+      this.cableCars.push({ group: cab, t: t0, speed: 0.012, dir: 1 });
     }
-    // нижняя станция
-    const st = new THREE.Mesh(new THREE.BoxGeometry(10, 5, 7), new THREE.MeshLambertMaterial({ color: 0xc8b898 }));
-    st.position.set(20, this.heightAt(20, -288) + 2.6, -288);
-    this.scene.add(st);
-    this.addPropAABB({ x0: 14, z0: -292, x1: 26, z1: -284 });
+    // сохраняем головы опор для позиционирования кабинок в update()
+    this._cableHeads = towerHeads;
+    this._cableBase = base;
+    this._cableTop = top;
+  }
+
+  /* Сборка кабинки фуникулёра: корпус + подвес + ролик */
+  _buildCableCarCab() {
+    const g = new THREE.Group();
+    const bodyMat = new THREE.MeshLambertMaterial({ color: 0xe86030 });
+    const glassMat = new THREE.MeshLambertMaterial({ color: 0x4a6a8a, transparent: true, opacity: 0.6 });
+    const darkMat = new THREE.MeshLambertMaterial({ color: 0x3a3a3a });
+
+    // корпус
+    const body = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.4, 1.6), bodyMat);
+    body.position.y = 0;
+    g.add(body);
+    // окна (по бокам)
+    for (const sx of [-1, 1]) {
+      const win = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.7, 1.2), glassMat);
+      win.position.set(sx * 0.92, 0.1, 0);
+      g.add(win);
+    }
+    // крыша
+    const roof = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.2, 1.8), darkMat);
+    roof.position.y = 0.8;
+    g.add(roof);
+    // подвес — вертикальная тяга от крыши вверх к тросу
+    const hanger = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.8, 0.1), darkMat);
+    hanger.position.y = 1.8;
+    g.add(hanger);
+    // ролик (зажим на тросе)
+    const clamp = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.4, 8), darkMat);
+    clamp.rotation.z = Math.PI / 2;
+    clamp.position.y = 2.7;
+    g.add(clamp);
+
+    return g;
   }
 
   /* --- Дорожные знаки на перекрёстках --- */
@@ -6747,6 +6850,48 @@ class World {
       this.trafficLampMesh.instanceColor.needsUpdate = true;
       this._lampInit = true;
     }
+
+    // Анимация кабинок фуникулёра
+    if (this.cableCars && this._cableHeads) {
+      for (const car of this.cableCars) {
+        car.t += car.dir * car.speed * dt;
+        if (car.t >= 0.92) { car.t = 0.92; car.dir = -1; }
+        if (car.t <= 0.05) { car.t = 0.05; car.dir = 1; }
+        // позиция на ломаной линии через головы опор
+        const pos = this._cablePointAt(car.t);
+        car.group.position.copy(pos);
+        // ориентация кабинки вдоль направления троса
+        const next = this._cablePointAt(Math.min(0.99, car.t + 0.01));
+        const lookDir = new THREE.Vector3().subVectors(next, pos);
+        if (lookDir.lengthSq() > 0.001) {
+          car.group.rotation.y = Math.atan2(lookDir.x, lookDir.z);
+        }
+      }
+    }
+  }
+
+  /* Позиция точки на ломаной линии троса (через головы опор) при параметре t (0..1) */
+  _cablePointAt(t) {
+    const heads = this._cableHeads;
+    if (!heads || heads.length < 2) return new THREE.Vector3();
+    // общая длина ломаной
+    let totalLen = 0;
+    const segLens = [];
+    for (let i = 0; i < heads.length - 1; i++) {
+      const sl = heads[i].distanceTo(heads[i + 1]);
+      segLens.push(sl);
+      totalLen += sl;
+    }
+    const target = t * totalLen;
+    let acc = 0;
+    for (let i = 0; i < segLens.length; i++) {
+      if (acc + segLens[i] >= target) {
+        const localT = (target - acc) / segLens[i];
+        return new THREE.Vector3().lerpVectors(heads[i], heads[i + 1], localT);
+      }
+      acc += segLens[i];
+    }
+    return heads[heads.length - 1].clone();
   }
 }
 
