@@ -9935,7 +9935,10 @@ const MISSION_TEMPLATES = [
     id: 'race', type: 'race', title: 'Гонка с бомбилой', rating: 35, pay: 1600, icon: 'R', color: '#e86020', time: 85,
     desc: 'Конкурент вызвался наперегонки до вокзала. Успеешь — премия!',
     make(world) {
-      return { pickup: Orders.pickPoint(world, 'kurort'), drops: [{ x: 160, z: 96, name: 'Ж/д вокзал' }] };
+      // Финиш — реальная точка подачи у вокзала (на дороге), а не хардкод
+      // (160,96) в центре квартала вокзала, куда невозможно проехать.
+      const fin = Orders.pickPoint(world, 'vokzal');
+      return { pickup: Orders.pickPoint(world, 'kurort'), drops: [{ x: fin.x, z: fin.z, name: 'Ж/д вокзал' }] };
     },
   },
   {
