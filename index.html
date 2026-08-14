@@ -2296,12 +2296,44 @@ function buildCarModel(spec) {
   }
 
   // --- маячок спецтранспорта (полиция/скорая) ---
+  // Полицейская балка: длинная рамка с красной и синей половинами + белые
+  // разделители. Скорой — белая рамка с красным крестом.
   if (beacon && built.roofSign && matBeaconRed && matBeaconBlue) {
     const rs = built.roofSign;
-    const barGeo = () => new THREE.BoxGeometry(0.4, 0.13, 0.2);
-    refs.beaconRed = new THREE.Mesh(barGeo().translate(rs.x - 0.1, rs.y, rs.z), matBeaconRed);
-    refs.beaconBlue = new THREE.Mesh(barGeo().translate(rs.x + 0.1, rs.y, rs.z), matBeaconBlue);
-    bodyGroup.add(refs.beaconRed, refs.beaconBlue);
+    if (beacon === 'police') {
+      // Длинная балка (0.9м) с красным и синим отсеками + белые торцы
+      const barW = 0.9, barH = 0.14, barD = 0.28;
+      const barBase = new THREE.Mesh(
+        new THREE.BoxGeometry(barW, barH, barD).translate(rs.x, rs.y - 0.02, rs.z),
+        new THREE.MeshLambertMaterial({ color: 0x1a1a1a })
+      );
+      bodyGroup.add(barBase);
+      // красная левая половина
+      refs.beaconRed = new THREE.Mesh(
+        new THREE.BoxGeometry(barW * 0.45, barH, barD).translate(rs.x - barW * 0.27, rs.y + 0.05, rs.z),
+        matBeaconRed
+      );
+      // синяя правая половина
+      refs.beaconBlue = new THREE.Mesh(
+        new THREE.BoxGeometry(barW * 0.45, barH, barD).translate(rs.x + barW * 0.27, rs.y + 0.05, rs.z),
+        matBeaconBlue
+      );
+      bodyGroup.add(refs.beaconRed, refs.beaconBlue);
+      // белые разделители по торцам
+      const endMat = new THREE.MeshLambertMaterial({ color: 0xe8e8e8 });
+      bodyGroup.add(new THREE.Mesh(
+        new THREE.BoxGeometry(0.06, barH, barD).translate(rs.x - barW * 0.5, rs.y + 0.05, rs.z), endMat
+      ));
+      bodyGroup.add(new THREE.Mesh(
+        new THREE.BoxGeometry(0.06, barH, barD).translate(rs.x + barW * 0.5, rs.y + 0.05, rs.z), endMat
+      ));
+    } else {
+      // Скорая: два маленьких маячка (как было)
+      const barGeo = () => new THREE.BoxGeometry(0.4, 0.13, 0.2);
+      refs.beaconRed = new THREE.Mesh(barGeo().translate(rs.x - 0.1, rs.y, rs.z), matBeaconRed);
+      refs.beaconBlue = new THREE.Mesh(barGeo().translate(rs.x + 0.1, rs.y, rs.z), matBeaconBlue);
+      bodyGroup.add(refs.beaconRed, refs.beaconBlue);
+    }
   }
 
   // --- багажник на крыше (wagon/suv/van, spec.hasRoofRack) ---
@@ -3069,7 +3101,8 @@ class SfxLibrary {
     e.tone(freq, 0.1, 'sine', 0.07, 0, null, e.buses.ui);
   }
 
-  /* Сирена спецтранспорта — двухтоновый вой с 3D-позиционированием (как horn) */
+  /* Сирена спецтранспорта — полицейская «крякалка» (короткие тон-импульсы)
+     или двухтоновый вой для скорой. 3D-позиционирование (как horn). */
   siren(opts = {}) {
     const e = this.engine;
     if (!e.enabled || !e.ctx) return;
@@ -3088,25 +3121,44 @@ class SfxLibrary {
 
     const c = e.ctx;
     const t = c.currentTime;
-    const dur = 1.4;
-    const destNode = e.takePanner('sfx', panVal, t);
-    e.releaseAfter('siren', dur * 1000 + 100);
-
     const type = opts.type === 'ambulance' ? 'ambulance' : 'police';
-    const o = c.createOscillator(); o.type = 'sine';
-    const lfoRate = type === 'ambulance' ? 3.2 : 0.9;
-    const lo = type === 'ambulance' ? 550 : 700, hi = type === 'ambulance' ? 950 : 1100;
-    const steps = Math.round(dur * lfoRate * 2);
-    for (let i = 0; i <= steps; i++) {
-      const tt = t + (i / steps) * dur;
-      o.frequency.linearRampToValueAtTime(i % 2 === 0 ? hi : lo, tt);
+    const destNode = e.takePanner('sfx', panVal, t);
+
+    if (type === 'police') {
+      // «Крякалка»: 4 коротких импульса (вик-вик-вик-вик), ~0.7 сек
+      const blipDur = 0.12, gap = 0.05;
+      const lo = 680, hi = 960;
+      for (let i = 0; i < 4; i++) {
+        const tt = t + i * (blipDur + gap);
+        const o = c.createOscillator(); o.type = 'square';
+        o.frequency.setValueAtTime(hi, tt);
+        o.frequency.linearRampToValueAtTime(lo, tt + blipDur * 0.7);
+        const g = c.createGain();
+        g.gain.setValueAtTime(0.0001, tt);
+        g.gain.linearRampToValueAtTime(vol * 0.11, tt + 0.01);
+        g.gain.linearRampToValueAtTime(0.0001, tt + blipDur);
+        o.connect(g); g.connect(destNode);
+        o.start(tt); o.stop(tt + blipDur + 0.02);
+      }
+      e.releaseAfter('siren', 800);
+    } else {
+      // Скорая: двухтоновый вой (как было)
+      const dur = 1.4;
+      e.releaseAfter('siren', dur * 1000 + 100);
+      const o = c.createOscillator(); o.type = 'sine';
+      const lfoRate = 3.2, lo = 550, hi = 950;
+      const steps = Math.round(dur * lfoRate * 2);
+      for (let i = 0; i <= steps; i++) {
+        const tt = t + (i / steps) * dur;
+        o.frequency.linearRampToValueAtTime(i % 2 === 0 ? hi : lo, tt);
+      }
+      const g = c.createGain(); g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(vol * 0.09, t + 0.1);
+      g.gain.setValueAtTime(vol * 0.09, t + dur - 0.15);
+      g.gain.linearRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(destNode);
+      o.start(t); o.stop(t + dur + 0.05);
     }
-    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(vol * 0.09, t + 0.1);
-    g.gain.setValueAtTime(vol * 0.09, t + dur - 0.15);
-    g.gain.linearRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(destNode);
-    o.start(t); o.stop(t + dur + 0.05);
   }
 
   /* Шаг ближайшего пешехода — короткий приглушённый шумовой тук */
@@ -4120,8 +4172,9 @@ class AudioManager {
     }
 
     if (v.siren) {
+      const sirenInterval = v.siren.type === 'police' ? 1.0 : 1.5;
       if (!this._sirenNext || now >= this._sirenNext) {
-        this._sirenNext = now + 1.5;
+        this._sirenNext = now + sirenInterval;
         this.sfx.siren({
           sourceX: v.siren.x, sourceZ: v.siren.z,
           playerX: v.x, playerZ: v.z, playerHeading: v.heading, type: v.siren.type,
@@ -7636,7 +7689,7 @@ const TRAFFIC_TYPES = [
   // --- общественный/спецтранспорт ---
   { name: 'marshrutka', shape: 'van', r: 2.3, len: 5.4, w: 2.05, weight: 4, colors: [0xf0f0f0], forceColor: true },
   { name: 'bus', shape: 'bus', r: 2.9, len: 8.5, w: 2.35, weight: 2, colors: [0xe4e4e4], forceColor: true },
-  { name: 'police', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 6, colors: [0x1c2430], forceColor: true, beacon: 'police' },
+  { name: 'police', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 6, colors: [0xe8e8e8], forceColor: true, beacon: 'police', policeLivery: true },
   { name: 'ambulance', shape: 'van', r: 2.3, len: 5.0, w: 2.0, weight: 1, colors: [0xf4f4f0], forceColor: true, beacon: 'ambulance' },
   // --- ретро/советские ---
   { name: 'zhiguli', shape: 'retro', r: 1.9, len: 4.1, w: 1.75, weight: 9, colors: [0xd8c088, 0x6a4a6a, 0xa8c8d8, 0xc03030, 0xe8e4d0] },
@@ -7697,25 +7750,23 @@ class TrafficManager {
     const bodyColor = def.forceColor ? def.colors[0] : choice(def.colors);
     const darkColor = 0x22262c;
     const chromeColor = def.shape === 'retro' ? 0xd8d8d8 : 0xc8c8c8;
-    // дискретная вариация силуэта: индекс в маленькой фиксированной таблице
-    // своего семейства силуэтов (carmodel.js SHAPE_VARIANTS), а не случайный
-    // float — число различных геометрий на тип остаётся конечным и малым,
-    // _bodyGeoCache не растёт неограниченно (ключ считает carGeoCacheKey)
+
+    // Полицейская ливрея: синяя полоса на белом кузове
+    const isPolice = !!def.policeLivery;
+    const liveryMat = isPolice
+      ? new THREE.MeshLambertMaterial({ color: 0x1a3a8a })
+      : this.matLivery;
+
     const variants = shapeVariants(def.shape);
     const shapeOpts = variants[(Math.random() * variants.length) | 0];
-    // багажник на крыше: hasRoofRack передаём безусловно — единственный
-    // источник правды о том, разрешён ли он геометрически (roofRackOk в
-    // CAR_SHAPES: wagon/suv/van), это внутренний гейт buildCarModel
-    // (built.roofRack === null для остальных силуэтов, см. carmodel.js);
-    // дублировать список силуэтов здесь не нужно.
     const built = buildCarModel({
       shape: def.shape, w: def.w, len: def.len, animated: false,
       matBody: this.matColored, matGlass: this.matGlass,
       matHead: this.matHead, matStop: this.matStop,
-      matPlate: this.matPlate, matSign: this.matSign, matLivery: this.matLivery,
+      matPlate: this.matPlate, matSign: this.matSign, matLivery: liveryMat,
       matBeaconRed: this.matBeaconRed, matBeaconBlue: this.matBeaconBlue,
       bodyColor, darkColor, chromeColor, bodyKit: def.bodyKit || 'stock', shapeOpts,
-      hasPlate: true, hasSign: !!def.livery, hasLivery: !!def.livery, beacon: def.beacon || null,
+      hasPlate: true, hasSign: !!def.livery, hasLivery: !!def.livery || isPolice, beacon: def.beacon || null,
       hasRoofRack: true,
     });
     built.group.userData.type = def.name;
@@ -7742,6 +7793,7 @@ class TrafficManager {
         type: typeIdx, mesh, alive: true, radius: def.r,
         axis: 'z', coord: 0, dir: 1, pos: 0, speed: 0, target: 10, lane: 1, turnT: 0,
         speechSprite: null, speechT: 0, yellCd: 0,
+        beacon: def.beacon || null,
         beaconRed: refs.beaconRed || null, beaconBlue: refs.beaconBlue || null,
       };
       this.cars.push(car);
@@ -10533,7 +10585,7 @@ class PoliceManager {
    */
   _policeNearby(player, traffic) {
     for (const car of traffic.cars) {
-      if (!car.mesh.visible || !car.beaconRed) continue;
+      if (!car.mesh.visible || car.beacon !== 'police') continue;
       const d = dist2D(car.x, car.z, player.x, player.z);
       if (d < POLICE_DETECT_RADIUS) return true;
     }

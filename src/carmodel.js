@@ -610,12 +610,44 @@ export function buildCarModel(spec) {
   }
 
   // --- маячок спецтранспорта (полиция/скорая) ---
+  // Полицейская балка: длинная рамка с красной и синей половинами + белые
+  // разделители. Скорой — белая рамка с красным крестом.
   if (beacon && built.roofSign && matBeaconRed && matBeaconBlue) {
     const rs = built.roofSign;
-    const barGeo = () => new THREE.BoxGeometry(0.4, 0.13, 0.2);
-    refs.beaconRed = new THREE.Mesh(barGeo().translate(rs.x - 0.1, rs.y, rs.z), matBeaconRed);
-    refs.beaconBlue = new THREE.Mesh(barGeo().translate(rs.x + 0.1, rs.y, rs.z), matBeaconBlue);
-    bodyGroup.add(refs.beaconRed, refs.beaconBlue);
+    if (beacon === 'police') {
+      // Длинная балка (0.9м) с красным и синим отсеками + белые торцы
+      const barW = 0.9, barH = 0.14, barD = 0.28;
+      const barBase = new THREE.Mesh(
+        new THREE.BoxGeometry(barW, barH, barD).translate(rs.x, rs.y - 0.02, rs.z),
+        new THREE.MeshLambertMaterial({ color: 0x1a1a1a })
+      );
+      bodyGroup.add(barBase);
+      // красная левая половина
+      refs.beaconRed = new THREE.Mesh(
+        new THREE.BoxGeometry(barW * 0.45, barH, barD).translate(rs.x - barW * 0.27, rs.y + 0.05, rs.z),
+        matBeaconRed
+      );
+      // синяя правая половина
+      refs.beaconBlue = new THREE.Mesh(
+        new THREE.BoxGeometry(barW * 0.45, barH, barD).translate(rs.x + barW * 0.27, rs.y + 0.05, rs.z),
+        matBeaconBlue
+      );
+      bodyGroup.add(refs.beaconRed, refs.beaconBlue);
+      // белые разделители по торцам
+      const endMat = new THREE.MeshLambertMaterial({ color: 0xe8e8e8 });
+      bodyGroup.add(new THREE.Mesh(
+        new THREE.BoxGeometry(0.06, barH, barD).translate(rs.x - barW * 0.5, rs.y + 0.05, rs.z), endMat
+      ));
+      bodyGroup.add(new THREE.Mesh(
+        new THREE.BoxGeometry(0.06, barH, barD).translate(rs.x + barW * 0.5, rs.y + 0.05, rs.z), endMat
+      ));
+    } else {
+      // Скорая: два маленьких маячка (как было)
+      const barGeo = () => new THREE.BoxGeometry(0.4, 0.13, 0.2);
+      refs.beaconRed = new THREE.Mesh(barGeo().translate(rs.x - 0.1, rs.y, rs.z), matBeaconRed);
+      refs.beaconBlue = new THREE.Mesh(barGeo().translate(rs.x + 0.1, rs.y, rs.z), matBeaconBlue);
+      bodyGroup.add(refs.beaconRed, refs.beaconBlue);
+    }
   }
 
   // --- багажник на крыше (wagon/suv/van, spec.hasRoofRack) ---

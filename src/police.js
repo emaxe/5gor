@@ -47,7 +47,7 @@ export class PoliceManager {
    */
   _policeNearby(player, traffic) {
     for (const car of traffic.cars) {
-      if (!car.mesh.visible || !car.beaconRed) continue;
+      if (!car.mesh.visible || car.beacon !== 'police') continue;
       const d = dist2D(car.x, car.z, player.x, player.z);
       if (d < POLICE_DETECT_RADIUS) return true;
     }

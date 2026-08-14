@@ -337,7 +337,8 @@ export class SfxLibrary {
     e.tone(freq, 0.1, 'sine', 0.07, 0, null, e.buses.ui);
   }
 
-  /* Сирена спецтранспорта — двухтоновый вой с 3D-позиционированием (как horn) */
+  /* Сирена спецтранспорта — полицейская «крякалка» (короткие тон-импульсы)
+     или двухтоновый вой для скорой. 3D-позиционирование (как horn). */
   siren(opts = {}) {
     const e = this.engine;
     if (!e.enabled || !e.ctx) return;
@@ -356,25 +357,44 @@ export class SfxLibrary {
 
     const c = e.ctx;
     const t = c.currentTime;
-    const dur = 1.4;
-    const destNode = e.takePanner('sfx', panVal, t);
-    e.releaseAfter('siren', dur * 1000 + 100);
-
     const type = opts.type === 'ambulance' ? 'ambulance' : 'police';
-    const o = c.createOscillator(); o.type = 'sine';
-    const lfoRate = type === 'ambulance' ? 3.2 : 0.9;
-    const lo = type === 'ambulance' ? 550 : 700, hi = type === 'ambulance' ? 950 : 1100;
-    const steps = Math.round(dur * lfoRate * 2);
-    for (let i = 0; i <= steps; i++) {
-      const tt = t + (i / steps) * dur;
-      o.frequency.linearRampToValueAtTime(i % 2 === 0 ? hi : lo, tt);
+    const destNode = e.takePanner('sfx', panVal, t);
+
+    if (type === 'police') {
+      // «Крякалка»: 4 коротких импульса (вик-вик-вик-вик), ~0.7 сек
+      const blipDur = 0.12, gap = 0.05;
+      const lo = 680, hi = 960;
+      for (let i = 0; i < 4; i++) {
+        const tt = t + i * (blipDur + gap);
+        const o = c.createOscillator(); o.type = 'square';
+        o.frequency.setValueAtTime(hi, tt);
+        o.frequency.linearRampToValueAtTime(lo, tt + blipDur * 0.7);
+        const g = c.createGain();
+        g.gain.setValueAtTime(0.0001, tt);
+        g.gain.linearRampToValueAtTime(vol * 0.11, tt + 0.01);
+        g.gain.linearRampToValueAtTime(0.0001, tt + blipDur);
+        o.connect(g); g.connect(destNode);
+        o.start(tt); o.stop(tt + blipDur + 0.02);
+      }
+      e.releaseAfter('siren', 800);
+    } else {
+      // Скорая: двухтоновый вой (как было)
+      const dur = 1.4;
+      e.releaseAfter('siren', dur * 1000 + 100);
+      const o = c.createOscillator(); o.type = 'sine';
+      const lfoRate = 3.2, lo = 550, hi = 950;
+      const steps = Math.round(dur * lfoRate * 2);
+      for (let i = 0; i <= steps; i++) {
+        const tt = t + (i / steps) * dur;
+        o.frequency.linearRampToValueAtTime(i % 2 === 0 ? hi : lo, tt);
+      }
+      const g = c.createGain(); g.gain.setValueAtTime(0.0001, t);
+      g.gain.linearRampToValueAtTime(vol * 0.09, t + 0.1);
+      g.gain.setValueAtTime(vol * 0.09, t + dur - 0.15);
+      g.gain.linearRampToValueAtTime(0.0001, t + dur);
+      o.connect(g); g.connect(destNode);
+      o.start(t); o.stop(t + dur + 0.05);
     }
-    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t);
-    g.gain.linearRampToValueAtTime(vol * 0.09, t + 0.1);
-    g.gain.setValueAtTime(vol * 0.09, t + dur - 0.15);
-    g.gain.linearRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(destNode);
-    o.start(t); o.stop(t + dur + 0.05);
   }
 
   /* Шаг ближайшего пешехода — короткий приглушённый шумовой тук */

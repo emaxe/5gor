@@ -67,7 +67,7 @@ export const TRAFFIC_TYPES = [
   // --- общественный/спецтранспорт ---
   { name: 'marshrutka', shape: 'van', r: 2.3, len: 5.4, w: 2.05, weight: 4, colors: [0xf0f0f0], forceColor: true },
   { name: 'bus', shape: 'bus', r: 2.9, len: 8.5, w: 2.35, weight: 2, colors: [0xe4e4e4], forceColor: true },
-  { name: 'police', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 6, colors: [0x1c2430], forceColor: true, beacon: 'police' },
+  { name: 'police', shape: 'sedan', r: 2.0, len: 4.4, w: 1.9, weight: 6, colors: [0xe8e8e8], forceColor: true, beacon: 'police', policeLivery: true },
   { name: 'ambulance', shape: 'van', r: 2.3, len: 5.0, w: 2.0, weight: 1, colors: [0xf4f4f0], forceColor: true, beacon: 'ambulance' },
   // --- ретро/советские ---
   { name: 'zhiguli', shape: 'retro', r: 1.9, len: 4.1, w: 1.75, weight: 9, colors: [0xd8c088, 0x6a4a6a, 0xa8c8d8, 0xc03030, 0xe8e4d0] },
@@ -128,25 +128,23 @@ export class TrafficManager {
     const bodyColor = def.forceColor ? def.colors[0] : choice(def.colors);
     const darkColor = 0x22262c;
     const chromeColor = def.shape === 'retro' ? 0xd8d8d8 : 0xc8c8c8;
-    // дискретная вариация силуэта: индекс в маленькой фиксированной таблице
-    // своего семейства силуэтов (carmodel.js SHAPE_VARIANTS), а не случайный
-    // float — число различных геометрий на тип остаётся конечным и малым,
-    // _bodyGeoCache не растёт неограниченно (ключ считает carGeoCacheKey)
+
+    // Полицейская ливрея: синяя полоса на белом кузове
+    const isPolice = !!def.policeLivery;
+    const liveryMat = isPolice
+      ? new THREE.MeshLambertMaterial({ color: 0x1a3a8a })
+      : this.matLivery;
+
     const variants = shapeVariants(def.shape);
     const shapeOpts = variants[(Math.random() * variants.length) | 0];
-    // багажник на крыше: hasRoofRack передаём безусловно — единственный
-    // источник правды о том, разрешён ли он геометрически (roofRackOk в
-    // CAR_SHAPES: wagon/suv/van), это внутренний гейт buildCarModel
-    // (built.roofRack === null для остальных силуэтов, см. carmodel.js);
-    // дублировать список силуэтов здесь не нужно.
     const built = buildCarModel({
       shape: def.shape, w: def.w, len: def.len, animated: false,
       matBody: this.matColored, matGlass: this.matGlass,
       matHead: this.matHead, matStop: this.matStop,
-      matPlate: this.matPlate, matSign: this.matSign, matLivery: this.matLivery,
+      matPlate: this.matPlate, matSign: this.matSign, matLivery: liveryMat,
       matBeaconRed: this.matBeaconRed, matBeaconBlue: this.matBeaconBlue,
       bodyColor, darkColor, chromeColor, bodyKit: def.bodyKit || 'stock', shapeOpts,
-      hasPlate: true, hasSign: !!def.livery, hasLivery: !!def.livery, beacon: def.beacon || null,
+      hasPlate: true, hasSign: !!def.livery, hasLivery: !!def.livery || isPolice, beacon: def.beacon || null,
       hasRoofRack: true,
     });
     built.group.userData.type = def.name;
@@ -173,6 +171,7 @@ export class TrafficManager {
         type: typeIdx, mesh, alive: true, radius: def.r,
         axis: 'z', coord: 0, dir: 1, pos: 0, speed: 0, target: 10, lane: 1, turnT: 0,
         speechSprite: null, speechT: 0, yellCd: 0,
+        beacon: def.beacon || null,
         beaconRed: refs.beaconRed || null, beaconBlue: refs.beaconBlue || null,
       };
       this.cars.push(car);

@@ -265,8 +265,9 @@ export class AudioManager {
     }
 
     if (v.siren) {
+      const sirenInterval = v.siren.type === 'police' ? 1.0 : 1.5;
       if (!this._sirenNext || now >= this._sirenNext) {
-        this._sirenNext = now + 1.5;
+        this._sirenNext = now + sirenInterval;
         this.sfx.siren({
           sourceX: v.siren.x, sourceZ: v.siren.z,
           playerX: v.x, playerZ: v.z, playerHeading: v.heading, type: v.siren.type,
