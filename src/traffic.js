@@ -264,10 +264,10 @@ export class TrafficManager {
 
       // пропсы (барьеры, заборы, ящики) — тормозим перед ними
       if (world) {
-        const aheadPos = car.pos + car.dir * 6;
+        const aheadPos = car.pos + car.dir * 5;
         const ax = car.axis === 'z' ? car.coord - car.dir * 2.5 : aheadPos;
         const az = car.axis === 'z' ? aheadPos : car.coord + car.dir * 2.5;
-        if (world._checkPropCollision(ax, az, 2.0)) {
+        if (world._checkPropCollision(ax, az, 1.0)) {
           car.target = 0;
         }
       }
@@ -329,14 +329,15 @@ export class TrafficManager {
         car.target = Math.min(car.target, 2);
       }
 
-      // светофор: стоп-линия в 6.5 м до перекрёстка. Тормозим, если успеваем
-      // остановиться до неё; если уже на/за линией — проезжаем (въехал — проезжай)
+      // светофор: стоп-линия в 6.5 м до перекрёстка. Тормозим только когда
+      // достаточно близко — тормозной путь + стоп-линия + 3 м запас.
+      // Раньше l.dist > brakeDist тормозило за 45 м до перекрёстка.
       const l = this._lightAhead(car);
       if (l && l.state !== 0) {
         const stopLine = 6.5;
         if (l.dist > stopLine) {
-          const brakeDist = car.speed * car.speed / 20; // тормозной путь при 10 м/с²
-          if (l.dist > brakeDist) car.target = Math.min(car.target, 0);
+          const brakeDist = car.speed * car.speed / 20;
+          if (l.dist <= brakeDist + stopLine + 3) car.target = Math.min(car.target, 0);
         } else if (car.speed < 1) {
           car.target = Math.min(car.target, 0); // уже у линии — ждём зелёный
         }
@@ -445,7 +446,7 @@ export class TrafficManager {
       const dist = car.axis === 'z'
         ? (car.dir > 0 ? l.isec.z - wp.z : wp.z - l.isec.z)
         : (car.dir > 0 ? l.isec.x - wp.x : wp.x - l.isec.x);
-      if (dist <= 0 || dist > 45) continue;
+      if (dist <= 0 || dist > 30) continue;
       // светофор должен оставаться впереди по ходу (не проехали его угол)
       const ahead = car.axis === 'z'
         ? (car.dir > 0 ? l.z - wp.z : wp.z - l.z)

@@ -760,11 +760,11 @@ export class PedestrianManager {
         if (p.waitT > 22.0) this._cancelCross(p);
         return;
       }
-      if (this._carOnRoad(p, 25)) return;
+      if (this._carOnRoad(p, 18)) return;
       p.mode = 'cross';
     } else {
-      if (this._carOnRoad(p, 32)) {
-        if (p.waitT > 12.0) this._cancelCross(p);
+      if (this._carOnRoad(p, 22)) {
+        if (p.waitT > 7.0) this._cancelCross(p);
         return;
       }
       p.mode = 'cross';
@@ -789,7 +789,7 @@ export class PedestrianManager {
 
     const light = this._getLightForPed(p);
     const lightTurnedRed = light && light.state !== 2;
-    const carApproaching = this._carOnRoad(p, 20);
+    const carApproaching = this._carOnRoad(p, 14);
 
     if (lightTurnedRed || carApproaching) {
       c.t += dt * 1.6;
