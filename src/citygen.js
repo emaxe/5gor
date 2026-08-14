@@ -188,16 +188,45 @@ export class World {
     return false;
   }
 
+  /* Проверяет близость к точкам посадки такси (pickupPoints) */
+  _isNearPickupPoint(x, z, margin = 2.0) {
+    const nearZ = Math.round((z + 208) / 48) * 48 - 208;
+    if (Math.abs(z - nearZ) < margin && nearZ >= -208 && nearZ <= 208) {
+      for (const r of this.roadsV) {
+        if (Math.abs(x - (r.c + 8.0)) < margin || Math.abs(x - (r.c - 8.0)) < margin) return true;
+      }
+    }
+    const nearX = Math.round((x + 208) / 48) * 48 - 208;
+    if (Math.abs(x - nearX) < margin && nearX >= -208 && nearX <= 208) {
+      for (const r of this.roadsH) {
+        if (Math.abs(z - (r.c + 8.0)) < margin || Math.abs(z - (r.c - 8.0)) < margin) return true;
+      }
+    }
+    return false;
+  }
+
+  /* Проверяет близость к входам пешеходных переходов (зебр) */
+  _isNearCrosswalk(x, z, margin = 1.8) {
+    for (const isec of this.intersections) {
+      const dx = Math.abs(x - isec.x);
+      const dz = Math.abs(z - isec.z);
+      if (Math.abs(dx - 8.0) < margin && Math.abs(dz - 6.2) < margin) return true;
+      if (Math.abs(dx - 6.2) < margin && Math.abs(dz - 8.0) < margin) return true;
+    }
+    return false;
+  }
+
   /**
    * Проверяет, валидна ли позиция для спавна столба, дерева или объекта:
-   * 1. Запрещает попадание на проезжую часть дороги (отступ от оси дороги < 6.3 м)
+   * 1. Запрещает попадание на проезжую часть дороги (ширина дороги 12 м = 6 м полуширина)
    * 2. Запрещает прохождение сквозь стены и контур зданий
    * 3. Запрещает попадание в водно-парковые зоны (Провал, фонтаны)
-   * 4. Запрещает наложение предметов друг на друга
+   * 4. Запрещает блокирование точек посадки пассажиров и зебр
+   * 5. Запрещает наложение предметов друг на друга
    */
   isPositionValid(x, z, radius = 0.8) {
-    // 1. Никаких предметов на проезжей части дороги (ширина дороги 12 м = 6 м полуширина)
-    if (this.distToRoad(x, z) < 6.3) return false;
+    // 1. Никаких предметов на проезжей части дороги
+    if (this.distToRoad(x, z) < 6.0 + radius + 0.3) return false;
 
     // 2. Никаких предметов внутри контура или стен зданий
     for (const b of this.buildings) {
@@ -211,7 +240,13 @@ export class World {
       if (Math.hypot(x - c.x, z - c.z) < c.r + radius + 0.8) return false;
     }
 
-    // 4. Запрет наложения предметов друг на друга
+    // 4. Запрет блокирования точек посадки пассажиров
+    if (this._isNearPickupPoint(x, z, radius + 1.2)) return false;
+
+    // 5. Запрет блокирования пешеходных переходов
+    if (this._isNearCrosswalk(x, z, radius + 0.8)) return false;
+
+    // 6. Запрет наложения предметов друг на друга
     if (this._checkPropCollision(x, z, radius)) return false;
 
     return true;
@@ -235,6 +270,12 @@ export class World {
     this._signs();
     this._streetBenches();
     this._planters();
+    this._busStops();
+    this._wasteBins();
+    this._kiosks();
+    this._playgrounds();
+    this._pedestrianFences();
+    this._parkedCars();
     this._collectPickupPoints();
   }
 
@@ -1885,7 +1926,9 @@ export class World {
     const cMat = new THREE.MeshLambertMaterial({ color: 0xffffff, vertexColors: false });
     const spots = []; // {x,z,type}
 
-    const tryAddTree = (x, z, type) => {
+    const tryAddTree = (x, z, type, isPark = false) => {
+      // Деревья в кварталах сажаем во дворах/скверах (distToRoad >= 11.5), не на тротуарах и не на дорогах
+      if (!isPark && this.distToRoad(x, z) < 11.5) return;
       if (!this.isPositionValid(x, z, 1.8)) return;
       if (this.distToSerp(x, z) < 12) return;   // не на серпантине (полка+откос)
       spots.push({ x, z, type });
@@ -1896,7 +1939,7 @@ export class World {
       const dist = this.blockDistrict(bi, bj);
       const sp = this.blockSpecial(bi, bj);
       const r = this.blockRect(bi, bj);
-      if (sp === 'rynok') continue; // рынок теперь мощён и обнесён оградой — деревьям там не место
+      if (sp === 'rynok') continue; // рынок мощён и обнесён оградой
       let n = { center: 1, kurort: 3, prigorod: 2, sanatorii: 4, mashuk: 3, proval: 8, rynok: 2, vokzal: 3 }[dist] || 2;
       if (sp === 'park') n = 12;
       for (let k = 0; k < n; k++) {
@@ -1906,19 +1949,19 @@ export class World {
           if (dc < 18) continue;                                            // площадь, клумбы, скамьи
           if (Math.abs(x + 32) < 3.4 || Math.abs(z - 32) < 3.4) continue;   // радиальные дорожки
         }
-        tryAddTree(x, z, rng() < 0.75 ? 0 : 1);
+        tryAddTree(x, z, rng() < 0.75 ? 0 : 1, sp === 'park');
       }
     }
     // опушка Машука и предгорье
     for (let k = 0; k < 70; k++) {
       const x = (rng() - 0.5) * 320, z = -300 - rng() * 200;
-      tryAddTree(x, z, rng() < 0.35 ? 0 : 1);
+      tryAddTree(x, z, rng() < 0.35 ? 0 : 1, true);
     }
-    // Окраины и зеленое кольцо за пределами застройки города (создает естественный лес вокруг)
+    // Окраины и зеленое кольцо за пределами застройки города
     for (let k = 0; k < 280; k++) {
       const a = rng() * Math.PI * 2, dd = 265 + rng() * 140;
       const tx = Math.cos(a) * dd, tz = Math.sin(a) * dd;
-      tryAddTree(tx, tz, rng() < 0.65 ? 0 : 1);
+      tryAddTree(tx, tz, rng() < 0.65 ? 0 : 1, true);
     }
 
     const dMesh = new THREE.InstancedMesh(deciduous, dMat, spots.filter((s) => s.type === 0).length);
@@ -1952,8 +1995,8 @@ export class World {
     const headGeo = headC;
     const pos = [];
     const step = 48;
-    // offset 8.5 — на тротуаре у края дороги
-    const LAMP_OFF = 8.5;
+    // offset 9.0 — на внешнем крае тротуара (пешеходы ходят по 8.0, проезжая часть до 6.0)
+    const LAMP_OFF = 9.0;
     const Z0 = -224 + 24;
 
     for (const r of this.roadsV) {
@@ -1996,42 +2039,52 @@ export class World {
     this.lampHeadMesh = heads;
   }
 
-  /* --- Скамейки, урны, кусты --- */
+  /* --- Урны и кусты --- */
   _props() {
-    // урны
+    // урны: у скамеек, остановок, входов и перекрёстков (не на газоне)
     const binB = new THREE.CylinderGeometry(0.34, 0.4, 0.85, 7);
     binB.translate(0, 0.425, 0);
     const binL = new THREE.CylinderGeometry(0.45, 0.4, 0.12, 7);
     binL.translate(0, 0.89, 0);
     const binGeo = mergeColored([{ g: binB, c: '#ffffff' }, { g: binL, c: '#ffffff' }]);
     const bins = [];
-    for (let i = 0; i < 30; i++) {
-      const road = this.rng() < 0.5;
-      const c = (this.rng() - 0.5) * 460;
-      const side = choice([-1, 1]);
-      let x, z;
-      if (road) { x = Math.round(c / CFG.CELL) * CFG.CELL + 8.5 * side; z = (this.rng() - 0.5) * 440; }
-      else { z = Math.round(c / CFG.CELL) * CFG.CELL + 8.5 * side; x = (this.rng() - 0.5) * 440; }
-      if (!this.isPositionValid(x, z, 0.6)) continue;
-      bins.push(new THREE.Matrix4().makeTranslation(x, 0.1, z));
-      this.addPropAABB({ x0: x - 0.5, z0: z - 0.5, x1: x + 0.5, z1: z + 0.5 });
+
+    // Привязываем урны к перекрёсткам и ключевым зонам (оффсет 9.0 м)
+    for (const isec of this.intersections) {
+      if (this.rng() < 0.45) {
+        for (const [ox, oz] of [[9.0, 14.0], [-9.0, -14.0], [14.0, -9.0]]) {
+          const bx = isec.x + ox, bz = isec.z + oz;
+          if (this.isPositionValid(bx, bz, 0.6)) {
+            bins.push(new THREE.Matrix4().makeTranslation(bx, 0.1, bz));
+            this.addPropAABB({ x0: bx - 0.5, z0: bz - 0.5, x1: bx + 0.5, z1: bz + 0.5 });
+          }
+        }
+      }
     }
     const binMesh = new THREE.InstancedMesh(binGeo, new THREE.MeshLambertMaterial({ color: 0x7a7a72 }), bins.length);
     bins.forEach((m, i) => binMesh.setMatrixAt(i, m));
     this.scene.add(binMesh);
 
-    // кусты
+    // кусты: вдоль границ дворов / зданий (distToRoad 10.5..13м) и в парковых зонах (не на тротуарах и не на дорогах)
     const bushGeo = new THREE.SphereGeometry(0.9, 6, 4);
     const bushes = [];
-    for (let i = 0; i < 50; i++) {
-      const x = (this.rng() - 0.5) * 500, z = (this.rng() - 0.5) * 500;
-      if (!this.isPositionValid(x, z, 1.2)) continue;
-      const m4 = new THREE.Matrix4();
-      const e2 = new THREE.Euler(0, this.rng() * 6.28, 0);
-      const q2 = new THREE.Quaternion().setFromEuler(e2);
-      m4.compose(new THREE.Vector3(x, 0.12, z), q2, new THREE.Vector3(1, 0.7, 1));
-      bushes.push(m4);
-      this.addPropAABB({ x0: x - 1.0, z0: z - 1.0, x1: x + 1.0, z1: z + 1.0 });
+    for (let bi = 0; bi < 8; bi++) for (let bj = 0; bj < 8; bj++) {
+      const sp = this.blockSpecial(bi, bj);
+      if (sp === 'rynok') continue;
+      const r = this.blockRect(bi, bj);
+      const count = sp === 'park' ? 14 : 3;
+      for (let k = 0; k < count; k++) {
+        const x = r.x0 + 4 + this.rng() * 36;
+        const z = r.z0 + 4 + this.rng() * 36;
+        if (sp !== 'park' && (this.distToRoad(x, z) < 10.5 || this.distToRoad(x, z) > 13.5)) continue;
+        if (!this.isPositionValid(x, z, 1.2)) continue;
+        const m4 = new THREE.Matrix4();
+        const e2 = new THREE.Euler(0, this.rng() * 6.28, 0);
+        const q2 = new THREE.Quaternion().setFromEuler(e2);
+        m4.compose(new THREE.Vector3(x, 0.12, z), q2, new THREE.Vector3(1, 0.7, 1));
+        bushes.push(m4);
+        this.addPropAABB({ x0: x - 1.0, z0: z - 1.0, x1: x + 1.0, z1: z + 1.0 });
+      }
     }
     const bushMesh = new THREE.InstancedMesh(bushGeo, new THREE.MeshLambertMaterial({ color: 0x4a8a42 }), bushes.length);
     bushes.forEach((m, i) => bushMesh.setMatrixAt(i, m));
@@ -2101,49 +2154,7 @@ export class World {
     }
   }
 
-  /* --- Светофоры на перекрёстках (каждый второй: 1,3,5,7) --- */
-  _trafficLights() {
-    const poleMat = new THREE.MeshLambertMaterial({ color: 0x555555 });
-    const housMat = new THREE.MeshLambertMaterial({ color: 0x222222 });
-    const poleGeo = new THREE.CylinderGeometry(0.14, 0.18, 4.2, 6);
-    poleGeo.translate(0, 2.1, 0);
-    // козырёк над лампами — лампы остаются открытыми и видны со всех сторон
-    const housGeo = new THREE.BoxGeometry(0.56, 0.14, 0.7);
-    housGeo.translate(0, 5.0, 0);
-    const lampGeo = new THREE.SphereGeometry(0.2, 8, 6);
-    for (let i = 1; i < 8; i += 2) for (let j = 1; j < 8; j += 2) {
-      const x = -256 + i * CFG.CELL, z = -256 + j * CFG.CELL;
-      // 4 светофора по углам перекрёстка (на тротуаре, не на проезжей части):
-      // СВ — для полосы V в +Z, ЮВ — для H в +X, ЮЗ — для V в −Z, СЗ — для H в −X
-      const corners = [
-        { x: x + 9, z: z + 9, axis: 'z' },
-        { x: x + 9, z: z - 9, axis: 'x' },
-        { x: x - 9, z: z - 9, axis: 'z' },
-        { x: x - 9, z: z + 9, axis: 'x' },
-      ];
-      for (const sp of corners) {
-        const g = new THREE.Group();
-        g.position.set(sp.x, 0, sp.z);
-        const pole = new THREE.Mesh(poleGeo, poleMat);
-        g.add(pole);
-        const housing = new THREE.Mesh(housGeo, housMat);
-        g.add(housing);
-        const lamps = [];
-        for (let k = 0; k < 3; k++) {
-          const lamp = new THREE.Mesh(lampGeo, new THREE.MeshBasicMaterial({ color: TRAFFIC_LIGHT_DARK[k] }));
-          lamp.position.set(0, 4.7 - k * 0.5, 0);
-          lamp.userData.i = k;
-          g.add(lamp);
-          lamps.push(lamp);
-        }
-        // лампы «смотрят» вдоль своей дороги (к подъезжающим полосам)
-        g.rotation.y = sp.axis === 'z' ? 0 : Math.PI / 2;
-        this.scene.add(g);
-        // off — «зелёная волна» вдоль X: перекрёстки восточнее сдвинуты по фазе
-        this.lights.push({ group: g, axis: sp.axis, x: sp.x, z: sp.z, isec: { x, z }, state: 0, off: -(x / CFG.CELL) * 1.6, lamps });
-      }
-    }
-  }
+
 
   /* --- Канатная дорога на Машук --- */
   _cableCar() {
@@ -2440,6 +2451,214 @@ export class World {
     this.scene.add(housMesh);
     this.scene.add(lampsMesh);
     this.trafficLampMesh = lampsMesh;
+  }
+
+  /* --- Остановки общественного транспорта --- */
+  _busStops() {
+    const glassMat = new THREE.MeshLambertMaterial({ color: 0x4a7fa8, transparent: true, opacity: 0.6 });
+    const metalMat = new THREE.MeshLambertMaterial({ color: 0x3a3a3c });
+    const roofMat = new THREE.MeshLambertMaterial({ color: 0x2e4a62 });
+    const parts = [];
+
+    const placeBusStop = (x, z, rotY) => {
+      if (!this.isPositionValid(x, z, 1.4)) return;
+      const shelter = new THREE.Mesh(new THREE.BoxGeometry(4.0, 0.12, 2.0), roofMat);
+      shelter.position.set(x, 2.4, z); shelter.rotation.y = rotY;
+      this.scene.add(shelter);
+      const wall = new THREE.Mesh(new THREE.BoxGeometry(3.8, 2.2, 0.08), glassMat);
+      wall.position.set(x + Math.sin(rotY) * (-0.9), 1.1, z + Math.cos(rotY) * (-0.9));
+      wall.rotation.y = rotY;
+      this.scene.add(wall);
+
+      // Скамейка внутри навеса
+      this._bench(x, z, rotY, 0.12, parts);
+      this.addPropAABB(this._rotRect(x, z, rotY, 4.2, 2.2));
+    };
+
+    const stopLocations = [
+      { x: -55, z: -18, rotY: Math.PI / 2 },
+      { x: 55, z: 18, rotY: -Math.PI / 2 },
+      { x: 120, z: 55, rotY: 0 },
+      { x: 73, z: -18, rotY: Math.PI / 2 },
+      { x: -18, z: 73, rotY: Math.PI },
+      { x: 18, z: -120, rotY: 0 },
+    ];
+
+    for (const loc of stopLocations) {
+      placeBusStop(loc.x, loc.z, loc.rotY);
+    }
+    if (parts.length) this.scene.add(new THREE.Mesh(mergeColored(parts), this._vcMat()));
+  }
+
+  /* --- Мусорные контейнеры у домов --- */
+  _wasteBins() {
+    const padMat = new THREE.MeshLambertMaterial({ color: 0x8a8a82 });
+    const binMat1 = new THREE.MeshLambertMaterial({ color: 0x2e6a3e });
+    const binMat2 = new THREE.MeshLambertMaterial({ color: 0x2e4a6a });
+    const fenceMat = new THREE.MeshLambertMaterial({ color: 0x5a5a54 });
+
+    for (let bi = 0; bi < 8; bi++) {
+      for (let bj = 0; bj < 8; bj++) {
+        const dist = this.blockDistrict(bi, bj);
+        if (dist === 'mashuk' || dist === 'proval' || this.blockSpecial(bi, bj)) continue;
+        const r = this.blockRect(bi, bj);
+        const x = r.x0 + 12 + (bi % 2) * 16;
+        const z = r.z0 + 12 + (bj % 2) * 16;
+        if (this.distToRoad(x, z) < 11.5) continue;
+        if (!this.isPositionValid(x, z, 1.5)) continue;
+
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.1, 2.2), padMat);
+        pad.position.set(x, 0.05, z);
+        this.scene.add(pad);
+
+        for (const [ox, mat] of [[-0.7, binMat1], [0.7, binMat2]]) {
+          const dumpster = new THREE.Mesh(new THREE.BoxGeometry(1.0, 1.1, 0.9), mat);
+          dumpster.position.set(x + ox, 0.6, z);
+          this.scene.add(dumpster);
+        }
+
+        const f1 = new THREE.Mesh(new THREE.BoxGeometry(3.4, 1.2, 0.1), fenceMat);
+        f1.position.set(x, 0.6, z - 1.1);
+        const f2 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.2, 2.2), fenceMat);
+        f2.position.set(x - 1.65, 0.6, z);
+        const f3 = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.2, 2.2), fenceMat);
+        f3.position.set(x + 1.65, 0.6, z);
+        this.scene.add(f1, f2, f3);
+
+        this.addPropAABB({ x0: x - 1.8, z0: z - 1.3, x1: x + 1.8, z1: z + 1.3 });
+      }
+    }
+  }
+
+  /* --- Торговые киоски (Печать, Нарзан, Мороженое) --- */
+  _kiosks() {
+    const spots = [
+      { x: 138, z: 62, text: 'ПЕЧАТЬ', color: 0x2a5ad8 },
+      { x: -50, z: -18, text: 'НАРЗАН', color: 0x2a8a50 },
+      { x: 70, z: -50, text: 'МОРОЖЕНОЕ', color: 0xd88a2a },
+      { x: -18, z: -50, text: 'ПРЕССА', color: 0xc83a2a },
+      { x: 50, z: 120, text: 'СУВЕНИРЫ', color: 0x8a3ad8 },
+    ];
+
+    for (const sp of spots) {
+      if (!this.isPositionValid(sp.x, sp.z, 1.5)) continue;
+
+      const g = new THREE.Group();
+      const body = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.5, 2.0), new THREE.MeshLambertMaterial({ color: 0xe8e4dc }));
+      body.position.y = 1.25; g.add(body);
+
+      const win = new THREE.Mesh(new THREE.BoxGeometry(1.6, 1.0, 0.1), new THREE.MeshBasicMaterial({ color: 0xffea9f }));
+      win.position.set(0, 1.4, 1.01); g.add(win);
+
+      const awn = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.1, 0.8), new THREE.MeshLambertMaterial({ color: sp.color }));
+      awn.position.set(0, 2.0, 1.3); g.add(awn);
+
+      const signTex = this._signTexture(sp.text, 'kiosk_' + sp.text, '#1b2a3a', '#f2ead6');
+      const sign = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 0.5), new THREE.MeshBasicMaterial({ map: signTex }));
+      sign.position.set(0, 2.35, 1.02); g.add(sign);
+
+      g.position.set(sp.x, 0, sp.z);
+      this.scene.add(g);
+      this.addPropAABB({ x0: sp.x - 1.4, z0: sp.z - 1.2, x1: sp.x + 1.4, z1: sp.z + 1.2 });
+    }
+  }
+
+  /* --- Детские площадки в жилых кварталах --- */
+  _playgrounds() {
+    const spots = [
+      { x: -140, z: 140 },
+      { x: 140, z: -140 },
+      { x: -140, z: -140 },
+      { x: 140, z: 140 },
+    ];
+
+    for (const sp of spots) {
+      if (this.distToRoad(sp.x, sp.z) < 14) continue;
+      if (!this.isPositionValid(sp.x, sp.z, 3.2)) continue;
+
+      const g = new THREE.Group();
+      const sand = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.25, 3.0), new THREE.MeshLambertMaterial({ color: 0xd8c880 }));
+      sand.position.set(-1.5, 0.125, -1.5); g.add(sand);
+
+      const slideMat = new THREE.MeshLambertMaterial({ color: 0xd83a2a });
+      const slide = new THREE.Mesh(new THREE.BoxGeometry(0.8, 1.8, 2.4), slideMat);
+      slide.position.set(1.8, 0.9, 1.0); g.add(slide);
+
+      const swingMat = new THREE.MeshLambertMaterial({ color: 0x2a7ad8 });
+      const frame = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.2, 0.1), swingMat);
+      frame.position.set(-1.0, 1.1, 1.8); g.add(frame);
+
+      g.position.set(sp.x, 0, sp.z);
+      this.scene.add(g);
+      this.addPropAABB({ x0: sp.x - 3.5, z0: sp.z - 3.5, x1: sp.x + 3.5, z1: sp.z + 3.5 });
+    }
+  }
+
+  /* --- Пешеходные металлоограждения вдоль тротуаров --- */
+  _pedestrianFences() {
+    const fenceGeo = new THREE.BoxGeometry(2.8, 0.85, 0.08);
+    fenceGeo.translate(0, 0.425, 0);
+    const fenceMat = new THREE.MeshLambertMaterial({ color: 0xb0b0b8 });
+    const items = [];
+
+    const OFF = 9.6;
+    for (let i = 2; i < 7; i++) {
+      for (let j = 2; j < 7; j++) {
+        if ((i + j) % 2 !== 0) continue;
+        const x = -256 + i * CFG.CELL;
+        const z = -256 + j * CFG.CELL;
+        for (const sx of [-1, 1]) {
+          for (const sz of [-15, 15]) {
+            const fx = x + sx * OFF;
+            const fz = z + sz;
+            if (this.isPositionValid(fx, fz, 0.5)) {
+              items.push({ x: fx, z: fz, rot: 0 });
+              this.addPropAABB({ x0: fx - 0.2, z0: fz - 1.5, x1: fx + 0.2, z1: fz + 1.5 });
+            }
+          }
+        }
+      }
+    }
+
+    if (items.length) {
+      const mesh = new THREE.InstancedMesh(fenceGeo, fenceMat, items.length);
+      const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), s = new THREE.Vector3(1, 1, 1);
+      items.forEach((it, idx) => {
+        e.set(0, it.rot, 0); q.setFromEuler(e);
+        m4.compose(new THREE.Vector3(it.x, 0.1, it.z), q, s);
+        mesh.setMatrixAt(idx, m4);
+      });
+      this.scene.add(mesh);
+    }
+  }
+
+  /* --- Припаркованные авто на площадках (вокзал, рынок, санатории) --- */
+  _parkedCars() {
+    const spots = [
+      { x: 148, z: 58, rot: 0 },
+      { x: 154, z: 58, rot: 0 },
+      { x: 160, z: 58, rot: 0 },
+      { x: 80, z: -50, rot: Math.PI / 2 },
+      { x: 80, z: -45, rot: Math.PI / 2 },
+      { x: -110, z: 120, rot: 0 },
+      { x: -104, z: 120, rot: 0 },
+    ];
+
+    const carCols = [0x3a5ad8, 0xd83a3a, 0x3ad85a, 0xd8d8d8, 0x2a2a2c, 0xd8a02a];
+    let colIdx = 0;
+
+    for (const sp of spots) {
+      if (!this.isPositionValid(sp.x, sp.z, 1.4)) continue;
+
+      const bodyMat = new THREE.MeshLambertMaterial({ color: carCols[colIdx % carCols.length] });
+      colIdx++;
+      const car = new THREE.Mesh(new THREE.BoxGeometry(2.0, 1.4, 4.2), bodyMat);
+      car.position.set(sp.x, 0.7, sp.z);
+      car.rotation.y = sp.rot;
+      this.scene.add(car);
+
+      this.addPropAABB(this._rotRect(sp.x, sp.z, sp.rot, 2.2, 4.4));
+    }
   }
 
   /* --- Точки посадки пассажиров --- */
