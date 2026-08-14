@@ -262,6 +262,16 @@ export class TrafficManager {
       car.target = rand(7, 13) * (density || 1);
       car.target = clamp(car.target, 4, 16);
 
+      // пропсы (барьеры, заборы, ящики) — тормозим перед ними
+      if (world) {
+        const aheadPos = car.pos + car.dir * 6;
+        const ax = car.axis === 'z' ? car.coord - car.dir * 2.5 : aheadPos;
+        const az = car.axis === 'z' ? aheadPos : car.coord + car.dir * 2.5;
+        if (world._checkPropCollision(ax, az, 2.0)) {
+          car.target = 0;
+        }
+      }
+
       // дистанция до впереди идущих
       for (const other of this.cars) {
         if (other === car || !other.alive) continue;
