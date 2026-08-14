@@ -203,11 +203,11 @@ export class TrafficManager {
     for (let i = 0; i < 10; i++) {
       let r;
       if (Math.random() < 0.5) {
-        const coord = clamp(Math.round((px + rand(-80, 80)) / CFG.CELL) * CFG.CELL, -250, 250);
-        r = { axis: 'z', coord, pos: clamp(pz + rand(-140, 140), -250, 250), dir: Math.random() < 0.5 ? 1 : -1 };
+        const coord = clamp(Math.round((px + rand(-80, 80)) / CFG.CELL) * CFG.CELL, -256, 256);
+        r = { axis: 'z', coord, pos: clamp(pz + rand(-140, 140), -256, 256), dir: Math.random() < 0.5 ? 1 : -1 };
       } else {
-        const coord = clamp(Math.round((pz + rand(-80, 80)) / CFG.CELL) * CFG.CELL, -250, 250);
-        r = { axis: 'x', coord, pos: clamp(px + rand(-140, 140), -250, 250), dir: Math.random() < 0.5 ? 1 : -1 };
+        const coord = clamp(Math.round((pz + rand(-80, 80)) / CFG.CELL) * CFG.CELL, -256, 256);
+        r = { axis: 'x', coord, pos: clamp(px + rand(-140, 140), -256, 256), dir: Math.random() < 0.5 ? 1 : -1 };
       }
       const wx = r.axis === 'z' ? r.coord - r.dir * 2.5 : r.pos;
       const wz = r.axis === 'z' ? r.pos : r.coord + r.dir * 2.5;
@@ -257,7 +257,7 @@ export class TrafficManager {
         this.placeNear(car, player);
         continue;
       }
-      if (Math.abs(car.pos) > 250) { car.dir = -car.dir; car.pos = clamp(car.pos, -250, 250); }
+      if (Math.abs(car.pos) > 256) { car.dir = -car.dir; car.pos = clamp(car.pos, -256, 256); }
 
       car.target = rand(7, 13) * (density || 1);
       car.target = clamp(car.target, 4, 16);

@@ -207,9 +207,9 @@ export class PedestrianManager {
       const vertical = Math.random() < 0.5;
       const rx = rand(-160, 160);
       const rz = rand(-160, 160);
-      const coord = clamp(Math.round(((vertical ? px : pz) + (vertical ? rx : rz)) / CFG.CELL) * CFG.CELL, -250, 250);
+      const coord = clamp(Math.round(((vertical ? px : pz) + (vertical ? rx : rz)) / CFG.CELL) * CFG.CELL, -256, 256);
       const axis = vertical ? 'z' : 'x';
-      const pos = clamp((vertical ? pz : px) + (vertical ? rz : rx), -250, 250);
+      const pos = clamp((vertical ? pz : px) + (vertical ? rz : rx), -256, 256);
       const side = Math.random() < 0.5 ? -1 : 1;
 
       const wx = axis === 'z' ? coord + side * PED_SIDE : pos;
@@ -232,9 +232,9 @@ export class PedestrianManager {
       const bx = clamp(px + Math.sin(backAngle) * backDist, -250, 250);
       const bz = clamp(pz + Math.cos(backAngle) * backDist, -250, 250);
       const vertical = Math.random() < 0.5;
-      const coord = clamp(Math.round((vertical ? bx : bz) / CFG.CELL) * CFG.CELL, -250, 250);
+      const coord = clamp(Math.round((vertical ? bx : bz) / CFG.CELL) * CFG.CELL, -256, 256);
       const axis = vertical ? 'z' : 'x';
-      const pos = clamp(vertical ? bz : bx, -250, 250);
+      const pos = clamp(vertical ? bz : bx, -256, 256);
       place = { axis, coord, pos, side: Math.random() < 0.5 ? 1 : -1 };
     }
 
@@ -1245,12 +1245,12 @@ export class PedestrianManager {
 
   /* Вернуть убежавшего на тротуар */
   _snapToSidewalk(p) {
-    const rx = clamp(Math.round(p.fx / CFG.CELL) * CFG.CELL, -250, 250);
-    const rz = clamp(Math.round(p.fz / CFG.CELL) * CFG.CELL, -250, 250);
+    const rx = clamp(Math.round(p.fx / CFG.CELL) * CFG.CELL, -256, 256);
+    const rz = clamp(Math.round(p.fz / CFG.CELL) * CFG.CELL, -256, 256);
     if (Math.abs(p.fx - rx) <= Math.abs(p.fz - rz)) {
-      p.axis = 'z'; p.coord = rx; p.pos = clamp(p.fz, -250, 250); p.side = p.fx >= rx ? 1 : -1;
+      p.axis = 'z'; p.coord = rx; p.pos = clamp(p.fz, -256, 256); p.side = p.fx >= rx ? 1 : -1;
     } else {
-      p.axis = 'x'; p.coord = rz; p.pos = clamp(p.fx, -250, 250); p.side = p.fz >= rz ? 1 : -1;
+      p.axis = 'x'; p.coord = rz; p.pos = clamp(p.fx, -256, 256); p.side = p.fz >= rz ? 1 : -1;
     }
     p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
     p.turnT = 0.8;

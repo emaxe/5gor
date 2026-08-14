@@ -432,17 +432,19 @@ export class World {
     };
 
     // Выезды на север (кроме центрального серпантина на Машук), юг, запад и восток
+    // Барьеры за последним перекрёстком (±262), не на зебре (±256)
+    const BARRIER_OFFSET = 262;
     for (const r of this.roadsV) {
       // За исключением центральной дороги на Машук по оси z = -256 (r.c === 0 на севере)
       if (r.c !== 0) {
-        placeEndBarrier(r.c, -256, false); // Северные тупики
+        placeEndBarrier(r.c, -BARRIER_OFFSET, false); // Северные тупики
       }
-      placeEndBarrier(r.c, 256, false);   // Южные тупики
+      placeEndBarrier(r.c, BARRIER_OFFSET, false);   // Южные тупики
     }
 
     for (const r of this.roadsH) {
-      placeEndBarrier(-256, r.c, true);   // Западные тупики
-      placeEndBarrier(256, r.c, true);    // Восточные тупики
+      placeEndBarrier(-BARRIER_OFFSET, r.c, true);   // Западные тупики
+      placeEndBarrier(BARRIER_OFFSET, r.c, true);    // Восточные тупики
     }
   }
 
