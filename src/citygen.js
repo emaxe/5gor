@@ -435,14 +435,14 @@ export class World {
     for (const r of this.roadsV) {
       // За исключением центральной дороги на Машук по оси z = -256 (r.c === 0 на севере)
       if (r.c !== 0) {
-        placeEndBarrier(r.c, -260, false); // Северные тупики
+        placeEndBarrier(r.c, -256, false); // Северные тупики
       }
-      placeEndBarrier(r.c, 260, false);   // Южные тупики
+      placeEndBarrier(r.c, 256, false);   // Южные тупики
     }
 
     for (const r of this.roadsH) {
-      placeEndBarrier(-260, r.c, true);   // Западные тупики
-      placeEndBarrier(260, r.c, true);    // Восточные тупики
+      placeEndBarrier(-256, r.c, true);   // Западные тупики
+      placeEndBarrier(256, r.c, true);    // Восточные тупики
     }
   }
 

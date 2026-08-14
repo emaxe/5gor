@@ -4760,14 +4760,14 @@ class World {
     for (const r of this.roadsV) {
       // За исключением центральной дороги на Машук по оси z = -256 (r.c === 0 на севере)
       if (r.c !== 0) {
-        placeEndBarrier(r.c, -260, false); // Северные тупики
+        placeEndBarrier(r.c, -256, false); // Северные тупики
       }
-      placeEndBarrier(r.c, 260, false);   // Южные тупики
+      placeEndBarrier(r.c, 256, false);   // Южные тупики
     }
 
     for (const r of this.roadsH) {
-      placeEndBarrier(-260, r.c, true);   // Западные тупики
-      placeEndBarrier(260, r.c, true);    // Восточные тупики
+      placeEndBarrier(-256, r.c, true);   // Западные тупики
+      placeEndBarrier(256, r.c, true);    // Восточные тупики
     }
   }
 
@@ -7970,11 +7970,11 @@ class TrafficManager {
     for (let i = 0; i < 10; i++) {
       let r;
       if (Math.random() < 0.5) {
-        const coord = clamp(Math.round((px + rand(-80, 80)) / CFG.CELL) * CFG.CELL, -256, 256);
-        r = { axis: 'z', coord, pos: clamp(pz + rand(-140, 140), -256, 256), dir: Math.random() < 0.5 ? 1 : -1 };
+        const coord = clamp(Math.round((px + rand(-80, 80)) / CFG.CELL) * CFG.CELL, -250, 250);
+        r = { axis: 'z', coord, pos: clamp(pz + rand(-140, 140), -250, 250), dir: Math.random() < 0.5 ? 1 : -1 };
       } else {
-        const coord = clamp(Math.round((pz + rand(-80, 80)) / CFG.CELL) * CFG.CELL, -256, 256);
-        r = { axis: 'x', coord, pos: clamp(px + rand(-140, 140), -256, 256), dir: Math.random() < 0.5 ? 1 : -1 };
+        const coord = clamp(Math.round((pz + rand(-80, 80)) / CFG.CELL) * CFG.CELL, -250, 250);
+        r = { axis: 'x', coord, pos: clamp(px + rand(-140, 140), -250, 250), dir: Math.random() < 0.5 ? 1 : -1 };
       }
       const wx = r.axis === 'z' ? r.coord - r.dir * 2.5 : r.pos;
       const wz = r.axis === 'z' ? r.pos : r.coord + r.dir * 2.5;
@@ -8024,7 +8024,7 @@ class TrafficManager {
         this.placeNear(car, player);
         continue;
       }
-      if (Math.abs(car.pos) > 268) { car.dir = -car.dir; car.pos = clamp(car.pos, -268, 268); }
+      if (Math.abs(car.pos) > 250) { car.dir = -car.dir; car.pos = clamp(car.pos, -250, 250); }
 
       car.target = rand(7, 13) * (density || 1);
       car.target = clamp(car.target, 4, 16);
@@ -8445,9 +8445,9 @@ class PedestrianManager {
       const vertical = Math.random() < 0.5;
       const rx = rand(-160, 160);
       const rz = rand(-160, 160);
-      const coord = clamp(Math.round(((vertical ? px : pz) + (vertical ? rx : rz)) / CFG.CELL) * CFG.CELL, -256, 256);
+      const coord = clamp(Math.round(((vertical ? px : pz) + (vertical ? rx : rz)) / CFG.CELL) * CFG.CELL, -250, 250);
       const axis = vertical ? 'z' : 'x';
-      const pos = clamp((vertical ? pz : px) + (vertical ? rz : rx), -256, 256);
+      const pos = clamp((vertical ? pz : px) + (vertical ? rz : rx), -250, 250);
       const side = Math.random() < 0.5 ? -1 : 1;
 
       const wx = axis === 'z' ? coord + side * PED_SIDE : pos;
@@ -8470,9 +8470,9 @@ class PedestrianManager {
       const bx = clamp(px + Math.sin(backAngle) * backDist, -250, 250);
       const bz = clamp(pz + Math.cos(backAngle) * backDist, -250, 250);
       const vertical = Math.random() < 0.5;
-      const coord = clamp(Math.round((vertical ? bx : bz) / CFG.CELL) * CFG.CELL, -256, 256);
+      const coord = clamp(Math.round((vertical ? bx : bz) / CFG.CELL) * CFG.CELL, -250, 250);
       const axis = vertical ? 'z' : 'x';
-      const pos = clamp(vertical ? bz : bx, -256, 256);
+      const pos = clamp(vertical ? bz : bx, -250, 250);
       place = { axis, coord, pos, side: Math.random() < 0.5 ? 1 : -1 };
     }
 
@@ -9483,12 +9483,12 @@ class PedestrianManager {
 
   /* Вернуть убежавшего на тротуар */
   _snapToSidewalk(p) {
-    const rx = clamp(Math.round(p.fx / CFG.CELL) * CFG.CELL, -256, 256);
-    const rz = clamp(Math.round(p.fz / CFG.CELL) * CFG.CELL, -256, 256);
+    const rx = clamp(Math.round(p.fx / CFG.CELL) * CFG.CELL, -250, 250);
+    const rz = clamp(Math.round(p.fz / CFG.CELL) * CFG.CELL, -250, 250);
     if (Math.abs(p.fx - rx) <= Math.abs(p.fz - rz)) {
-      p.axis = 'z'; p.coord = rx; p.pos = clamp(p.fz, -256, 256); p.side = p.fx >= rx ? 1 : -1;
+      p.axis = 'z'; p.coord = rx; p.pos = clamp(p.fz, -250, 250); p.side = p.fx >= rx ? 1 : -1;
     } else {
-      p.axis = 'x'; p.coord = rz; p.pos = clamp(p.fx, -256, 256); p.side = p.fz >= rz ? 1 : -1;
+      p.axis = 'x'; p.coord = rz; p.pos = clamp(p.fx, -250, 250); p.side = p.fz >= rz ? 1 : -1;
     }
     p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
     p.turnT = 0.8;
