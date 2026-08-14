@@ -173,6 +173,8 @@ export class TrafficManager {
         speechSprite: null, speechT: 0, yellCd: 0,
         beacon: def.beacon || null,
         beaconRed: refs.beaconRed || null, beaconBlue: refs.beaconBlue || null,
+        aggressive: Math.random() < 0.04,
+        turnAroundT: 0,
       };
       this.cars.push(car);
       this.scene.add(mesh);
@@ -192,8 +194,27 @@ export class TrafficManager {
     car.target = car.speed;
     car.speechT = 0;
     car.yellCd = 0;
+    car.aggressive = Math.random() < 0.04;
+    car.turnAroundT = 0;
+    delete car._runRedDecision;
     if (car.speechSprite) updateSpeechSprite(car.speechSprite, '');
     this._sync(car);
+  }
+
+  _isIntersectionClear(isec, car, peds) {
+    if (!isec) return false;
+    if (peds) {
+      for (const p of peds.cars) {
+        if (p.alive && (p.mode === 'cross' || p.mode === 'wait')) {
+          if (Math.hypot(p.x - isec.x, p.z - isec.z) < 10) return false;
+        }
+      }
+    }
+    for (const other of this.cars) {
+      if (other === car || !other.alive) continue;
+      if (Math.hypot(other.x - isec.x, other.z - isec.z) < 8.5) return false;
+    }
+    return true;
   }
 
   /* Случайная дорога неподалёку от игрока, но НЕ в ближнем поле видимости
@@ -257,10 +278,19 @@ export class TrafficManager {
         this.placeNear(car, player);
         continue;
       }
-      if (Math.abs(car.pos) > 256) { car.dir = -car.dir; car.pos = clamp(car.pos, -256, 256); }
+      // Плавный разворот на границе карты
+      if (Math.abs(car.pos) > 250) {
+        car.target = 0;
+        car.turnAroundT += dt;
+        if (car.speed < 1.0 || car.turnAroundT > 1.2) {
+          car.dir = -car.dir;
+          car.pos = clamp(car.pos, -248, 248);
+          car.turnAroundT = 0;
+        }
+      }
 
-      car.target = rand(7, 13) * (density || 1);
-      car.target = clamp(car.target, 4, 16);
+      const baseTarget = car.aggressive ? rand(9, 15) * (density || 1) * 1.25 : rand(7, 13) * (density || 1);
+      car.target = clamp(baseTarget, 4, car.aggressive ? 18 : 16);
 
       // пропсы (барьеры, заборы, ящики) — тормозим перед ними
       if (world) {
@@ -272,12 +302,27 @@ export class TrafficManager {
         }
       }
 
-      // дистанция до впереди идущих
+      // уступаем спецтранспорту с сиреной (скорая / полиция) сзади
+      if (!car.beacon && !car.beaconRed) {
+        for (const emergency of this.cars) {
+          if (emergency === car || !emergency.alive) continue;
+          if (!emergency.beacon && !emergency.beaconRed) continue;
+          if (emergency.axis !== car.axis || emergency.coord !== car.coord) continue;
+          const d = (car.pos - emergency.pos) * emergency.dir;
+          if (d > 0 && d < 25 && emergency.dir === car.dir) {
+            car.target = Math.min(car.target, 3);
+            break;
+          }
+        }
+      }
+
+      // динамическая безопасная дистанция до впереди идущих
       for (const other of this.cars) {
         if (other === car || !other.alive) continue;
         if (other.axis !== car.axis || other.coord !== car.coord || other.dir !== car.dir) continue;
         const d = (other.pos - car.pos) * car.dir;
-        if (d > 0 && d < 16) { car.target = Math.min(car.target, other.speed - 2); break; }
+        const safeDist = car.aggressive ? (car.speed * 0.8 + 2) : (car.speed * 1.5 + 4);
+        if (d > 0 && d < Math.max(6, safeDist)) { car.target = Math.min(car.target, Math.max(0, other.speed - 1.5)); break; }
       }
 
       // взаимодействия с пешеходами (пропуск, переругивание, случайное сбитие)
@@ -287,11 +332,14 @@ export class TrafficManager {
           const isSameRoad = p.axis === car.axis && p.coord === car.coord;
           const dP = (p.pos - car.pos) * car.dir;
 
-          // 1. Ругань водителя и пешехода на зебре
-          if (isSameRoad && p.mode === 'cross' && p.cross) {
+          // 1. Ругань водителя и пешехода на зебре + уступание дороги
+          if (isSameRoad && (p.mode === 'cross' || p.mode === 'wait') && p.cross) {
             const off = Math.abs((p.axis === 'z' ? p.x - p.coord : p.z - p.coord));
             if (off <= 7.5 && dP > 0 && dP < 24) {
-              car.target = Math.min(car.target, 0); // пропускаем
+              const yieldDist = car.aggressive ? 6.0 : 20.0;
+              if (dP < yieldDist) {
+                car.target = Math.min(car.target, 0); // пропускаем
+              }
               if (car.yellCd <= 0 && dP < 16 && Math.random() < 0.12) {
                 car.yellCd = 7.0;
                 Events.emit('horn', { sourceX: car.x, sourceZ: car.z });
@@ -323,24 +371,71 @@ export class TrafficManager {
         }
       }
 
+      // уступаем пешеходам на зебре при повороте
+      if (peds && car.turn) {
+        for (const p of peds.cars) {
+          if (!p.alive || (p.mode !== 'cross' && p.mode !== 'wait')) continue;
+          const distToPed = Math.hypot(p.x - car.x, p.z - car.z);
+          const yieldDist = car.aggressive ? 6.0 : 10.0;
+          if (distToPed < yieldDist) {
+            car.target = Math.min(car.target, 0);
+            break;
+          }
+        }
+      }
+
+      // приоритет на перекрёстке: машина, у которой нет поворота, уступает уже поворачивающей
+      if (!car.turn) {
+        const isec = this._nearestIntersection(car);
+        if (isec && Math.abs(car.pos - (car.axis === 'z' ? isec.z : isec.x)) < 7.0) {
+          for (const other of this.cars) {
+            if (other === car || !other.alive) continue;
+            if (other.turn && Math.hypot(other.x - isec.x, other.z - isec.z) < 8.5) {
+              car.target = Math.min(car.target, 0);
+              break;
+            }
+          }
+        }
+      }
+
       // игрок впереди в нашей полосе — тормозим
       const dP = (car.axis === 'z' ? (car.dir > 0 ? (pz - car.pos) : (car.pos - pz)) : (car.dir > 0 ? (px - car.pos) : (car.pos - px)));
       if (dP > 0 && dP < 14 && Math.abs((car.axis === 'z' ? px : pz) - car.coord) < 5.5) {
         car.target = Math.min(car.target, 2);
       }
 
-      // светофор: стоп-линия в 6.5 м до перекрёстка. Тормозим только когда
-      // достаточно близко — тормозной путь + стоп-линия + 3 м запас.
-      // Раньше l.dist > brakeDist тормозило за 45 м до перекрёстка.
+      // светофор: жёлтый — проезд если близко, красный — стоп (кроме редких лихачей при пустом перекрёстке)
       const l = this._lightAhead(car);
       if (l && l.state !== 0) {
         const stopLine = 6.5;
-        if (l.dist > stopLine) {
-          const brakeDist = car.speed * car.speed / 20;
-          if (l.dist <= brakeDist + stopLine + 3) car.target = Math.min(car.target, 0);
-        } else if (car.speed < 1) {
-          car.target = Math.min(car.target, 0); // уже у линии — ждём зелёный
+        const brakeDist = (car.speed * car.speed) / 20;
+
+        if (l.state === 1) { // Жёлтый свет
+          if (l.dist >= brakeDist + stopLine) {
+            car.target = Math.min(car.target, 0);
+          }
+        } else if (l.state === 2) { // Красный свет
+          let willRunRed = false;
+          if (car.aggressive) {
+            if (car._runRedDecision === undefined) {
+              car._runRedDecision = Math.random() < 0.3;
+            }
+            if (car._runRedDecision && this._isIntersectionClear(l.isec, car, peds)) {
+              willRunRed = true;
+            }
+          }
+          if (!willRunRed) {
+            if (l.dist > stopLine) {
+              if (l.dist <= brakeDist + stopLine + 3) {
+                car.target = Math.min(car.target, 0);
+              }
+            } else if (car.speed < 1) {
+              car.target = Math.min(car.target, 0); // уже у линии — ждём зелёный
+            }
+          }
         }
+      } else if (car._runRedDecision !== undefined) {
+        delete car._runRedDecision;
       }
 
       const diff = car.target - car.speed;

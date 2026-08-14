@@ -737,6 +737,8 @@ export class PedestrianManager {
 
   /* Начать переход */
   _startCross(p, jwalk = false) {
+    // Обычные пешеходы (не нарушители и не животные) переходят ТОЛЬКО по зебре (crosswalk) на перекрёстках
+    if (!p.violator && !p.isAnimal) jwalk = false;
     if (!jwalk) p.pos = Math.round(p.pos / CFG.CELL) * CFG.CELL;
     p.mode = p.isAnimal ? 'cross' : 'wait'; // Животные сразу идут на переход
     p.waitT = 0;
@@ -750,7 +752,7 @@ export class PedestrianManager {
     };
   }
 
-  /* Ожидание светофора / проезда */
+  /* Ожидание светофора / проезда на тротуаре */
   _updateWait(p, dt) {
     p.waitT += dt;
 
@@ -782,7 +784,7 @@ export class PedestrianManager {
     p.turnT = 1.5;
   }
 
-  /* Переход через дорогу по зебре */
+  /* Переход через дорогу по зебре с постоянной естественной скоростью */
   _updateCross(p, dt) {
     const c = p.cross;
     if (!c) { p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk'; return; }
@@ -792,7 +794,7 @@ export class PedestrianManager {
     const carApproaching = this._carOnRoad(p, 14);
 
     if (lightTurnedRed || carApproaching) {
-      c.t += dt * 1.6;
+      c.t += dt * 1.4;
     } else {
       c.t += dt;
     }
