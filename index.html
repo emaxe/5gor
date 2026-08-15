@@ -4605,6 +4605,23 @@ class World {
     return this.distToSerp(x, z) < 4.4;
   }
 
+  /* Ближайшая ось дороги (горизонтальной/вертикальной) и расстояние до неё.
+     Используется для асфальтового заезда АЗС. */
+  _nearestRoadAxis(x, z) {
+    let best = null, bestD = Infinity;
+    const dzOuter = Math.max(0, Math.abs(z) - (256 + CFG.GRID_EXT));
+    for (const r of this.roadsV) {
+      const d = Math.hypot(x - r.c, dzOuter);
+      if (d < bestD) { bestD = d; best = { horiz: false, c: r.c }; }
+    }
+    const dxOuter = Math.max(0, Math.abs(x) - (256 + CFG.GRID_EXT));
+    for (const r of this.roadsH) {
+      const d = Math.hypot(z - r.c, dxOuter);
+      if (d < bestD) { bestD = d; best = { horiz: true, c: r.c }; }
+    }
+    return best;
+  }
+
   /* Добавляет AABB пропса в общий список и в spatial hash по ячейкам 10×10м */
   addPropAABB(aabb) {
     this.propsAABB.push(aabb);
@@ -5631,7 +5648,11 @@ class World {
 
   /* Въездная стела «ПЯТИГОРСК — КУРОРТ» */
   _cityStela() {
-    const cx = 0, cz = 245;
+    // Была на (0, 245) — прямо на оси дороги x=0 (ширина 12 м, x:-6..6), AABB
+    // x:-4..4 перекрывал ВСЮ проезжую часть северного выезда. Переносим на
+    // газон ЗА бордюром (x=20 — 14 м от оси дороги, бордюр на 6+4=10), чтобы
+    // стела стояла рядом с трассой, а не посреди неё.
+    const cx = 20, cz = 245;
     const g = new THREE.Group();
     const stoneMat = new THREE.MeshLambertMaterial({ color: 0xd8d0c0 });
     const goldMat = new THREE.MeshLambertMaterial({ color: 0xf2c12e });
@@ -6581,6 +6602,55 @@ class World {
       }
       placed.push({ x, z });
       s.x = x; s.z = z; // записываем реальную позицию (для refuel-интеракции)
+
+      // Бетонная площадка под АЗС и асфальтовый заезд от ближайшей дороги.
+      // Раньше заправка стояла на голой траве в поле — без асфальта и подъезда
+      // к ней (жалоба). Теперь: тёмная площадка 16×12 под навесом + полоса
+      // асфальта до кромки ближайшей дороги, как на реальных АЗС.
+      // Площадку ужимаем так, чтобы она не наезжала на проезжую часть
+      // (бордюр на 10 м от оси дороги): кромка площадки со стороны дороги
+      // не ближе 10 м от оси.
+      const nearestRoad = this._nearestRoadAxis(x, z);
+      const padW = 16, padD = 12;
+      let padX0 = x - padW / 2, padX1 = x + padW / 2;
+      let padZ0 = z - padD / 2, padZ1 = z + padD / 2;
+      if (nearestRoad) {
+        const edge = 10; // бордюр от оси
+        if (!nearestRoad.horiz) {
+          if (x < nearestRoad.c) padX0 = Math.max(padX0, nearestRoad.c - edge + 1);
+          else padX1 = Math.min(padX1, nearestRoad.c + edge - 1);
+        } else {
+          if (z < nearestRoad.c) padZ0 = Math.max(padZ0, nearestRoad.c - edge + 1);
+          else padZ1 = Math.min(padZ1, nearestRoad.c + edge - 1);
+        }
+      }
+      const padMat = new THREE.MeshLambertMaterial({ color: 0x3a3f46, roughness: 0.9 });
+      const pad = new THREE.Mesh(new THREE.BoxGeometry(padX1 - padX0, 0.12, padZ1 - padZ0), padMat);
+      pad.position.set((padX0 + padX1) / 2, 0.04, (padZ0 + padZ1) / 2);
+      pad.receiveShadow = true;
+      this.scene.add(pad);
+      this.addPropAABB({ x0: padX0, z0: padZ0, x1: padX1, z1: padZ1 });
+
+      // Полоса заезда от кромки площадки до бордюра дороги
+      if (nearestRoad) {
+        const roadEdge = nearestRoad.horiz ? nearestRoad.c - Math.sign(nearestRoad.c - z) * 10 : nearestRoad.c - Math.sign(nearestRoad.c - x) * 10;
+        const padEdge = nearestRoad.horiz
+          ? (z < nearestRoad.c ? padZ0 : padZ1)
+          : (x < nearestRoad.c ? padX0 : padX1);
+        const stripLen = Math.abs(roadEdge - padEdge);
+        const stripMat = new THREE.MeshLambertMaterial({ color: 0x3a3f46, roughness: 0.9 });
+        let strip;
+        if (nearestRoad.horiz) {
+          strip = new THREE.Mesh(new THREE.BoxGeometry(5, 0.1, stripLen), stripMat);
+          strip.position.set(x, 0.05, (roadEdge + padEdge) / 2);
+        } else {
+          strip = new THREE.Mesh(new THREE.BoxGeometry(stripLen, 0.1, 5), stripMat);
+          strip.position.set((roadEdge + padEdge) / 2, 0.05, z);
+        }
+        strip.receiveShadow = true;
+        this.scene.add(strip);
+      }
+
       const canopy = new THREE.Mesh(new THREE.BoxGeometry(9, 0.3, 5), new THREE.MeshLambertMaterial({ color: 0xd84040 }));
       canopy.position.set(x, 3.4, z);
       this.scene.add(canopy);
