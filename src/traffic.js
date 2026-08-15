@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { rand, clamp, choice, lerpAngle, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture, makeSpeechSprite, updateSpeechSprite, isInPlayerView } from './utils.js';
+import { rand, clamp, choice, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture, makeSpeechSprite, updateSpeechSprite, isInPlayerView } from './utils.js';
 import { buildCarModel, shapeVariants } from './carmodel.js';
 import { Events } from './eventbus.js';
 
@@ -503,26 +503,27 @@ export class TrafficManager {
       car.speed += clamp(diff, -10 * dt, 5 * dt);
       car.speed = clamp(car.speed, 0, 18);
 
-      // активный поворот: движемся по дуге Безье через центр перекрёстка или разворот
+      // активный поворот: движемся по кубической Безье, курс = касательная к кривой
       if (car.turn) {
         const T = car.turn;
-        T.t += dt;
-        const k = clamp(T.t / T.dur, 0, 1);
+        // прогресс по пройденному пути (а не по времени) — машина не «замирает»
+        T.dist += car.speed * dt;
+        const k = clamp(T.dist / T.arcLen, 0, 1);
         const u = 1 - k;
-        const bx = u * u * T.fromX + 2 * u * k * T.ctrlX + k * k * T.toX;
-        const bz = u * u * T.fromZ + 2 * u * k * T.ctrlZ + k * k * T.toZ;
+        const bx = u*u*u*T.fromX + 3*u*u*k*T.p1x + 3*u*k*k*T.p2x + k*k*k*T.toX;
+        const bz = u*u*u*T.fromZ + 3*u*u*k*T.p1z + 3*u*k*k*T.p2z + k*k*k*T.toZ;
         car.x = bx; car.z = bz;
         car.mesh.position.set(bx, 0, bz);
-
-        // Плавный поворот курса от стартового к конечному по кратчайшей дуге.
-        // Касательная к Безье здесь НЕ используется: контрольные точки поворотов
-        // не дают касательной непрерывности на обоих концах (правый поворот даёт
-        // концевую касательную +X при нужном курсе −X, левый — стартовую касательную
-        // вбок из-за контрольной точки в центре перекрёстка). Из-за этого нос
-        // сначала уводило в сторону, а в конце резко дёргало в нужный курс («юла»).
-        // Линейная интерполяция курса по времени даёт ровный поворот без скачков.
-        car.mesh.rotation.y = lerpAngle(T.fromH, T.toH, k);
-
+        // курс = касательная к кривой: нос всегда смотрит по ходу движения
+        const dx = 3*u*u*(T.p1x-T.fromX) + 6*u*k*(T.p2x-T.p1x) + 3*k*k*(T.toX-T.p2x);
+        const dz = 3*u*u*(T.p1z-T.fromZ) + 6*u*k*(T.p2z-T.p1z) + 3*k*k*(T.toZ-T.p2z);
+        let h = Math.atan2(dx, dz);
+        let dd = h - T.fromH;
+        while (dd > Math.PI) dd -= Math.PI*2;
+        while (dd < -Math.PI) dd += Math.PI*2;
+        car.mesh.rotation.y = T.fromH + dd;
+        // тормозим в повороте до разумной скорости
+        car.target = Math.min(car.target, T.turnSpeed);
         const df = car.target - car.speed;
         car.speed += clamp(df, -10 * dt, 5 * dt);
         car.speed = clamp(car.speed, 0, 18);
@@ -577,26 +578,32 @@ export class TrafficManager {
     // мировая точка старта и финиша
     const from = this._worldPos(car, _tempTrafficFrom);
     const to = this._worldPos({ axis: newAxis, coord: newCoord, pos: (car.axis === 'z' ? isec.x : isec.z), dir: newDir }, _tempTrafficTo);
-    // длительность поворота зависит от скорости (дуга ~3.5 м)
-    const arcLen = Math.hypot(to.x - from.x, to.z - from.z);
-    const dur = clamp(arcLen / Math.max(car.speed, 4) * 1.15, 0.5, 1.4);
-    // контрольная точка: правый поворот — малый радиус по углу перекрёстка
-    // (пересечение полос), левый — через центр перекрёстка
-    let ctrlX, ctrlZ;
-    if (right) {
-      if (car.axis === 'z') { ctrlX = from.x; ctrlZ = to.z; }
-      else { ctrlX = to.x; ctrlZ = from.z; }
-    } else { ctrlX = isec.x; ctrlZ = isec.z; }
+    // единичные векторы курса в начале и конце поворота
+    const sdx = car.axis === 'z' ? 0 : car.dir;
+    const sdz = car.axis === 'z' ? car.dir : 0;
+    const edx = newAxis === 'z' ? 0 : newDir;
+    const edz = newAxis === 'z' ? newDir : 0;
+    // хорда (расстояние от→до) — задаёт «размах» контрольных точек
+    const chord = Math.hypot(to.x - from.x, to.z - from.z);
+    const L = Math.max(chord, 3);
+    // контрольные точки кубической Безье: касательная в начале = стартовый курс,
+    // в конце = конечный курс → нос машины всегда смотрит по ходу движения
+    const p1x = from.x + (L / 3) * sdx, p1z = from.z + (L / 3) * sdz;
+    const p2x = to.x - (L / 3) * edx, p2z = to.z - (L / 3) * edz;
+    // длина дуги ≈ длина контрольного многоугольника (хорошая оценка для плавных кривых)
+    const arcLen = Math.hypot(p1x - from.x, p1z - from.z)
+      + Math.hypot(p2x - p1x, p2z - p1z)
+      + Math.hypot(to.x - p2x, to.z - p2z);
     car.turn = {
-      t: 0, dur,
+      dist: 0, arcLen,
       fromX: from.x, fromZ: from.z,
       toX: to.x, toZ: to.z,
-      ctrlX, ctrlZ,
+      p1x, p1z, p2x, p2z,
       fromH: this._heading(car),
-      toH: newAxis === 'z' ? (newDir > 0 ? 0 : Math.PI) : (newDir > 0 ? Math.PI / 2 : -Math.PI / 2),
+      turnSpeed: 7, // разумная скорость в повороте
       newAxis, newCoord, newPos: (car.axis === 'z' ? isec.x : isec.z), newDir,
     };
-    car.turnT = dur + 0.2; // не выбираем направление, пока поворачиваем
+    car.turnT = arcLen / Math.max(car.speed, 4) + 0.3; // не выбираем направление, пока поворачиваем
   }
 
   /* Плавный U-образный разворот на границе города */
@@ -607,26 +614,27 @@ export class TrafficManager {
     const from = this._worldPos(car, _tempTrafficFrom);
     const to = this._worldPos({ axis: car.axis, coord: car.coord, pos: newPos, dir: newDir }, _tempTrafficTo);
 
-    // Контрольная точка выдвинута вперёд по ходу движения для создания петли U-turn
-    let ctrlX, ctrlZ;
-    if (car.axis === 'z') {
-      ctrlX = car.coord;
-      ctrlZ = car.pos + car.dir * 7;
-    } else {
-      ctrlX = car.pos + car.dir * 7;
-      ctrlZ = car.coord;
-    }
-
-    const fromH = this._heading(car);
-    const toH = car.axis === 'z' ? (newDir > 0 ? 0 : Math.PI) : (newDir > 0 ? Math.PI / 2 : -Math.PI / 2);
-    const dur = 1.8; // Длительность разворота в секундах
+    // единичные векторы курса: в начале — вперёд, в конце — назад (разворот на 180°)
+    const sdx = car.axis === 'z' ? 0 : car.dir;
+    const sdz = car.axis === 'z' ? car.dir : 0;
+    const edx = -sdx, edz = -sdz;
+    const chord = Math.hypot(to.x - from.x, to.z - from.z);
+    const L = Math.max(chord, 3);
+    // контрольные точки: обе выдвинуты вперёд → машина едет вперёд, выписывает
+    // петлю и возвращается на встречную полосу, развернувшись на 180°
+    const p1x = from.x + (L / 3) * sdx, p1z = from.z + (L / 3) * sdz;
+    const p2x = to.x - (L / 3) * edx, p2z = to.z - (L / 3) * edz;
+    const arcLen = Math.hypot(p1x - from.x, p1z - from.z)
+      + Math.hypot(p2x - p1x, p2z - p1z)
+      + Math.hypot(to.x - p2x, to.z - p2z);
 
     car.turn = {
-      t: 0, dur,
+      dist: 0, arcLen,
       fromX: from.x, fromZ: from.z,
       toX: to.x, toZ: to.z,
-      ctrlX, ctrlZ,
-      fromH, toH,
+      p1x, p1z, p2x, p2z,
+      fromH: this._heading(car),
+      turnSpeed: 5, // разворот — медленно
       newAxis: car.axis, newCoord: car.coord, newPos, newDir,
     };
     car.target = 6;
