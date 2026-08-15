@@ -1214,7 +1214,10 @@ function makeSpeechSprite(text) {
   const ctx = canvas.getContext('2d');
   
   const texture = new THREE.CanvasTexture(canvas);
-  const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+  // depthTest: true — облачко речи должно скрываться за зданиями/стенами,
+  // а не просвечивать сквозь них (жалоба: видно облачко прохожего за зданием,
+  // хотя самого прохожего не видно). Раньше было false — спрайт всегда поверх.
+  const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: true });
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(4.2, 1.05, 1.0);
   sprite.position.y = 2.4;
@@ -1450,7 +1453,8 @@ function buildPedMesh(archetype) {
   if (archetype === 'dog') return buildDogMesh();
   if (archetype === 'cat') return buildCatMesh();
 
-  const types = ['gopnik', 'grandma', 'runner', 'student', 'businessman', 'tourist', 'child', 'regular'];
+  const types = ['gopnik', 'grandma', 'runner', 'student', 'businessman', 'tourist', 'child', 'regular',
+    'elder', 'mom', 'worker', 'musician', 'nurse'];
   const arch = archetype || choice(types);
 
   let skin = choice([0xf5d0b0, 0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30, 0xffdbac]);
@@ -1491,6 +1495,35 @@ function buildPedMesh(archetype) {
     pants = choice([0x224488, 0x882244]);
     scaleY = rand(0.70, 0.78);
     scaleXZ = rand(0.72, 0.80);
+  } else if (arch === 'elder') {
+    // Бородатый старик: тёплые выцветшие тона, сутулый, с бородой
+    cloth = choice([0x8a7a5a, 0x6a5a4a, 0x7a6a5a, 0x5a4a3a]);
+    pants = choice([0x4a3a2a, 0x3a2a1a, 0x5a4a3a]);
+    scaleY = rand(0.82, 0.90);
+    scaleXZ = rand(1.0, 1.1);
+  } else if (arch === 'mom') {
+    // Мама с коляской: светлая одежда, чуть полнее
+    cloth = choice([0xd8a0a0, 0xc0a0d8, 0xa0c8d8, 0xe0b0a0]);
+    pants = choice([0x5a4a5a, 0x4a4a5a, 0x6a5a6a]);
+    scaleY = rand(0.95, 1.02);
+    scaleXZ = rand(1.0, 1.12);
+  } else if (arch === 'worker') {
+    // Рабочий: спецовка, каска, крепкий
+    cloth = choice([0x2a4a6a, 0x3a5a3a, 0x4a4a4a, 0x5a5a3a]);
+    pants = choice([0x2a2a3a, 0x3a3a4a, 0x1a2a3a]);
+    scaleY = rand(1.0, 1.1);
+    scaleXZ = rand(1.0, 1.1);
+  } else if (arch === 'musician') {
+    // Уличный музыкант: яркая одежда, берет
+    cloth = choice([0x8a3a3a, 0x3a5a8a, 0x6a3a6a, 0x3a6a5a]);
+    pants = choice([0x2a2a3a, 0x3a2a2a, 0x2a3a2a]);
+    scaleY = rand(0.95, 1.05);
+  } else if (arch === 'nurse') {
+    // Медсестра: белый халат, шапочка
+    cloth = choice([0xe8e8e8, 0xf0f0f0, 0xffffff, 0xe0e8f0]);
+    pants = choice([0xffffff, 0xe8e8e8, 0xf0f0f0]);
+    scaleY = rand(0.95, 1.05);
+    scaleXZ = rand(0.95, 1.05);
   }
 
   const mat = (c) => getPedMat(c);
@@ -1546,6 +1579,43 @@ function buildPedMesh(archetype) {
     parts.push({ g: new THREE.CylinderGeometry(0.26, 0.27, 0.16, 10).translate(0, 1.83, 0), c: 0xddccaa });
     // Фотоаппарат на груди
     parts.push({ g: new THREE.BoxGeometry(0.18, 0.14, 0.12).translate(0, 1.15, 0.22), c: 0x222222 });
+  } else if (arch === 'elder') {
+    // Бородатый старик: седая борода + лысина/седые волосы
+    parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.64, 0), c: 0xd8d8d8 });
+    // Борода (полусфера под лицом)
+    parts.push({ g: new THREE.SphereGeometry(0.2, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.5, 0.1), c: 0xd8d8d8 });
+    // Трость в руке
+    parts.push({ g: new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6).translate(0.4, 0.75, 0.1), c: 0x5a3a1a });
+  } else if (arch === 'mom') {
+    // Мама с коляской: волосы в пучок + коляска перед собой
+    parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.64, 0), c: 0x4a2a1a });
+    parts.push({ g: new THREE.SphereGeometry(0.1, 6, 6).translate(0, 1.84, -0.14), c: 0x4a2a1a });
+    // Коляска (корпус + колёса) перед мамой
+    parts.push({ g: new THREE.BoxGeometry(0.5, 0.4, 0.7).translate(0, 0.7, 0.5), c: 0x3a5a8a });
+    parts.push({ g: new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8).rotateX(Math.PI / 2).translate(0, 0.35, 0.5), c: 0x222222 });
+    parts.push({ g: new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8).rotateX(Math.PI / 2).translate(0, 0.35, 0.9), c: 0x222222 });
+  } else if (arch === 'worker') {
+    // Рабочий: каска + инструмент в руке
+    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0xe8c020 });
+    parts.push({ g: new THREE.CylinderGeometry(0.3, 0.3, 0.05, 8).translate(0, 1.78, 0), c: 0xe8c020 });
+    // Гаечный ключ в руке
+    parts.push({ g: new THREE.BoxGeometry(0.05, 0.5, 0.05).translate(0.42, 0.9, 0.1), c: 0x888888 });
+  } else if (arch === 'musician') {
+    // Уличный музыкант: берет + аккордеон на груди
+    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0x2a2a2a });
+    parts.push({ g: new THREE.CylinderGeometry(0.3, 0.3, 0.06, 8).translate(0, 1.78, 0), c: 0x8a3a3a });
+    // Аккордеон (корпус + меха)
+    parts.push({ g: new THREE.BoxGeometry(0.4, 0.3, 0.2).translate(0, 1.1, 0.25), c: 0x8a3a3a });
+    parts.push({ g: new THREE.BoxGeometry(0.42, 0.2, 0.1).translate(0, 1.1, 0.18), c: 0xdddddd });
+  } else if (arch === 'nurse') {
+    // Медсестра: белая шапочка с крестом + фонендоскоп
+    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0xffffff });
+    parts.push({ g: new THREE.BoxGeometry(0.3, 0.05, 0.3).translate(0, 1.78, 0), c: 0xffffff });
+    // Красный крест на шапочке
+    parts.push({ g: new THREE.BoxGeometry(0.12, 0.04, 0.04).translate(0, 1.78, 0.1), c: 0xcc2222 });
+    parts.push({ g: new THREE.BoxGeometry(0.04, 0.04, 0.12).translate(0, 1.78, 0.1), c: 0xcc2222 });
+    // Фонендоскоп на шее
+    parts.push({ g: new THREE.TorusGeometry(0.1, 0.02, 4, 8).rotateX(Math.PI / 2).translate(0, 1.35, 0.15), c: 0x222222 });
   } else {
     // Разнообразные причёски для обычных пешеходов
     const hairStyle = Math.floor(Math.random() * 3);
@@ -8607,6 +8677,11 @@ class TrafficManager {
       if (car.speechT > 0) {
         car.speechT -= dt;
         if (car.speechT <= 0 && car.speechSprite) updateSpeechSprite(car.speechSprite, '');
+        // Показываем облачко только если машина в поле зрения игрока
+        else if (car.speechSprite) {
+          const inView = isInPlayerView(car.x, car.z, px, pz, player.heading, 60);
+          if (car.speechSprite.visible !== inView) car.speechSprite.visible = inView;
+        }
       }
       if (car.yellCd > 0) car.yellCd -= dt;
 
@@ -8962,6 +9037,78 @@ const IDLE_QUOTES = [
   "В Пятигорске даже дождь — это атмосфера!"
 ];
 
+// --- Архетипные наборы фраз (у каждого типажа свой колорит) ---
+
+// Бородатый старик (elder)
+const ELDER_QUOTES = [
+  "Эх, в мои годы тут трамвай ходил...",
+  "Молодёжь нынче не та, совсем не та!",
+  "На Машук в мои годы пешком поднимался!",
+  "Вот раньше нарзан бесплатно наливали...",
+  "Эх, здоровье уже не то, а курорт — вечный!",
+  "Помню, тут ещё до войны санаторий был!",
+  "Внуки вон в телефоне сидят, а я гуляю!",
+  "Слышь, сынок, не гони так, жизнь одна!",
+  "В Пятигорске я всю жизнь прожил, всё знаю!",
+  "Эх, сейчас бы в шахматы с дедом на лавочке..."
+];
+
+// Мама с коляской (mom)
+const MOM_QUOTES = [
+  "Тише, малыш, сейчас домой пойдём...",
+  "Ой, какой воздух, хорошо ребёнку!",
+  "Надо бы в парк, на солнышко...",
+  "Спи, моя хорошая, спи...",
+  "Вот бы коляску по ровной дорожке...",
+  "В Цветнике так красиво, пойдём гулять!",
+  "Осторожно, тут машины ездят!",
+  "Малыш, смотри, какая птичка!",
+  "Надо молока купить и домой...",
+  "Эх, выспаться бы хоть разок..."
+];
+
+// Рабочий (worker)
+const WORKER_QUOTES = [
+  "Эх, смена тяжёлая была...",
+  "Надо бы в столовую, перекусить...",
+  "Слышь, асфальт тут опять кладут...",
+  "Работа — не волк, в лес не убежит!",
+  "Эх, сейчас бы холодненького...",
+  "Надо инструмент в порядок привести...",
+  "Смена кончилась — можно и отдохнуть!",
+  "Вот бы премию дали в этом месяце...",
+  "Эх, спина болит после работы...",
+  "Надо бы на рынок за продуктами..."
+];
+
+// Уличный музыкант (musician)
+const MUSICIAN_QUOTES = [
+  "Эх, сейчас бы заиграть на закате...",
+  "Музыка — это жизнь!",
+  "Вот бы кто-нибудь в шляпу монетку кинул...",
+  "Эх, аккордеон мой старый, верный друг...",
+  "В Пятигорске так вдохновенно играется!",
+  "Слышь, мелодия сама в голове крутится...",
+  "Эх, сейчас бы на смотровой сыграть...",
+  "Музыка лечит душу, точно говорю!",
+  "Вот бы в филармонию позвали...",
+  "Эх, народ сегодня щедрый, дай бог!"
+];
+
+// Медсестра (nurse)
+const NURSE_QUOTES = [
+  "Эх, смена в санатории была долгая...",
+  "Надо бы давление проверить...",
+  "Вот бы отпуск на море...",
+  "Пациенты сегодня капризные...",
+  "Эх, устала, но работа важная!",
+  "Надо бы в аптеку за витаминами...",
+  "В Пятигорске лечиться — одно удовольствие!",
+  "Слышь, здоровье — главное!",
+  "Эх, сейчас бы чайку с ромашкой...",
+  "Надо бы на процедуры успеть..."
+];
+
 const ANIMAL_DOG_QUOTES = [
   "Гав-гав!",
   "Тяв!",
@@ -9024,6 +9171,53 @@ const CURSE_REDLIGHT_QUOTES = [
   "Вай, красный же горит! Куда прёшь?!"
 ];
 
+// --- Архетипная ругань при подрезании (у каждого типажа свой колорит) ---
+const CURSE_ELDER_QUOTES = [
+  "Ох ты ж, чуть деда не сбил, шалопай!",
+  "В мои годы так не гоняли, бессовестный!",
+  "Ты куда прёшь, я тут хожу!",
+  "Эх, молодёжь, совсем страх потеряли!",
+  "Чуть трость не выронил, окаянный!",
+  "Слышь, сынок, я тут пешком, а не по асфальту!",
+  "Ох, сердце чуть не выскочило, хулиган!"
+];
+
+const CURSE_MOM_QUOTES = [
+  "Ой, чуть ребёнка не задавил!",
+  "Ты что творишь, тут коляска!",
+  "Осторожнее, у меня малыш!",
+  "Куда прёшь, я с ребёнком!",
+  "Ой, напугал до смерти, бессовестный!",
+  "Тут же дети гуляют, куда ты гонишь!"
+];
+
+const CURSE_WORKER_QUOTES = [
+  "Эй, чуть инструмент не раздавил!",
+  "Ты куда прёшь, я тут работаю!",
+  "Слышь, шумахер, тут люди ходят!",
+  "Чуть каску не сбил, джигит!",
+  "Эй, тормози, я тут не на трассе!",
+  "Куда гонишь, тут же рабочие!"
+];
+
+const CURSE_MUSICIAN_QUOTES = [
+  "Эй, чуть аккордеон не раздавил!",
+  "Ты что, музыку не уважаешь?!",
+  "Чуть инструмент не сломал, варвар!",
+  "Эй, шумахер, тут артист идёт!",
+  "Куда прёшь, я тут мелодию сочиняю!",
+  "Чуть ноты не рассыпал, бессовестный!"
+];
+
+const CURSE_NURSE_QUOTES = [
+  "Ой, чуть не сбил, я же на смену!",
+  "Ты что творишь, тут медсестра!",
+  "Осторожнее, у меня пациенты!",
+  "Куда прёшь, я спешу в больницу!",
+  "Ой, напугал, бессовестный!",
+  "Тут же люди, куда ты гонишь!"
+];
+
 const KICK_QUOTES = [
   "На нах! Ездить научись!",
   "Получи, ведро с болтами!",
@@ -9068,13 +9262,58 @@ class PedestrianManager {
     }
     p.speechT = duration;
     const avatar = p.isAnimal ? (p.archetype === 'dog' ? '🐕' : '🐈') : '🏃';
-    const speaker = p.isAnimal ? (p.archetype === 'dog' ? 'Собака рядом' : 'Кот рядом') : 'Пешеход рядом';
+    const speaker = p.isAnimal
+      ? (p.archetype === 'dog' ? 'Собака рядом' : 'Кот рядом')
+      : (this._speakerLabel(p.archetype));
     Events.emit('spatial:shout', { x: p.x, z: p.z, text, type: 'scream', avatar, speaker });
+  }
+
+  /* Подпись говорящего по архетипу (для облачка в UI) */
+  _speakerLabel(arch) {
+    switch (arch) {
+      case 'elder': return 'Старик рядом';
+      case 'mom': return 'Мама с коляской';
+      case 'worker': return 'Рабочий рядом';
+      case 'musician': return 'Музыкант рядом';
+      case 'nurse': return 'Медсестра рядом';
+      case 'gopnik': return 'Гопник рядом';
+      case 'grandma': return 'Бабушка рядом';
+      case 'runner': return 'Бегун рядом';
+      case 'student': return 'Студент рядом';
+      case 'businessman': return 'Бизнесмен рядом';
+      case 'tourist': return 'Турист рядом';
+      case 'child': return 'Ребёнок рядом';
+      default: return 'Пешеход рядом';
+    }
   }
 
   /* Построение 3D-модели */
   _buildPed(archetype) {
     return buildPedMesh(archetype);
+  }
+
+  /* Набор фраз для архетипа (свой у каждого типажа, иначе — общий пул) */
+  _idlePool(arch) {
+    switch (arch) {
+      case 'elder': return ELDER_QUOTES;
+      case 'mom': return MOM_QUOTES;
+      case 'worker': return WORKER_QUOTES;
+      case 'musician': return MUSICIAN_QUOTES;
+      case 'nurse': return NURSE_QUOTES;
+      default: return IDLE_QUOTES;
+    }
+  }
+
+  /* Набор ругани при подрезании для архетипа (иначе — общий пул) */
+  _cursePool(arch) {
+    switch (arch) {
+      case 'elder': return CURSE_ELDER_QUOTES;
+      case 'mom': return CURSE_MOM_QUOTES;
+      case 'worker': return CURSE_WORKER_QUOTES;
+      case 'musician': return CURSE_MUSICIAN_QUOTES;
+      case 'nurse': return CURSE_NURSE_QUOTES;
+      default: return CURSE_QUOTES;
+    }
   }
 
   /* Анимация ходьбы/бега/ругани/удара ногой и движения животных */
@@ -9139,6 +9378,7 @@ class PedestrianManager {
   spawn(count, player) {
     const archTypes = [
       'gopnik', 'grandma', 'runner', 'student', 'businessman', 'tourist', 'child', 'regular',
+      'elder', 'mom', 'worker', 'musician', 'nurse',
       'dog', 'dog', 'cat', 'cat' // Добавляем животных в пул спавна (~25% от состава)
     ];
     while (this.cars.length < count) {
@@ -9226,7 +9466,12 @@ class PedestrianManager {
 
     if (p.archetype === 'runner') p.baseSpeed = rand(4.0, 5.0);
     else if (p.archetype === 'grandma') p.baseSpeed = rand(1.3, 1.7);
+    else if (p.archetype === 'elder') p.baseSpeed = rand(1.2, 1.6);   // бородатый старик — медленный
+    else if (p.archetype === 'mom') p.baseSpeed = rand(1.6, 2.0);     // мама с коляской
     else if (p.archetype === 'gopnik') p.baseSpeed = rand(2.3, 2.9);
+    else if (p.archetype === 'worker') p.baseSpeed = rand(2.2, 2.8);   // рабочий
+    else if (p.archetype === 'musician') p.baseSpeed = rand(1.5, 2.0); // музыкант
+    else if (p.archetype === 'nurse') p.baseSpeed = rand(2.0, 2.6);    // медсестра
     else if (p.archetype === 'dog') p.baseSpeed = rand(3.0, 4.2);
     else if (p.archetype === 'cat') p.baseSpeed = rand(2.2, 3.5);
     else if (p.archetype === 'child') p.baseSpeed = rand(2.0, 2.6);
@@ -9717,8 +9962,20 @@ class PedestrianManager {
 
     // Для человека: если достиг целевого перекрёстка — выбирает поворот или переход для продолжения пути
     const reachedTarget = p.targetIsec !== null && Math.abs(isec - p.targetIsec) < CFG.CELL * 0.5;
-    const roll = Math.random();
+    let roll = Math.random();
     const turnBlocked = p._blockedTurnIsec === isec;
+
+    // Архетипные модификаторы поведения на перекрёстке:
+    // - старики и мамы с коляской осторожны — реже переходят, чаще идут прямо/поворачивают
+    // - бегуны и гопники — чаще перебегают (в т.ч. вне зебры, если нарушитель)
+    // - музыканты — чаще останавливаются (играют)
+    if (p.archetype === 'elder' || p.archetype === 'mom' || p.archetype === 'grandma') {
+      roll = roll * 0.5; // вдвое реже переходят дорогу
+    } else if (p.archetype === 'runner' || p.archetype === 'gopnik') {
+      roll = roll * 1.4; // чаще перебегают
+    } else if (p.archetype === 'musician') {
+      roll = roll * 0.7; // чаще стоят на месте
+    }
 
     if (reachedTarget) {
       this._assignNewTarget(p);
@@ -10080,7 +10337,8 @@ class PedestrianManager {
       // Фраза должна быть "в тему": про красный свет ругаемся только если
       // рядом реально есть светофор с красным для оси движения игрока;
       // про тротуар — если игрок заехал на тротуар/газон, где стоит пешеход.
-      let pool = CURSE_QUOTES;
+      // Иначе — архетипная ругань (у каждого типажа свой колорит).
+      let pool = this._cursePool(p.archetype);
       if (this._redLightNearPlayer(player)) {
         pool = CURSE_REDLIGHT_QUOTES;
       } else if (this.world && !this.world.onRoad(player.x, player.z)) {
@@ -10146,13 +10404,21 @@ class PedestrianManager {
       if (p.speechT > 0) {
         p.speechT -= dt;
         if (p.speechT <= 0 && p.speechSprite) updateSpeechSprite(p.speechSprite, '');
+        // Показываем облачко только если пешеход реально в поле зрения игрока
+        // (спереди, не за спиной) — иначе видно фразу, а самого прохожего нет.
+        else if (p.speechSprite && player) {
+          const inView = isInPlayerView(p.x, p.z, player.x, player.z, player.heading, 60);
+          if (p.speechSprite.visible !== inView) p.speechSprite.visible = inView;
+        }
       } else {
         p.chatCd -= dt;
         if (p.chatCd <= 0 && Math.hypot(p.x - player.x, p.z - player.z) < 45) {
           if (p.isAnimal) {
             this.say(p, p.archetype === 'dog' ? choice(ANIMAL_DOG_QUOTES) : choice(ANIMAL_CAT_QUOTES), 2.0);
           } else {
-            this.say(p, choice(IDLE_QUOTES), 3.0);
+            // У каждого типажа свой набор фраз, иначе — общий пул
+            const pool = this._idlePool(p.archetype);
+            this.say(p, choice(pool), 3.0);
           }
           p.chatCd = rand(16, 36);
         }

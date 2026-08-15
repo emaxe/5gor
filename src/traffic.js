@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { rand, clamp, choice, lerpAngle, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture, makeSpeechSprite, updateSpeechSprite } from './utils.js';
+import { rand, clamp, choice, lerpAngle, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture, makeSpeechSprite, updateSpeechSprite, isInPlayerView } from './utils.js';
 import { buildCarModel, shapeVariants } from './carmodel.js';
 import { Events } from './eventbus.js';
 
@@ -325,6 +325,11 @@ export class TrafficManager {
       if (car.speechT > 0) {
         car.speechT -= dt;
         if (car.speechT <= 0 && car.speechSprite) updateSpeechSprite(car.speechSprite, '');
+        // Показываем облачко только если машина в поле зрения игрока
+        else if (car.speechSprite) {
+          const inView = isInPlayerView(car.x, car.z, px, pz, player.heading, 60);
+          if (car.speechSprite.visible !== inView) car.speechSprite.visible = inView;
+        }
       }
       if (car.yellCd > 0) car.yellCd -= dt;
 

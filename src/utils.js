@@ -312,7 +312,10 @@ export function makeSpeechSprite(text) {
   const ctx = canvas.getContext('2d');
   
   const texture = new THREE.CanvasTexture(canvas);
-  const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: false });
+  // depthTest: true — облачко речи должно скрываться за зданиями/стенами,
+  // а не просвечивать сквозь них (жалоба: видно облачко прохожего за зданием,
+  // хотя самого прохожего не видно). Раньше было false — спрайт всегда поверх.
+  const mat = new THREE.SpriteMaterial({ map: texture, transparent: true, depthTest: true });
   const sprite = new THREE.Sprite(mat);
   sprite.scale.set(4.2, 1.05, 1.0);
   sprite.position.y = 2.4;
@@ -549,7 +552,8 @@ export function buildPedMesh(archetype) {
   if (archetype === 'dog') return buildDogMesh();
   if (archetype === 'cat') return buildCatMesh();
 
-  const types = ['gopnik', 'grandma', 'runner', 'student', 'businessman', 'tourist', 'child', 'regular'];
+  const types = ['gopnik', 'grandma', 'runner', 'student', 'businessman', 'tourist', 'child', 'regular',
+    'elder', 'mom', 'worker', 'musician', 'nurse'];
   const arch = archetype || choice(types);
 
   let skin = choice([0xf5d0b0, 0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30, 0xffdbac]);
@@ -590,6 +594,35 @@ export function buildPedMesh(archetype) {
     pants = choice([0x224488, 0x882244]);
     scaleY = rand(0.70, 0.78);
     scaleXZ = rand(0.72, 0.80);
+  } else if (arch === 'elder') {
+    // Бородатый старик: тёплые выцветшие тона, сутулый, с бородой
+    cloth = choice([0x8a7a5a, 0x6a5a4a, 0x7a6a5a, 0x5a4a3a]);
+    pants = choice([0x4a3a2a, 0x3a2a1a, 0x5a4a3a]);
+    scaleY = rand(0.82, 0.90);
+    scaleXZ = rand(1.0, 1.1);
+  } else if (arch === 'mom') {
+    // Мама с коляской: светлая одежда, чуть полнее
+    cloth = choice([0xd8a0a0, 0xc0a0d8, 0xa0c8d8, 0xe0b0a0]);
+    pants = choice([0x5a4a5a, 0x4a4a5a, 0x6a5a6a]);
+    scaleY = rand(0.95, 1.02);
+    scaleXZ = rand(1.0, 1.12);
+  } else if (arch === 'worker') {
+    // Рабочий: спецовка, каска, крепкий
+    cloth = choice([0x2a4a6a, 0x3a5a3a, 0x4a4a4a, 0x5a5a3a]);
+    pants = choice([0x2a2a3a, 0x3a3a4a, 0x1a2a3a]);
+    scaleY = rand(1.0, 1.1);
+    scaleXZ = rand(1.0, 1.1);
+  } else if (arch === 'musician') {
+    // Уличный музыкант: яркая одежда, берет
+    cloth = choice([0x8a3a3a, 0x3a5a8a, 0x6a3a6a, 0x3a6a5a]);
+    pants = choice([0x2a2a3a, 0x3a2a2a, 0x2a3a2a]);
+    scaleY = rand(0.95, 1.05);
+  } else if (arch === 'nurse') {
+    // Медсестра: белый халат, шапочка
+    cloth = choice([0xe8e8e8, 0xf0f0f0, 0xffffff, 0xe0e8f0]);
+    pants = choice([0xffffff, 0xe8e8e8, 0xf0f0f0]);
+    scaleY = rand(0.95, 1.05);
+    scaleXZ = rand(0.95, 1.05);
   }
 
   const mat = (c) => getPedMat(c);
@@ -645,6 +678,43 @@ export function buildPedMesh(archetype) {
     parts.push({ g: new THREE.CylinderGeometry(0.26, 0.27, 0.16, 10).translate(0, 1.83, 0), c: 0xddccaa });
     // Фотоаппарат на груди
     parts.push({ g: new THREE.BoxGeometry(0.18, 0.14, 0.12).translate(0, 1.15, 0.22), c: 0x222222 });
+  } else if (arch === 'elder') {
+    // Бородатый старик: седая борода + лысина/седые волосы
+    parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.64, 0), c: 0xd8d8d8 });
+    // Борода (полусфера под лицом)
+    parts.push({ g: new THREE.SphereGeometry(0.2, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.5, 0.1), c: 0xd8d8d8 });
+    // Трость в руке
+    parts.push({ g: new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6).translate(0.4, 0.75, 0.1), c: 0x5a3a1a });
+  } else if (arch === 'mom') {
+    // Мама с коляской: волосы в пучок + коляска перед собой
+    parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.64, 0), c: 0x4a2a1a });
+    parts.push({ g: new THREE.SphereGeometry(0.1, 6, 6).translate(0, 1.84, -0.14), c: 0x4a2a1a });
+    // Коляска (корпус + колёса) перед мамой
+    parts.push({ g: new THREE.BoxGeometry(0.5, 0.4, 0.7).translate(0, 0.7, 0.5), c: 0x3a5a8a });
+    parts.push({ g: new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8).rotateX(Math.PI / 2).translate(0, 0.35, 0.5), c: 0x222222 });
+    parts.push({ g: new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8).rotateX(Math.PI / 2).translate(0, 0.35, 0.9), c: 0x222222 });
+  } else if (arch === 'worker') {
+    // Рабочий: каска + инструмент в руке
+    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0xe8c020 });
+    parts.push({ g: new THREE.CylinderGeometry(0.3, 0.3, 0.05, 8).translate(0, 1.78, 0), c: 0xe8c020 });
+    // Гаечный ключ в руке
+    parts.push({ g: new THREE.BoxGeometry(0.05, 0.5, 0.05).translate(0.42, 0.9, 0.1), c: 0x888888 });
+  } else if (arch === 'musician') {
+    // Уличный музыкант: берет + аккордеон на груди
+    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0x2a2a2a });
+    parts.push({ g: new THREE.CylinderGeometry(0.3, 0.3, 0.06, 8).translate(0, 1.78, 0), c: 0x8a3a3a });
+    // Аккордеон (корпус + меха)
+    parts.push({ g: new THREE.BoxGeometry(0.4, 0.3, 0.2).translate(0, 1.1, 0.25), c: 0x8a3a3a });
+    parts.push({ g: new THREE.BoxGeometry(0.42, 0.2, 0.1).translate(0, 1.1, 0.18), c: 0xdddddd });
+  } else if (arch === 'nurse') {
+    // Медсестра: белая шапочка с крестом + фонендоскоп
+    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0xffffff });
+    parts.push({ g: new THREE.BoxGeometry(0.3, 0.05, 0.3).translate(0, 1.78, 0), c: 0xffffff });
+    // Красный крест на шапочке
+    parts.push({ g: new THREE.BoxGeometry(0.12, 0.04, 0.04).translate(0, 1.78, 0.1), c: 0xcc2222 });
+    parts.push({ g: new THREE.BoxGeometry(0.04, 0.04, 0.12).translate(0, 1.78, 0.1), c: 0xcc2222 });
+    // Фонендоскоп на шее
+    parts.push({ g: new THREE.TorusGeometry(0.1, 0.02, 4, 8).rotateX(Math.PI / 2).translate(0, 1.35, 0.15), c: 0x222222 });
   } else {
     // Разнообразные причёски для обычных пешеходов
     const hairStyle = Math.floor(Math.random() * 3);

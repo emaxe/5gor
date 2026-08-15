@@ -46,6 +46,78 @@ const IDLE_QUOTES = [
   "В Пятигорске даже дождь — это атмосфера!"
 ];
 
+// --- Архетипные наборы фраз (у каждого типажа свой колорит) ---
+
+// Бородатый старик (elder)
+const ELDER_QUOTES = [
+  "Эх, в мои годы тут трамвай ходил...",
+  "Молодёжь нынче не та, совсем не та!",
+  "На Машук в мои годы пешком поднимался!",
+  "Вот раньше нарзан бесплатно наливали...",
+  "Эх, здоровье уже не то, а курорт — вечный!",
+  "Помню, тут ещё до войны санаторий был!",
+  "Внуки вон в телефоне сидят, а я гуляю!",
+  "Слышь, сынок, не гони так, жизнь одна!",
+  "В Пятигорске я всю жизнь прожил, всё знаю!",
+  "Эх, сейчас бы в шахматы с дедом на лавочке..."
+];
+
+// Мама с коляской (mom)
+const MOM_QUOTES = [
+  "Тише, малыш, сейчас домой пойдём...",
+  "Ой, какой воздух, хорошо ребёнку!",
+  "Надо бы в парк, на солнышко...",
+  "Спи, моя хорошая, спи...",
+  "Вот бы коляску по ровной дорожке...",
+  "В Цветнике так красиво, пойдём гулять!",
+  "Осторожно, тут машины ездят!",
+  "Малыш, смотри, какая птичка!",
+  "Надо молока купить и домой...",
+  "Эх, выспаться бы хоть разок..."
+];
+
+// Рабочий (worker)
+const WORKER_QUOTES = [
+  "Эх, смена тяжёлая была...",
+  "Надо бы в столовую, перекусить...",
+  "Слышь, асфальт тут опять кладут...",
+  "Работа — не волк, в лес не убежит!",
+  "Эх, сейчас бы холодненького...",
+  "Надо инструмент в порядок привести...",
+  "Смена кончилась — можно и отдохнуть!",
+  "Вот бы премию дали в этом месяце...",
+  "Эх, спина болит после работы...",
+  "Надо бы на рынок за продуктами..."
+];
+
+// Уличный музыкант (musician)
+const MUSICIAN_QUOTES = [
+  "Эх, сейчас бы заиграть на закате...",
+  "Музыка — это жизнь!",
+  "Вот бы кто-нибудь в шляпу монетку кинул...",
+  "Эх, аккордеон мой старый, верный друг...",
+  "В Пятигорске так вдохновенно играется!",
+  "Слышь, мелодия сама в голове крутится...",
+  "Эх, сейчас бы на смотровой сыграть...",
+  "Музыка лечит душу, точно говорю!",
+  "Вот бы в филармонию позвали...",
+  "Эх, народ сегодня щедрый, дай бог!"
+];
+
+// Медсестра (nurse)
+const NURSE_QUOTES = [
+  "Эх, смена в санатории была долгая...",
+  "Надо бы давление проверить...",
+  "Вот бы отпуск на море...",
+  "Пациенты сегодня капризные...",
+  "Эх, устала, но работа важная!",
+  "Надо бы в аптеку за витаминами...",
+  "В Пятигорске лечиться — одно удовольствие!",
+  "Слышь, здоровье — главное!",
+  "Эх, сейчас бы чайку с ромашкой...",
+  "Надо бы на процедуры успеть..."
+];
+
 const ANIMAL_DOG_QUOTES = [
   "Гав-гав!",
   "Тяв!",
@@ -108,6 +180,53 @@ const CURSE_REDLIGHT_QUOTES = [
   "Вай, красный же горит! Куда прёшь?!"
 ];
 
+// --- Архетипная ругань при подрезании (у каждого типажа свой колорит) ---
+const CURSE_ELDER_QUOTES = [
+  "Ох ты ж, чуть деда не сбил, шалопай!",
+  "В мои годы так не гоняли, бессовестный!",
+  "Ты куда прёшь, я тут хожу!",
+  "Эх, молодёжь, совсем страх потеряли!",
+  "Чуть трость не выронил, окаянный!",
+  "Слышь, сынок, я тут пешком, а не по асфальту!",
+  "Ох, сердце чуть не выскочило, хулиган!"
+];
+
+const CURSE_MOM_QUOTES = [
+  "Ой, чуть ребёнка не задавил!",
+  "Ты что творишь, тут коляска!",
+  "Осторожнее, у меня малыш!",
+  "Куда прёшь, я с ребёнком!",
+  "Ой, напугал до смерти, бессовестный!",
+  "Тут же дети гуляют, куда ты гонишь!"
+];
+
+const CURSE_WORKER_QUOTES = [
+  "Эй, чуть инструмент не раздавил!",
+  "Ты куда прёшь, я тут работаю!",
+  "Слышь, шумахер, тут люди ходят!",
+  "Чуть каску не сбил, джигит!",
+  "Эй, тормози, я тут не на трассе!",
+  "Куда гонишь, тут же рабочие!"
+];
+
+const CURSE_MUSICIAN_QUOTES = [
+  "Эй, чуть аккордеон не раздавил!",
+  "Ты что, музыку не уважаешь?!",
+  "Чуть инструмент не сломал, варвар!",
+  "Эй, шумахер, тут артист идёт!",
+  "Куда прёшь, я тут мелодию сочиняю!",
+  "Чуть ноты не рассыпал, бессовестный!"
+];
+
+const CURSE_NURSE_QUOTES = [
+  "Ой, чуть не сбил, я же на смену!",
+  "Ты что творишь, тут медсестра!",
+  "Осторожнее, у меня пациенты!",
+  "Куда прёшь, я спешу в больницу!",
+  "Ой, напугал, бессовестный!",
+  "Тут же люди, куда ты гонишь!"
+];
+
 const KICK_QUOTES = [
   "На нах! Ездить научись!",
   "Получи, ведро с болтами!",
@@ -152,13 +271,58 @@ export class PedestrianManager {
     }
     p.speechT = duration;
     const avatar = p.isAnimal ? (p.archetype === 'dog' ? '🐕' : '🐈') : '🏃';
-    const speaker = p.isAnimal ? (p.archetype === 'dog' ? 'Собака рядом' : 'Кот рядом') : 'Пешеход рядом';
+    const speaker = p.isAnimal
+      ? (p.archetype === 'dog' ? 'Собака рядом' : 'Кот рядом')
+      : (this._speakerLabel(p.archetype));
     Events.emit('spatial:shout', { x: p.x, z: p.z, text, type: 'scream', avatar, speaker });
+  }
+
+  /* Подпись говорящего по архетипу (для облачка в UI) */
+  _speakerLabel(arch) {
+    switch (arch) {
+      case 'elder': return 'Старик рядом';
+      case 'mom': return 'Мама с коляской';
+      case 'worker': return 'Рабочий рядом';
+      case 'musician': return 'Музыкант рядом';
+      case 'nurse': return 'Медсестра рядом';
+      case 'gopnik': return 'Гопник рядом';
+      case 'grandma': return 'Бабушка рядом';
+      case 'runner': return 'Бегун рядом';
+      case 'student': return 'Студент рядом';
+      case 'businessman': return 'Бизнесмен рядом';
+      case 'tourist': return 'Турист рядом';
+      case 'child': return 'Ребёнок рядом';
+      default: return 'Пешеход рядом';
+    }
   }
 
   /* Построение 3D-модели */
   _buildPed(archetype) {
     return buildPedMesh(archetype);
+  }
+
+  /* Набор фраз для архетипа (свой у каждого типажа, иначе — общий пул) */
+  _idlePool(arch) {
+    switch (arch) {
+      case 'elder': return ELDER_QUOTES;
+      case 'mom': return MOM_QUOTES;
+      case 'worker': return WORKER_QUOTES;
+      case 'musician': return MUSICIAN_QUOTES;
+      case 'nurse': return NURSE_QUOTES;
+      default: return IDLE_QUOTES;
+    }
+  }
+
+  /* Набор ругани при подрезании для архетипа (иначе — общий пул) */
+  _cursePool(arch) {
+    switch (arch) {
+      case 'elder': return CURSE_ELDER_QUOTES;
+      case 'mom': return CURSE_MOM_QUOTES;
+      case 'worker': return CURSE_WORKER_QUOTES;
+      case 'musician': return CURSE_MUSICIAN_QUOTES;
+      case 'nurse': return CURSE_NURSE_QUOTES;
+      default: return CURSE_QUOTES;
+    }
   }
 
   /* Анимация ходьбы/бега/ругани/удара ногой и движения животных */
@@ -223,6 +387,7 @@ export class PedestrianManager {
   spawn(count, player) {
     const archTypes = [
       'gopnik', 'grandma', 'runner', 'student', 'businessman', 'tourist', 'child', 'regular',
+      'elder', 'mom', 'worker', 'musician', 'nurse',
       'dog', 'dog', 'cat', 'cat' // Добавляем животных в пул спавна (~25% от состава)
     ];
     while (this.cars.length < count) {
@@ -310,7 +475,12 @@ export class PedestrianManager {
 
     if (p.archetype === 'runner') p.baseSpeed = rand(4.0, 5.0);
     else if (p.archetype === 'grandma') p.baseSpeed = rand(1.3, 1.7);
+    else if (p.archetype === 'elder') p.baseSpeed = rand(1.2, 1.6);   // бородатый старик — медленный
+    else if (p.archetype === 'mom') p.baseSpeed = rand(1.6, 2.0);     // мама с коляской
     else if (p.archetype === 'gopnik') p.baseSpeed = rand(2.3, 2.9);
+    else if (p.archetype === 'worker') p.baseSpeed = rand(2.2, 2.8);   // рабочий
+    else if (p.archetype === 'musician') p.baseSpeed = rand(1.5, 2.0); // музыкант
+    else if (p.archetype === 'nurse') p.baseSpeed = rand(2.0, 2.6);    // медсестра
     else if (p.archetype === 'dog') p.baseSpeed = rand(3.0, 4.2);
     else if (p.archetype === 'cat') p.baseSpeed = rand(2.2, 3.5);
     else if (p.archetype === 'child') p.baseSpeed = rand(2.0, 2.6);
@@ -801,8 +971,20 @@ export class PedestrianManager {
 
     // Для человека: если достиг целевого перекрёстка — выбирает поворот или переход для продолжения пути
     const reachedTarget = p.targetIsec !== null && Math.abs(isec - p.targetIsec) < CFG.CELL * 0.5;
-    const roll = Math.random();
+    let roll = Math.random();
     const turnBlocked = p._blockedTurnIsec === isec;
+
+    // Архетипные модификаторы поведения на перекрёстке:
+    // - старики и мамы с коляской осторожны — реже переходят, чаще идут прямо/поворачивают
+    // - бегуны и гопники — чаще перебегают (в т.ч. вне зебры, если нарушитель)
+    // - музыканты — чаще останавливаются (играют)
+    if (p.archetype === 'elder' || p.archetype === 'mom' || p.archetype === 'grandma') {
+      roll = roll * 0.5; // вдвое реже переходят дорогу
+    } else if (p.archetype === 'runner' || p.archetype === 'gopnik') {
+      roll = roll * 1.4; // чаще перебегают
+    } else if (p.archetype === 'musician') {
+      roll = roll * 0.7; // чаще стоят на месте
+    }
 
     if (reachedTarget) {
       this._assignNewTarget(p);
@@ -1164,7 +1346,8 @@ export class PedestrianManager {
       // Фраза должна быть "в тему": про красный свет ругаемся только если
       // рядом реально есть светофор с красным для оси движения игрока;
       // про тротуар — если игрок заехал на тротуар/газон, где стоит пешеход.
-      let pool = CURSE_QUOTES;
+      // Иначе — архетипная ругань (у каждого типажа свой колорит).
+      let pool = this._cursePool(p.archetype);
       if (this._redLightNearPlayer(player)) {
         pool = CURSE_REDLIGHT_QUOTES;
       } else if (this.world && !this.world.onRoad(player.x, player.z)) {
@@ -1230,13 +1413,21 @@ export class PedestrianManager {
       if (p.speechT > 0) {
         p.speechT -= dt;
         if (p.speechT <= 0 && p.speechSprite) updateSpeechSprite(p.speechSprite, '');
+        // Показываем облачко только если пешеход реально в поле зрения игрока
+        // (спереди, не за спиной) — иначе видно фразу, а самого прохожего нет.
+        else if (p.speechSprite && player) {
+          const inView = isInPlayerView(p.x, p.z, player.x, player.z, player.heading, 60);
+          if (p.speechSprite.visible !== inView) p.speechSprite.visible = inView;
+        }
       } else {
         p.chatCd -= dt;
         if (p.chatCd <= 0 && Math.hypot(p.x - player.x, p.z - player.z) < 45) {
           if (p.isAnimal) {
             this.say(p, p.archetype === 'dog' ? choice(ANIMAL_DOG_QUOTES) : choice(ANIMAL_CAT_QUOTES), 2.0);
           } else {
-            this.say(p, choice(IDLE_QUOTES), 3.0);
+            // У каждого типажа свой набор фраз, иначе — общий пул
+            const pool = this._idlePool(p.archetype);
+            this.say(p, choice(pool), 3.0);
           }
           p.chatCd = rand(16, 36);
         }
