@@ -338,12 +338,11 @@ export class TrafficManager {
         continue;
       }
       // Плавный разворот на границе карты
-      if (Math.abs(car.pos) > 250) {
+      if (!car.turn && Math.abs(car.pos) > 250) {
         car.target = 0;
         car.turnAroundT += dt;
-        if (car.speed < 1.0 || car.turnAroundT > 1.2) {
-          car.dir = -car.dir;
-          car.pos = clamp(car.pos, -248, 248);
+        if (car.speed < 2.0 || car.turnAroundT > 1.2) {
+          this._startUTurn(car);
           car.turnAroundT = 0;
         }
       }
@@ -504,7 +503,7 @@ export class TrafficManager {
       car.speed += clamp(diff, -10 * dt, 5 * dt);
       car.speed = clamp(car.speed, 0, 18);
 
-      // активный поворот: движемся по дуге Безье через центр перекрёстка
+      // активный поворот: движемся по дуге Безье через центр перекрёстка или разворот
       if (car.turn) {
         const T = car.turn;
         T.t += dt;
@@ -514,7 +513,15 @@ export class TrafficManager {
         const bz = u * u * T.fromZ + 2 * u * k * T.ctrlZ + k * k * T.toZ;
         car.x = bx; car.z = bz;
         car.mesh.position.set(bx, 0, bz);
-        car.mesh.rotation.y = lerpAngle(T.fromH, T.toH, k);
+
+        // Угол касательной к квадратичной кривой Безье: B'(k) = 2(1-k)(P1-P0) + 2k(P2-P1)
+        const dx = (1 - k) * (T.ctrlX - T.fromX) + k * (T.toX - T.ctrlX);
+        const dz = (1 - k) * (T.ctrlZ - T.fromZ) + k * (T.toZ - T.ctrlZ);
+        const len = Math.hypot(dx, dz);
+        const tangentH = len > 1e-5 ? Math.atan2(dx, dz) : T.fromH;
+        const linearH = lerpAngle(T.fromH, T.toH, k);
+        car.mesh.rotation.y = lerpAngle(linearH, tangentH, Math.sin(k * Math.PI));
+
         const df = car.target - car.speed;
         car.speed += clamp(df, -10 * dt, 5 * dt);
         car.speed = clamp(car.speed, 0, 18);
@@ -589,6 +596,39 @@ export class TrafficManager {
       newAxis, newCoord, newPos: (car.axis === 'z' ? isec.x : isec.z), newDir,
     };
     car.turnT = dur + 0.2; // не выбираем направление, пока поворачиваем
+  }
+
+  /* Плавный U-образный разворот на границе города */
+  _startUTurn(car) {
+    const newDir = -car.dir;
+    // Новая позиция после разворота — внутри границ города
+    const newPos = clamp(car.pos - car.dir * 4, -245, 245);
+    const from = this._worldPos(car, _tempTrafficFrom);
+    const to = this._worldPos({ axis: car.axis, coord: car.coord, pos: newPos, dir: newDir }, _tempTrafficTo);
+
+    // Контрольная точка выдвинута вперёд по ходу движения для создания петли U-turn
+    let ctrlX, ctrlZ;
+    if (car.axis === 'z') {
+      ctrlX = car.coord;
+      ctrlZ = car.pos + car.dir * 7;
+    } else {
+      ctrlX = car.pos + car.dir * 7;
+      ctrlZ = car.coord;
+    }
+
+    const fromH = this._heading(car);
+    const toH = car.axis === 'z' ? (newDir > 0 ? 0 : Math.PI) : (newDir > 0 ? Math.PI / 2 : -Math.PI / 2);
+    const dur = 1.8; // Длительность разворота в секундах
+
+    car.turn = {
+      t: 0, dur,
+      fromX: from.x, fromZ: from.z,
+      toX: to.x, toZ: to.z,
+      ctrlX, ctrlZ,
+      fromH, toH,
+      newAxis: car.axis, newCoord: car.coord, newPos, newDir,
+    };
+    car.target = 6;
   }
 
   /* Ближайший светофор впереди для полосы машины (свой светофор своей оси) */
