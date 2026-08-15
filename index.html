@@ -8927,9 +8927,13 @@ class TrafficManager {
       // движение в +X: направо = +Z, налево = −Z; в −X: направо = −Z, налево = +Z
       newDir = right ? car.dir : -car.dir;
     }
-    // мировая точка старта и финиша
+    // мировая точка старта и финиша. Финиш смещаем ВПЕРЁД по новой дороге на
+    // дистанцию выезда (4.5 м), иначе для правого поворота to оказывается в центре
+    // перекрёстка, хорда мала, кривая вырождается и машина «поворачивает через
+    // три левых» (нос уводит вбок, а в конце резко дёргает в нужный курс).
     const from = this._worldPos(car, _tempTrafficFrom);
-    const to = this._worldPos({ axis: newAxis, coord: newCoord, pos: (car.axis === 'z' ? isec.x : isec.z), dir: newDir }, _tempTrafficTo);
+    const exitPos = (car.axis === 'z' ? isec.x : isec.z) + newDir * 4.5;
+    const to = this._worldPos({ axis: newAxis, coord: newCoord, pos: exitPos, dir: newDir }, _tempTrafficTo);
     // единичные векторы курса в начале и конце поворота
     const sdx = car.axis === 'z' ? 0 : car.dir;
     const sdz = car.axis === 'z' ? car.dir : 0;
@@ -8953,7 +8957,7 @@ class TrafficManager {
       p1x, p1z, p2x, p2z,
       fromH: this._heading(car),
       turnSpeed: 7, // разумная скорость в повороте
-      newAxis, newCoord, newPos: (car.axis === 'z' ? isec.x : isec.z), newDir,
+      newAxis, newCoord, newPos: exitPos, newDir,
     };
     car.turnT = arcLen / Math.max(car.speed, 4) + 0.3; // не выбираем направление, пока поворачиваем
   }
