@@ -8870,9 +8870,16 @@ class TrafficManager {
         const dx = (1 - k) * (T.ctrlX - T.fromX) + k * (T.toX - T.ctrlX);
         const dz = (1 - k) * (T.ctrlZ - T.fromZ) + k * (T.toZ - T.ctrlZ);
         const len = Math.hypot(dx, dz);
-        const tangentH = len > 1e-5 ? Math.atan2(dx, dz) : T.fromH;
-        const linearH = lerpAngle(T.fromH, T.toH, k);
-        car.mesh.rotation.y = lerpAngle(linearH, tangentH, Math.sin(k * Math.PI));
+        // Направление по касательной, развёрнутое непрерывно от стартового курса.
+        // atan2 возвращает [-π,π], а курс использует π для -Z; смешивать их через
+        // lerpAngle нельзя — нормализация кратчайшей дуги выбирает длинный путь и
+        // машина «крутится как юла». Поэтому берём касательную и разворачиваем её
+        // в диапазон [fromH-π, fromH+π], чтобы нос всегда смотрел по ходу движения.
+        let h = len > 1e-5 ? Math.atan2(dx, dz) : T.fromH;
+        let d = h - T.fromH;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        car.mesh.rotation.y = T.fromH + d;
 
         const df = car.target - car.speed;
         car.speed += clamp(df, -10 * dt, 5 * dt);
