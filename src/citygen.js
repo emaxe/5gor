@@ -2618,14 +2618,18 @@ export class World {
   /* --- Торговые киоски (Печать, Нарзан, Мороженое) --- */
   _kiosks() {
     const spots = [
-      { x: 138, z: 62, text: 'ПЕЧАТЬ', color: 0x2a5ad8 },
+      { x: 170, z: 80, text: 'ПЕЧАТЬ', color: 0x2a5ad8 },
       { x: -50, z: -18, text: 'НАРЗАН', color: 0x2a8a50 },
-      { x: 70, z: -50, text: 'МОРОЖЕНОЕ', color: 0xd88a2a },
+      { x: 96, z: -96, text: 'МОРОЖЕНОЕ', color: 0xd88a2a },
       { x: -18, z: -50, text: 'ПРЕССА', color: 0xc83a2a },
-      { x: 50, z: 120, text: 'СУВЕНИРЫ', color: 0x8a3ad8 },
+      { x: 36, z: 100, text: 'СУВЕНИРЫ', color: 0x8a3ad8 },
     ];
 
     for (const sp of spots) {
+      // Киоск не должен стоять вплотную к дороге — иначе он перекрывает угол
+      // перекрёстка и мешает проезду (см. СУВЕНИРЫ на (50,120): 8 м от дороги).
+      // Держим киоски в глубине квартала, минимум в 12 м от оси дороги.
+      if (this.distToRoad(sp.x, sp.z) < 12) continue;
       if (!this.isPositionValid(sp.x, sp.z, 1.5)) continue;
 
       const g = new THREE.Group();
