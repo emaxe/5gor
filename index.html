@@ -7973,29 +7973,53 @@ class PlayerCar {
 
   /* --- Коллизии: здания, пропсы, машины, пешеходы, озёра --- */
   _collide(world, traffic) {
-    const r = 2.0;
+    // Капсула-коллайдер машины: вместо одного круга r=2.0 (который на 1 м торчит
+    // за борта) используем ТРИ круга вдоль оси машины — радиус = полуширина
+    // кузова, позиции перед/центр/зад. Это повторяет прямоугольный силуэт:
+    //   taxi (1.9×4.3):  rc=0.97, sep=1.18 → перед/зад 2.15м, борт 0.97м
+    // Боковая досягаемость = ровно ширина кузова в любой точке оси, поэтому
+    // "врезаться в столб/сбить животное" можно только реально касаясь кузова,
+    // а не проезжая в метре от него. Три круга (а не два) обязательны: при
+    // двух кругах с радиусом=полуширина у длинной машины (L>2W) в центре был бы
+    // провал, через который пешеход мог бы пройти насквозь.
+    const shape = CAR_TYPE_SHAPE[this.stats.carType] || CAR_TYPE_SHAPE.taxi;
+    const halfW = shape.w / 2;
+    const halfL = shape.len / 2;
+    const rc = halfW * 1.03;
+    const sep = halfL - halfW;            // смещение переднего/заднего круга
+    const fwdX = Math.sin(this.heading), fwdZ = Math.cos(this.heading);
+
+    // Три центра капсулы (перед/центр/зад) в мировых координатах
+    const offs = [sep, 0, -sep];
+    for (let i = 0; i < offs.length; i++) {
+      const off = offs[i];
+      this._resolveAt(this.x + fwdX * off, this.z + fwdZ * off, rc, sep, world, traffic);
+    }
+  }
+
+  _resolveAt(px, pz, rc, sep, world, traffic) {
     // здания
     for (const b of world.buildings) {
-      const c = circleAABB(this.x, this.z, r, b);
+      const c = circleAABB(px, pz, rc, b);
       if (c) this._resolve(c, false, world);
     }
-    // пропсы
+    // пропсы (столбы, знаки, киоски, ограды)
     for (const p of world.propsAABB) {
-      const c = circleAABB(this.x, this.z, r, p);
+      const c = circleAABB(px, pz, rc, p);
       if (c) this._resolve(c, false, world);
     }
     // круглые коллайдеры (озеро)
     for (const cld of world.circleColliders) {
-      const d = dist2D(this.x, this.z, cld.x, cld.z);
-      if (d < cld.r + r) {
+      const d = dist2D(px, pz, cld.x, cld.z);
+      if (d < cld.r + rc) {
         if (d > 1e-6) {
-          _tempPlayerCircleRes.nx = (this.x - cld.x) / d;
-          _tempPlayerCircleRes.nz = (this.z - cld.z) / d;
+          _tempPlayerCircleRes.nx = (px - cld.x) / d;
+          _tempPlayerCircleRes.nz = (pz - cld.z) / d;
         } else {
           _tempPlayerCircleRes.nx = 0;
           _tempPlayerCircleRes.nz = 1;
         }
-        _tempPlayerCircleRes.depth = cld.r + r - d;
+        _tempPlayerCircleRes.depth = cld.r + rc - d;
         this._resolve(_tempPlayerCircleRes, false, world);
       }
     }
@@ -8003,12 +8027,15 @@ class PlayerCar {
     if (traffic) {
       for (const car of traffic.cars) {
         if (!car.alive || !car.mesh.visible) continue;
-        const d = dist2D(this.x, this.z, car.x, car.z);
-        const rr = r + car.radius;
+        const d = dist2D(px, pz, car.x, car.z);
+        const rr = rc + car.radius;
         if (d < rr && d > 1e-4) {
-          const nx = (this.x - car.x) / d, nz = (this.z - car.z) / d;
-          // расталкивание
-          this.x = car.x + nx * rr; this.z = car.z + nz * rr;
+          const nx = (px - car.x) / d, nz = (pz - car.z) / d;
+          // расталкивание: капсульный круг упирается в трафик-авто — двигаем
+          // ВЕСЬ центр машины на тот же вектор, что и круг (круг смещён на
+          // sep от центра, поэтому центр машины сдвигаем на (rr-d))
+          const delta = rr - d;
+          this.x += nx * delta; this.z += nz * delta;
           const vn = this.velX * nx + this.velZ * nz;
           if (vn < -2) {
             this.velX -= nx * vn * 1.35; this.velZ -= nz * vn * 1.35;
@@ -8021,31 +8048,29 @@ class PlayerCar {
         }
       }
     }
-    // пешеходы (включая пешеходов города и ждущих клиентов на остановках):
-    // на малой скорости — отталкиваем вбок, на высокой — сбиваем.
-    // Два последовательных прохода вместо [...world.peds.cars] + push каждый
-    // кадр (OPT-18) — источники уже существуют как списки, промежуточный
-    // массив не нужен.
+    // пешеходы и животные: каждый капсульный круг проверяем раздельно, чтобы
+    // задевать пешехода только когда капсула реально его касается
     if (world.peds) {
-      for (const p of world.peds.cars) this._collidePed(p, r, world);
+      for (const p of world.peds.cars) this._collidePed(p, rc, px, pz, world);
       if (world.gameRef && world.gameRef.orders) {
         for (const o of world.gameRef.orders.open) {
-          if (o.passenger && o.passenger.mesh) this._collidePed(o.passenger, r, world);
+          if (o.passenger && o.passenger.mesh) this._collidePed(o.passenger, rc, px, pz, world);
         }
       }
     }
   }
 
-  _collidePed(p, r, world) {
+  _collidePed(p, rc, px, pz, world) {
     if (p.alive === false || p.x === undefined || p.z === undefined) return;
     if (p.mesh && !p.mesh.visible) return;
-    const d = dist2D(this.x, this.z, p.x, p.z);
-    const rr = r + 0.55;
+    const d = dist2D(px, pz, p.x, p.z);
+    const rr = rc + 0.45;                     // запас на "толщину" пешехода
     if (d >= rr || d < 1e-4) return;
-    const nx = (p.x - this.x) / d, nz = (p.z - this.z) / d;
-    // выталкиваем из-под машины на границу контакта
-    p.x = this.x + nx * rr;
-    p.z = this.z + nz * rr;
+    const nx = (p.x - px) / d, nz = (p.z - pz) / d;
+    // выталкиваем из-под машины на границу контакта (в мировых координатах)
+    const wx = px + nx * rr, wz = pz + nz * rr;
+    p.x = wx;
+    p.z = wz;
     if (p.mesh) {
       p.mesh.position.x = p.x;
       p.mesh.position.z = p.z;
