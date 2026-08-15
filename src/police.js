@@ -87,26 +87,37 @@ export class PoliceManager {
     if (!this._policeNearby(player, traffic)) return;
     if (!lights || !lights.length) return;
 
-    // Проверяем: игрок на перекрёстке, и для его оси движения горит красный (state === 2)
     const px = player.x, pz = player.z;
     // Вектор курса: forward = (sin h, cos h)
     // Движение вдоль Z если |cos(h)| > |sin(h)|, движение вдоль X если |sin(h)| > |cos(h)|
     const absCos = Math.abs(Math.cos(player.heading));
     const absSin = Math.abs(Math.sin(player.heading));
     const movingAlongZ = absCos > absSin;
+    // Направление движения вдоль оси: >0 = +Z/+X, <0 = −Z/−X
+    const dirZ = Math.cos(player.heading);
+    const dirX = Math.sin(player.heading);
 
     for (const l of lights) {
       if (!l.isec) continue;
+      // Светофор должен контролировать ось движения игрока
+      if (movingAlongZ !== (l.axis === 'z')) continue;
+      // Игрок должен быть на той же дороге, что и светофор (поперечное смещение
+      // от оси дороги до столба ~8.2 м; параллельная дорога — на 64 м дальше)
+      const side = movingAlongZ ? Math.abs(px - l.x) : Math.abs(pz - l.z);
+      if (side > 13) continue;
+      // Светофор должен быть ВПЕРЕДИ по ходу — игрок ещё не проехал перекрёсток.
+      // Если он уже на дальней стороне (ahead <= 0), он пересёк стоп-линию раньше
+      // (возможно на зелёный) — это не нарушение.
+      const ahead = movingAlongZ
+        ? (dirZ > 0 ? l.isec.z - pz : pz - l.isec.z)
+        : (dirX > 0 ? l.isec.x - px : px - l.isec.x);
+      if (ahead <= 0) continue;
+      // Игрок должен быть ВНУТРИ перекрёстка (пересёк стоп-линию на ~6 м от центра),
+      // а не просто приближаться к нему. Иначе штрафуем за подъезд к красному.
       const d = dist2D(px, pz, l.isec.x, l.isec.z);
-      if (d > 12) continue; // только если игрок на перекрёстке
-
+      if (d > 8) continue;
       // state: 0 = зелёный, 1 = жёлтый, 2 = красный
-      // Светофор l.axis === 'z' контролирует движение вдоль Z, l.axis === 'x' — вдоль X
-      if (movingAlongZ && l.axis === 'z' && l.state === 2) {
-        this._fine(VIOLATIONS.redLight);
-        return;
-      }
-      if (!movingAlongZ && l.axis === 'x' && l.state === 2) {
+      if (l.state === 2) {
         this._fine(VIOLATIONS.redLight);
         return;
       }
