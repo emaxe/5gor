@@ -1105,7 +1105,7 @@ export class Game {
     const isNight = this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour;
     const prevViolator = CFG.pedViolatorChance;
     if (isNight) CFG.pedViolatorChance = Math.min(0.35, prevViolator * 1.4);
-    this.traffic.update(dt, this.player, this.world, density, this.peds);
+    this.traffic.update(dt, this.player, this.world, density, this.peds, this.playerPed);
     this.peds.update(dt, this.player, this.traffic, this.world);
     CFG.pedViolatorChance = prevViolator;
 
@@ -1231,7 +1231,7 @@ export class Game {
     const isNight = this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour;
     const prevViolator = CFG.pedViolatorChance;
     if (isNight) CFG.pedViolatorChance = Math.min(0.35, prevViolator * 1.4);
-    this.traffic.update(dt, this.player, this.world, density, this.peds);
+    this.traffic.update(dt, this.player, this.world, density, this.peds, this.playerPed);
     this.peds.update(dt, this.playerPed || this.player, this.traffic, this.world);
     CFG.pedViolatorChance = prevViolator;
 
@@ -1257,6 +1257,10 @@ export class Game {
     }
     if (this.input.take('punch')) {
       this._tryPunch();
+    }
+    if (this.input.take('jump')) {
+      this.input.flush('jump');
+      if (this.playerPed) this.playerPed.jump();
     }
     if (this.input.take('map')) this.toggleMap();
     if (this.input.take('pause')) this.togglePause();

@@ -40,6 +40,10 @@ export class PlayerPed {
     this.knockVz = 0;
     this.knockT = 0;
     this.isKnockedOut = false;
+    this.vy = 0;              // вертикальная скорость (прыжок/гравитация)
+    this.yOff = 0;            // текущая высота над землёй (прыжок)
+    this.jumpCd = 0;          // кулдаун прыжка
+    this.hitCd = 0;           // кулдаун наезда машины трафика
     this._tempVec = { x: 0, z: 0 };
     this.mesh = buildDriverMesh(this.options);
     if (this.mesh && this.scene) {
@@ -71,10 +75,27 @@ export class PlayerPed {
     this.knockVz = 0;
     this.knockT = 0;
     this.isKnockedOut = false;
+    this.vy = 0;
+    this.yOff = 0;
+    this.jumpCd = 0;
+    this.hitCd = 0;
     if (this.mesh) {
       this.mesh.position.set(this.x, this.groundY, this.z);
       this.mesh.rotation.set(0, this.heading, 0);
     }
+  }
+
+  /**
+   * Прыжок (если на земле и кулдаун прошёл).
+   * @returns {boolean} true, если прыжок выполнен
+   */
+  jump() {
+    if (this.stunT > 0 || this.knockT > 0 || this.jumpCd > 0) return false;
+    if (this.vy > 0) return false; // уже в воздухе
+    const jumpSpeed = (CFG && CFG.pedJumpSpeed !== undefined) ? CFG.pedJumpSpeed : 6.5;
+    this.vy = jumpSpeed;
+    this.jumpCd = (CFG && CFG.pedJumpCooldown !== undefined) ? CFG.pedJumpCooldown : 0.25;
+    return true;
   }
 
   /**
@@ -136,6 +157,9 @@ export class PlayerPed {
     }
     if (this.punchAnimT > 0) {
       this.punchAnimT = Math.max(0, this.punchAnimT - dt);
+    }
+    if (this.hitCd > 0) {
+      this.hitCd = Math.max(0, this.hitCd - dt);
     }
 
     if (this.stunT > 0) {
@@ -217,12 +241,20 @@ export class PlayerPed {
 
     this._collide(world, peds, playerCar);
 
+    // Прыжок/гравитация: вертикальная скорость и высота над землёй
+    if (this.jumpCd > 0) this.jumpCd = Math.max(0, this.jumpCd - dt);
     if (world && typeof world.heightAt === 'function') {
       this.groundY = world.heightAt(this.x, this.z);
     }
+    if (this.vy > 0 || this.yOff > 0) {
+      const g = (CFG && CFG.pedGravity !== undefined) ? CFG.pedGravity : 20.0;
+      this.vy -= g * dt;
+      this.yOff += this.vy * dt;
+      if (this.yOff <= 0) { this.yOff = 0; this.vy = 0; } // приземлился
+    }
 
     if (this.mesh) {
-      this.mesh.position.set(this.x, this.groundY, this.z);
+      this.mesh.position.set(this.x, this.groundY + this.yOff, this.z);
       if (this.isKnockedOut) {
         this.mesh.rotation.set(Math.PI / 2 * 0.8, this.heading, 0);
       } else {

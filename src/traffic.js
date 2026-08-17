@@ -310,7 +310,7 @@ export class TrafficManager {
     return car.axis === 'z' ? (car.dir > 0 ? 0 : Math.PI) : (car.dir > 0 ? Math.PI / 2 : -Math.PI / 2);
   }
 
-  update(dt, player, world, density, peds) {
+  update(dt, player, world, density, peds, playerPed) {
     const px = player.x, pz = player.z;
     // маячок полиции/скорой: красный/синий мигают в противофазе
     this._beaconT = (this._beaconT + dt) % 0.6;
@@ -441,6 +441,29 @@ export class TrafficManager {
           if (distToPed < yieldDist) {
             car.target = Math.min(car.target, 0);
             break;
+          }
+        }
+      }
+
+      // наезд машины трафика на игрока-пешехода (пеший режим)
+      if (playerPed && playerPed.hitCd <= 0 && playerPed.stunT <= 0) {
+        const distPlayer = Math.hypot(car.x - playerPed.x, car.z - playerPed.z);
+        if (distPlayer < car.radius + 0.6) {
+          playerPed.hitCd = 1.2;
+          const nx = (playerPed.x - car.x) / (distPlayer || 1);
+          const nz = (playerPed.z - car.z) / (distPlayer || 1);
+          if (car.speed > 2.5) {
+            // Машина трафика сбивает игрока-пешехода
+            const isKnockedOut = playerPed.takeHit(car.x, car.z, 1);
+            Events.emit('playerped:hit', { ped: null, isKnockedOut });
+            Events.emit('horn', { sourceX: car.x, sourceZ: car.z });
+            this.say(car, choice(DRIVER_HIT_PED_QUOTES), 3.0);
+            car.speed = Math.max(1, car.speed - 3.5);
+          } else {
+            // Толкает — игрок отлетает (без оглушения, как NPC-пешеходы при _dodge)
+            playerPed.knockVx = nx * 4.0;
+            playerPed.knockVz = nz * 4.0;
+            playerPed.knockT = 0.25;
           }
         }
       }
