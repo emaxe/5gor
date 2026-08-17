@@ -360,6 +360,15 @@ export class Game {
     events.on('ped:kick', () => {
       this.shakeT = 0.22; this.shakeAmp = 0.32;
     });
+    events.on('playerped:hit', (d) => {
+      this.shakeT = d && d.isKnockedOut ? 0.45 : 0.3;
+      this.shakeAmp = d && d.isKnockedOut ? 0.5 : 0.35;
+      if (d && d.isKnockedOut) {
+        this.ui.toast('Вас нокаутировали! Переведите дух...', '#ff4444');
+      } else {
+        this.ui.toast('Вас ударили!', '#ff7b72');
+      }
+    });
     events.on('stall', () => {
       this.ui.toast('Двигатель заглох!', '#ffb030');
     });
@@ -767,8 +776,8 @@ export class Game {
     if (!best) return;
 
     const dx = best.x - px, dz = best.z - pz;
-    this.peds._punchReaction(best, dx, dz);
-    Events.emit('ped:punch', { target: best });
+    this.peds._punchReaction(best, dx, dz, this.playerPed);
+    Events.emit('ped:punch', { target: best, playerPed: this.playerPed });
     this.shakeT = 0.2;
     this.shakeAmp = 0.25;
   }
@@ -1264,7 +1273,10 @@ export class Game {
 
   _updateWalkInteract() {
     this.interact = null;
-    if (!this.playerPed) return;
+    if (!this.playerPed || this.playerPed.stunT > 0) {
+      this.ui.setInteract(null, null);
+      return;
+    }
 
     // 1. Приоритет: удар по прохожему в конусе атаки
     const h = this.playerPed.heading;

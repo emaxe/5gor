@@ -308,7 +308,7 @@ export class UIManager {
     els['nav-arrow-wrap'].classList.add('hidden');
 
     // Кулдаун-индикатор кнопки взаимодействия
-    const onPunchCd = ped && ped.punchCd > 0;
+    const onPunchCd = ped && (ped.punchCd > 0 || ped.stunT > 0);
     const btnInteract = this.$('btn-interact');
     if (btnInteract) {
       btnInteract.style.opacity = onPunchCd ? '0.5' : '';

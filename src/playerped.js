@@ -31,6 +31,13 @@ export class PlayerPed {
     this.isRunning = false;
     this.punchCd = 0;
     this.punchAnimT = 0;
+    this.maxHp = (CFG && CFG.pedPlayerMaxHp !== undefined) ? CFG.pedPlayerMaxHp : 3;
+    this.hp = this.maxHp;
+    this.stunT = 0;
+    this.knockVx = 0;
+    this.knockVz = 0;
+    this.knockT = 0;
+    this.isKnockedOut = false;
     this._tempVec = { x: 0, z: 0 };
     this.mesh = buildPedMesh('regular');
     if (this.mesh && this.scene) {
@@ -56,21 +63,61 @@ export class PlayerPed {
     this.walkPhase = 0;
     this.punchCd = 0;
     this.punchAnimT = 0;
+    this.hp = this.maxHp;
+    this.stunT = 0;
+    this.knockVx = 0;
+    this.knockVz = 0;
+    this.knockT = 0;
+    this.isKnockedOut = false;
     if (this.mesh) {
       this.mesh.position.set(this.x, this.groundY, this.z);
-      this.mesh.rotation.y = this.heading;
+      this.mesh.rotation.set(0, this.heading, 0);
     }
   }
 
   /**
-   * Запустить действие удара (если кулдаун прошёл).
+   * Запустить действие удара (если кулдаун прошёл и игрок не оглушён).
    * @returns {boolean} true, если удар выполнен, иначе false
    */
   punch() {
-    if (this.punchCd > 0) return false;
+    if (this.stunT > 0 || this.punchCd > 0) return false;
     this.punchCd = (CFG && CFG.pedPunchCooldown !== undefined) ? CFG.pedPunchCooldown : 0.8;
     this.punchAnimT = 0.3;
     return true;
+  }
+
+  /**
+   * Получить удар / пинок от пешехода в ответ.
+   * @param {number} fromX - X-координата источника удара
+   * @param {number} fromZ - Z-координата источника удара
+   * @param {number} damage - Наносимый урон (по умолчанию 1)
+   * @returns {boolean} true если игрок нокаутирован (исчерпано всё HP)
+   */
+  takeHit(fromX, fromZ, damage = 1) {
+    this.hp = Math.max(0, this.hp - damage);
+    const dx = this.x - fromX;
+    const dz = this.z - fromZ;
+    const len = Math.hypot(dx, dz) || 1;
+    const dirX = dx / len;
+    const dirZ = dz / len;
+
+    if (this.hp <= 0) {
+      const downDur = (CFG && CFG.pedPlayerDownDuration !== undefined) ? CFG.pedPlayerDownDuration : 2.0;
+      this.stunT = downDur;
+      this.isKnockedOut = true;
+      this.knockVx = dirX * 5.5;
+      this.knockVz = dirZ * 5.5;
+      this.knockT = 0.4;
+    } else {
+      const stunDur = (CFG && CFG.pedPlayerStunDuration !== undefined) ? CFG.pedPlayerStunDuration : 0.6;
+      this.stunT = stunDur;
+      this.isKnockedOut = false;
+      this.knockVx = dirX * 4.0;
+      this.knockVz = dirZ * 4.0;
+      this.knockT = 0.25;
+    }
+    this.speed = 0;
+    return this.hp <= 0;
   }
 
   /**
@@ -89,62 +136,81 @@ export class PlayerPed {
       this.punchAnimT = Math.max(0, this.punchAnimT - dt);
     }
 
-    let moveFwd = 0;
-    let moveRight = 0;
-
-    if (input) {
-      if (typeof input.walkForward === 'number' || typeof input.walkRight === 'number') {
-        moveFwd = input.walkForward || 0;
-        moveRight = input.walkRight || 0;
-      } else if (input.keys) {
-        const k = input.keys;
-        if (k.has('KeyW') || k.has('ArrowUp')) moveFwd += 1;
-        if (k.has('KeyS') || k.has('ArrowDown')) moveFwd -= 1;
-        if (k.has('KeyD') || k.has('ArrowRight')) moveRight += 1;
-        if (k.has('KeyA') || k.has('ArrowLeft')) moveRight -= 1;
+    if (this.stunT > 0) {
+      this.stunT = Math.max(0, this.stunT - dt);
+      if (this.stunT <= 0 && this.isKnockedOut) {
+        this.isKnockedOut = false;
+        this.hp = this.maxHp;
       }
     }
 
-    // Если угол камеры передан в input (при прямом чтении клавиш) — проецируем относительно камеры.
-    // ВНИМАНИЕ: экранное «вправо» = −X при взгляде в +Z (камера за спиной, ось X зеркалится),
-    // поэтому знак moveRight инвертирован относительно наивной формулы.
-    if (input && typeof input.camYaw === 'number' && typeof input.walkForward !== 'number') {
-      const cy = Math.cos(input.camYaw), sy = Math.sin(input.camYaw);
-      this._tempVec.x = -moveRight * cy + moveFwd * sy;
-      this._tempVec.z = moveRight * sy + moveFwd * cy;
-    } else {
-      this._tempVec.x = moveRight;
-      this._tempVec.z = moveFwd;
-    }
-
-    const lenSq = this._tempVec.x * this._tempVec.x + this._tempVec.z * this._tempVec.z;
-    const len = Math.sqrt(lenSq);
-    const hasMove = len > 1e-4;
-
-    if (lenSq > 1) {
-      const invLen = 1 / len;
-      this._tempVec.x *= invLen;
-      this._tempVec.z *= invLen;
-    }
-
-    const isShift = !!((input && input.keys && (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight'))) || (input && input.isRunning));
-    this.isRunning = isShift && hasMove;
-
-    const walkSpeed = (CFG && CFG.pedWalkSpeed) || 2.4;
-    const runSpeed = (CFG && CFG.pedRunSpeed) || 4.8;
-    const targetMaxSpeed = this.isRunning ? runSpeed : walkSpeed;
-
-    if (hasMove) {
-      this.speed = targetMaxSpeed * Math.min(1, len);
-      this.x += this._tempVec.x * this.speed * dt;
-      this.z += this._tempVec.z * this.speed * dt;
-
-      const targetHeading = Math.atan2(this._tempVec.x, this._tempVec.z);
-      this.heading = turnToward(this.heading, targetHeading, dt * 14.0);
-
-      this.walkPhase += dt * this.speed * (this.isRunning ? 3.6 : 3.0);
-    } else {
+    if (this.knockT > 0) {
+      this.knockT = Math.max(0, this.knockT - dt);
+      this.x += this.knockVx * dt;
+      this.z += this.knockVz * dt;
+      this.knockVx *= Math.max(0, 1 - dt * 6.0);
+      this.knockVz *= Math.max(0, 1 - dt * 6.0);
       this.speed = 0;
+    } else if (this.stunT > 0) {
+      this.speed = 0;
+    } else {
+      let moveFwd = 0;
+      let moveRight = 0;
+
+      if (input) {
+        if (typeof input.walkForward === 'number' || typeof input.walkRight === 'number') {
+          moveFwd = input.walkForward || 0;
+          moveRight = input.walkRight || 0;
+        } else if (input.keys) {
+          const k = input.keys;
+          if (k.has('KeyW') || k.has('ArrowUp')) moveFwd += 1;
+          if (k.has('KeyS') || k.has('ArrowDown')) moveFwd -= 1;
+          if (k.has('KeyD') || k.has('ArrowRight')) moveRight += 1;
+          if (k.has('KeyA') || k.has('ArrowLeft')) moveRight -= 1;
+        }
+      }
+
+      // Если угол камеры передан в input (при прямом чтении клавиш) — проецируем относительно камеры.
+      // ВНИМАНИЕ: экранное «вправо» = −X при взгляде в +Z (камера за спиной, ось X зеркалится),
+      // поэтому знак moveRight инвертирован относительно наивной формулы.
+      if (input && typeof input.camYaw === 'number' && typeof input.walkForward !== 'number') {
+        const cy = Math.cos(input.camYaw), sy = Math.sin(input.camYaw);
+        this._tempVec.x = -moveRight * cy + moveFwd * sy;
+        this._tempVec.z = moveRight * sy + moveFwd * cy;
+      } else {
+        this._tempVec.x = moveRight;
+        this._tempVec.z = moveFwd;
+      }
+
+      const lenSq = this._tempVec.x * this._tempVec.x + this._tempVec.z * this._tempVec.z;
+      const len = Math.sqrt(lenSq);
+      const hasMove = len > 1e-4;
+
+      if (lenSq > 1) {
+        const invLen = 1 / len;
+        this._tempVec.x *= invLen;
+        this._tempVec.z *= invLen;
+      }
+
+      const isShift = !!((input && input.keys && (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight'))) || (input && input.isRunning));
+      this.isRunning = isShift && hasMove;
+
+      const walkSpeed = (CFG && CFG.pedWalkSpeed) || 2.4;
+      const runSpeed = (CFG && CFG.pedRunSpeed) || 4.8;
+      const targetMaxSpeed = this.isRunning ? runSpeed : walkSpeed;
+
+      if (hasMove) {
+        this.speed = targetMaxSpeed * Math.min(1, len);
+        this.x += this._tempVec.x * this.speed * dt;
+        this.z += this._tempVec.z * this.speed * dt;
+
+        const targetHeading = Math.atan2(this._tempVec.x, this._tempVec.z);
+        this.heading = turnToward(this.heading, targetHeading, dt * 14.0);
+
+        this.walkPhase += dt * this.speed * (this.isRunning ? 3.6 : 3.0);
+      } else {
+        this.speed = 0;
+      }
     }
 
     this._collide(world, peds, playerCar);
@@ -155,7 +221,11 @@ export class PlayerPed {
 
     if (this.mesh) {
       this.mesh.position.set(this.x, this.groundY, this.z);
-      this.mesh.rotation.y = this.heading;
+      if (this.isKnockedOut) {
+        this.mesh.rotation.set(Math.PI / 2 * 0.8, this.heading, 0);
+      } else {
+        this.mesh.rotation.set(0, this.heading, 0);
+      }
       this._animate();
     }
   }
@@ -284,12 +354,36 @@ export class PlayerPed {
   }
 
   /**
-   * Анимация суставов ног и рук при ходьбе/беге и ударе.
+   * Анимация суставов ног и рук при ходьбе/беге, ударе и получении урона.
    */
   _animate() {
     if (!this.mesh) return;
     const u = this.mesh.userData;
     if (!u) return;
+
+    if (this.isKnockedOut) {
+      if (u.legs && u.legs.length >= 2) {
+        u.legs[0].rotation.x = 0.2;
+        u.legs[1].rotation.x = -0.2;
+      }
+      if (u.arms && u.arms.length >= 2) {
+        u.arms[0].rotation.x = 0.8;
+        u.arms[1].rotation.x = 0.8;
+      }
+      return;
+    }
+
+    if (this.stunT > 0) {
+      if (u.legs && u.legs.length >= 2) {
+        u.legs[0].rotation.x = 0;
+        u.legs[1].rotation.x = 0;
+      }
+      if (u.arms && u.arms.length >= 2) {
+        u.arms[0].rotation.x = -0.9;
+        u.arms[1].rotation.x = -0.9;
+      }
+      return;
+    }
 
     const moving = this.speed > 0.05;
     if (moving) {

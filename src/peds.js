@@ -243,54 +243,109 @@ const KICK_QUOTES = [
   "Ещё раз так проедешь — весь бампер разберу!"
 ];
 
-const PUNCH_ELDER_QUOTES = [
+// --- Реплики при ударе по пешеходу: убегание (Вариант A) ---
+const PUNCH_FLEE_ELDER_QUOTES = [
   "Полиция! Хулиганы среди бела дня!",
   "Милиция, спасите! Бьют деда!",
   "Ироды, средь бела дня нападают!",
   "Хулиган! Полицию зовите!",
-  "Ох, за что старика-то?!"
+  "Ох, за что старика-то?! Не свяжусь!",
+  "Ай, больно! Ухожу от греха подальше!"
 ];
 
-const PUNCH_GOPNIK_QUOTES = [
-  "Ты кого тронул, вася?!",
-  "Ты чё, попутал, джигит?!",
+const PUNCH_FLEE_GOPNIK_QUOTES = [
+  "Ты чё, псих?! Я ща пацанов с района подтяну!",
   "Ща пацанов позову, тебе хана!",
-  "Ты на кого руку поднял?!",
-  "Слышь, ты щас сам ляжешь!"
+  "Погоди у меня, я с толпой вернусь!",
+  "Ненормальный какой-то! Ухожу, но мы ещё увидимся!"
 ];
 
-const PUNCH_BUSINESS_QUOTES = [
+const PUNCH_FLEE_BUSINESS_QUOTES = [
   "Я тебя засужу! Хулиганство!",
-  "Ты знаешь, кто я такой?! Охрана!",
-  "Нападение! В суд подам!",
-  "Ты за это ответишь по закону!"
+  "Ты знаешь, кто я такой?! Охрана, полиция!",
+  "Нападение! В суд подам, за решётку сядешь!",
+  "Ты за это ответишь по закону! Ухожу!"
 ];
 
-const PUNCH_TOURIST_QUOTES = [
+const PUNCH_FLEE_TOURIST_QUOTES = [
   "Какой кошмар! Нападение на туриста!",
-  "Помогите, полиция! Беспредел!",
-  "Никакого курортного сервиса!",
-  "Спасите, маньяк в парке!"
+  "Помогите, полиция! Беспредел на курорте!",
+  "Никакого курортного сервиса! Спасите!",
+  "Спасите, маньяк в парке! Бежим!"
 ];
 
-const PUNCH_MOM_QUOTES = [
+const PUNCH_FLEE_MOM_QUOTES = [
   "Караул! Бандиты на улице!",
-  "Что вы творите, люди добрые?!",
-  "Помогите! Хулиганы!"
+  "Что вы творите, тут ребёнок?! Помогите!",
+  "Помогите! Хулиганы нападают!",
+  "Ухожу, не трогай ребёнка, псих!"
 ];
 
-const PUNCH_WORKER_QUOTES = [
-  "Ты чё творишь, кулаками машешь?!",
-  "Слышь, ошалел совсем?!",
-  "Ща как дам в ответ!"
+const PUNCH_FLEE_WORKER_QUOTES = [
+  "Слышь, ошалел совсем?! Ментов вызову!",
+  "Ты чё творишь, псих?! Не свяжусь!",
+  "Совсем с катушек съехал, психопат!",
+  "Кулаками машет, ненормальный! Ухожу!"
 ];
 
-const PUNCH_DEFAULT_QUOTES = [
-  "Ай! За что?!",
-  "Помогите, хулиганы!",
+const PUNCH_FLEE_DEFAULT_QUOTES = [
+  "Ай, больно! Ухожу, псих!",
+  "Хулиган! Не свяжусь с неадекватом!",
+  "Помогите, хулиганы среди бела дня!",
   "Милиция! Нападение!",
   "Ты с ума сошёл?! Караул!",
-  "Ааах! Бьют!"
+  "Ааах! Бьют средь бела дня!"
+];
+
+// --- Реплики при ударе по пешеходу: ответный удар/пинок (Вариант B) ---
+const PUNCH_RETALIATE_GOPNIK_QUOTES = [
+  "Ты кого тронул, вася?! На нах!",
+  "Ты чё, попутал, джигит?! Ща сам ляжешь!",
+  "Ты на кого руку поднял?! Получи в ответ!",
+  "Слышь, ты щас сам ляжешь! Держи!",
+  "Получи сдачу, самый смелый?!"
+];
+
+const PUNCH_RETALIATE_WORKER_QUOTES = [
+  "Ща как дам в ответ! Получи!",
+  "Ты чё творишь, кулаками машешь?! На нах!",
+  "Слышь, ошалел?! Получи сдачу!",
+  "У меня рука тяжёлая, держи ответочку!"
+];
+
+const PUNCH_RETALIATE_BUSINESS_QUOTES = [
+  "Ты на кого полез, быдло?! На!",
+  "Руки убрал! Вот тебе за костюм!",
+  "Ты зачем полез, неадекват?! Получи!",
+  "Ща сам в нокаут улетишь!"
+];
+
+const PUNCH_RETALIATE_TOURIST_QUOTES = [
+  "Это тебе не санаторий! Получи!",
+  "На курорте драться вздумал?! На нах!",
+  "Я за себя постою! Держи сдачу!"
+];
+
+const PUNCH_RETALIATE_ELDER_QUOTES = [
+  "Ишь ты, на деда полез?! Вот тебе тростью!",
+  "Я ещё крепкий, хулиган! Получи!",
+  "Вот тебе за старика, негодяй!",
+  "У нас в молодости таких учили! На!"
+];
+
+const PUNCH_RETALIATE_MOM_QUOTES = [
+  "Ты кого тронул, урод?! Получи!",
+  "Не смей подходить! На нах!",
+  "Вот тебе, скотина, чтоб не лез!"
+];
+
+const PUNCH_RETALIATE_DEFAULT_QUOTES = [
+  "Получи в ответ!",
+  "Ща сам ляжешь!",
+  "Ты зачем полез?! На!",
+  "Держи сдачу, хулиган!",
+  "Кулаками махать вздумал?! На нах!",
+  "А вот это обратно лови!"
 ];
 
 const PUNCH_WITNESS_QUOTES = [
@@ -381,6 +436,60 @@ export class PedestrianManager {
       case 'nurse': return CURSE_NURSE_QUOTES;
       default: return CURSE_QUOTES;
     }
+  }
+
+  /* Набор реплик убегающего пешехода при ударе (Вариант A) */
+  _punchFleePool(arch) {
+    switch (arch) {
+      case 'elder':
+      case 'grandma':
+        return PUNCH_FLEE_ELDER_QUOTES;
+      case 'gopnik':
+        return PUNCH_FLEE_GOPNIK_QUOTES;
+      case 'businessman':
+        return PUNCH_FLEE_BUSINESS_QUOTES;
+      case 'tourist':
+        return PUNCH_FLEE_TOURIST_QUOTES;
+      case 'mom':
+        return PUNCH_FLEE_MOM_QUOTES;
+      case 'worker':
+        return PUNCH_FLEE_WORKER_QUOTES;
+      default:
+        return PUNCH_FLEE_DEFAULT_QUOTES;
+    }
+  }
+
+  /* Набор реплик дающего сдачи пешехода при ударе (Вариант B) */
+  _punchRetaliatePool(arch) {
+    switch (arch) {
+      case 'elder':
+      case 'grandma':
+        return PUNCH_RETALIATE_ELDER_QUOTES;
+      case 'gopnik':
+        return PUNCH_RETALIATE_GOPNIK_QUOTES;
+      case 'businessman':
+        return PUNCH_RETALIATE_BUSINESS_QUOTES;
+      case 'tourist':
+        return PUNCH_RETALIATE_TOURIST_QUOTES;
+      case 'mom':
+        return PUNCH_RETALIATE_MOM_QUOTES;
+      case 'worker':
+        return PUNCH_RETALIATE_WORKER_QUOTES;
+      default:
+        return PUNCH_RETALIATE_DEFAULT_QUOTES;
+    }
+  }
+
+  /* Определение реакции на удар: сдача (Вариант B, ~50%) или побег (Вариант A) */
+  _shouldRetaliate(p) {
+    if (p.isAnimal) return false;
+    if (p.archetype === 'gopnik') return Math.random() < 0.8;
+    if (p.archetype === 'worker') return Math.random() < 0.7;
+    if (p.archetype === 'businessman') return Math.random() < 0.45;
+    if (p.archetype === 'tourist') return Math.random() < 0.4;
+    if (p.archetype === 'mom') return Math.random() < 0.25;
+    if (p.archetype === 'elder' || p.archetype === 'grandma') return Math.random() < 0.3;
+    return Math.random() < 0.5;
   }
 
   /* Анимация ходьбы/бега/ругани/удара ногой и движения животных */
@@ -1420,7 +1529,6 @@ export class PedestrianManager {
 
     // Разъярённый пешеход пинает авто игрока
     if (p.angerT > 0) {
-      p.angerT -= dt;
       if (dist < 2.4 && Math.abs(player.speed) < 3.5 && p.kickCd <= 0 && p.kickT <= 0) {
         p.mode = 'kick';
         p.kickT = 0.6;
@@ -1428,31 +1536,6 @@ export class PedestrianManager {
         p.targetAngle = Math.atan2(dx, dz);
         Events.emit('ped:kick');
         this.say(p, choice(KICK_QUOTES), 2.5);
-      }
-    }
-
-    if (p.kickCd > 0) p.kickCd -= dt;
-    if (p.kickT > 0) {
-      p.kickT -= dt;
-      if (p.kickT <= 0 && p.mode === 'kick') {
-        // Пинок мог застать пешехода посреди cross/wait/turn маршрута — mode
-        // здесь безусловно перезаписывался в 'walk'/'run', оставляя p.turn/
-        // p.route/_edgeKind от прерванного шага рассинхронизированными
-        // (см. находка 2 финального ревью). Для АКТИВНЫХ пешеходов не
-        // восстанавливаем mode напрямую, а полностью разбираем маршрут через
-        // _deactivate — на следующем тике _classify реактивирует пешехода с
-        // чистого листа. Для неактивных (обычная прогулка по тротуару)
-        // поведение не меняем.
-        const wasActive = p.active;
-        p.mode = this._restMode(p);
-        if (wasActive) {
-          // Разбираем и turn/cross-состояние прерванного шага маршрута —
-          // _deactivate само их не трогает (используется и из мест, где
-          // mode гарантированно не turn/cross), а здесь mode только что был
-          // 'kick' поверх любого из них.
-          p.turn = null; p.cross = null;
-          this._deactivate(p);
-        }
       }
     }
   }
@@ -1469,6 +1552,19 @@ export class PedestrianManager {
     for (const p of this.cars) {
       if (!p.alive) continue;
       if (p.hitCd > 0) p.hitCd -= dt;
+      if (p.angerT > 0) p.angerT -= dt;
+      if (p.kickCd > 0) p.kickCd -= dt;
+      if (p.kickT > 0) {
+        p.kickT -= dt;
+        if (p.kickT <= 0 && p.mode === 'kick') {
+          const wasActive = p.active;
+          p.mode = this._restMode(p);
+          if (wasActive) {
+            p.turn = null; p.cross = null;
+            this._deactivate(p);
+          }
+        }
+      }
       p.walk = (p.walk || 0) + dt * p.speed * (p.mode === 'run' ? 6 : 4);
 
       // Облака речи
@@ -1550,32 +1646,11 @@ export class PedestrianManager {
   }
 
   /* Реакция на удар кулаком от пешехода-игрока */
-  _punchReaction(p, dx, dz) {
+  _punchReaction(p, dx, dz, playerPed = null) {
     p.fx = p.x; p.fz = p.z;
-    p.mode = 'walk';
-    p.knockT = 1.5;
+    p.knockT = 0;
     p.cross = null; p.turn = null;
     this._deactivate(p);
-
-    const sp = (CFG && CFG.pedPunchKnockSpeed !== undefined) ? CFG.pedPunchKnockSpeed : 5.0;
-    const len = Math.hypot(dx, dz) || 1;
-    p.fvx = (dx / len) * sp;
-    p.fvz = (dz / len) * sp;
-
-    // Реплика жертвы удара (архетипная)
-    if (p.isAnimal) {
-      this.say(p, p.archetype === 'dog' ? "Ску-у-ул! Гав!" : "Шшш-мяу!", 2.5);
-    } else {
-      let quote;
-      if (p.archetype === 'elder' || p.archetype === 'grandma') quote = choice(PUNCH_ELDER_QUOTES);
-      else if (p.archetype === 'gopnik') quote = choice(PUNCH_GOPNIK_QUOTES);
-      else if (p.archetype === 'businessman') quote = choice(PUNCH_BUSINESS_QUOTES);
-      else if (p.archetype === 'tourist') quote = choice(PUNCH_TOURIST_QUOTES);
-      else if (p.archetype === 'mom') quote = choice(PUNCH_MOM_QUOTES);
-      else if (p.archetype === 'worker') quote = choice(PUNCH_WORKER_QUOTES);
-      else quote = choice(PUNCH_DEFAULT_QUOTES);
-      this.say(p, quote, 2.5);
-    }
 
     // Паника свидетелей в радиусе
     const panicRadius = (CFG && CFG.pedPunchPanicRadius !== undefined) ? CFG.pedPunchPanicRadius : 8.0;
@@ -1594,17 +1669,50 @@ export class PedestrianManager {
         }
       }
     }
+
+    // Животные всегда пугаются и убегают
+    if (p.isAnimal) {
+      this.say(p, p.archetype === 'dog' ? "Ску-у-ул! Гав!" : "Шшш-мяу!", 2.5);
+      this._startFlee(p, dx, dz, 4.5);
+      return;
+    }
+
+    const willRetaliate = this._shouldRetaliate(p);
+
+    if (willRetaliate) {
+      // Вариант B: «Пинает в ответ и ругается»
+      p.mode = 'kick';
+      p.kickT = 0.6;
+      p.kickCd = 3.0;
+      p.angerT = 1.5;
+      p.speed = 0;
+      p.targetAngle = Math.atan2(-dx, -dz); // лицом к игроку
+      const quote = choice(this._punchRetaliatePool(p.archetype));
+      this.say(p, quote, 2.5);
+
+      if (playerPed && typeof playerPed.takeHit === 'function') {
+        const isKnockedOut = playerPed.takeHit(p.x, p.z, 1);
+        Events.emit('playerped:hit', { ped: p, isKnockedOut });
+      }
+    } else {
+      // Вариант A: «Ругается и убегает»
+      const quote = choice(this._punchFleePool(p.archetype));
+      this.say(p, quote, 2.5);
+      this._startFlee(p, dx, dz, 4.0);
+    }
   }
 
   /* Свободное убегание */
-  _startFlee(p, dx, dz, speed) {
+  _startFlee(p, dx, dz, speed, shout = null) {
     p.mode = 'flee';
     p.fleeT = 1.0 + speed * 0.15;
     const len = Math.hypot(dx, dz) || 1;
     p.fvx = (dx / len) * speed;
     p.fvz = (dz / len) * speed;
     p.cross = null; p.turn = null;
-    if (!p.isAnimal) {
+    if (shout !== null) {
+      if (shout) this.say(p, shout, 2.5);
+    } else if (!p.isAnimal && p.speechT <= 0) {
       this.say(p, "Сайгак на колёсах!", 2.5);
     }
   }
