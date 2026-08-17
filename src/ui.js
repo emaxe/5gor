@@ -144,7 +144,18 @@ export class UIManager {
     const hbBtn = this.$('btn-hb');
     if (hbBtn) {
       const hold = (key) => {
-        hbBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.touch[key] = true; hbBtn._pressed = true; hbBtn.setPointerCapture(e.pointerId); });
+        hbBtn.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          if (this._touchWalkMode) {
+            if (this.game && typeof this.game._tryPunch === 'function') {
+              this.game._tryPunch();
+            }
+            return;
+          }
+          this.touch[key] = true;
+          hbBtn._pressed = true;
+          hbBtn.setPointerCapture(e.pointerId);
+        });
         hbBtn.addEventListener('pointerup', () => { this.touch[key] = false; hbBtn._pressed = false; });
         hbBtn.addEventListener('pointercancel', () => { this.touch[key] = false; hbBtn._pressed = false; });
         hbBtn.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -258,6 +269,20 @@ export class UIManager {
     } else {
       nw.classList.add('hidden');
     }
+
+    // Возврат тач-кнопки ручника и сброс прозрачности при вождении
+    if (this._touchWalkMode) {
+      this._touchWalkMode = false;
+      const hbBtn = this.$('btn-hb');
+      if (hbBtn) {
+        if (hbBtn.textContent !== '🛞') hbBtn.textContent = '🛞';
+        hbBtn.style.opacity = '';
+      }
+    }
+    const btnInteract = this.$('btn-interact');
+    if (btnInteract && btnInteract.style.opacity !== '') {
+      btnInteract.style.opacity = '';
+    }
   }
 
   updateWalkHud(ped, gameState, hour, playerCar) {
@@ -281,6 +306,21 @@ export class UIManager {
     // Заказы и навигатор скрыты в пешем режиме
     els['order-card'].classList.add('hidden');
     els['nav-arrow-wrap'].classList.add('hidden');
+
+    // Кулдаун-индикатор кнопки взаимодействия
+    const onPunchCd = ped && ped.punchCd > 0;
+    const btnInteract = this.$('btn-interact');
+    if (btnInteract) {
+      btnInteract.style.opacity = onPunchCd ? '0.5' : '';
+    }
+
+    // Тач-кнопка удара в режиме ходьбы
+    this._touchWalkMode = true;
+    const hbBtn = this.$('btn-hb');
+    if (hbBtn) {
+      if (hbBtn.textContent !== '👊') hbBtn.textContent = '👊';
+      hbBtn.style.opacity = onPunchCd ? '0.5' : '';
+    }
   }
 
   /* ---------- Мини-карта (heading-up: карта вращается, стрелка всегда вверх) ---------- */
@@ -485,11 +525,14 @@ export class UIManager {
     const wrap = this.$('btn-interact-wrap');
     if (label) {
       wrap.classList.remove('hidden');
-      this.$('btn-interact').textContent = label;
+      const btn = this.$('btn-interact');
+      if (btn) btn.textContent = label;
       this.interactCb = cb;
     } else {
       wrap.classList.add('hidden');
       this.interactCb = null;
+      const btn = this.$('btn-interact');
+      if (btn) btn.style.opacity = '';
     }
   }
 

@@ -29,6 +29,8 @@ export class PlayerPed {
     this.speed = 0;
     this.walkPhase = 0;
     this.isRunning = false;
+    this.punchCd = 0;
+    this.punchAnimT = 0;
     this._tempVec = { x: 0, z: 0 };
     this.mesh = buildPedMesh('regular');
     if (this.mesh && this.scene) {
@@ -52,10 +54,23 @@ export class PlayerPed {
     this.heading = heading;
     this.speed = 0;
     this.walkPhase = 0;
+    this.punchCd = 0;
+    this.punchAnimT = 0;
     if (this.mesh) {
       this.mesh.position.set(this.x, this.groundY, this.z);
       this.mesh.rotation.y = this.heading;
     }
+  }
+
+  /**
+   * Запустить действие удара (если кулдаун прошёл).
+   * @returns {boolean} true, если удар выполнен, иначе false
+   */
+  punch() {
+    if (this.punchCd > 0) return false;
+    this.punchCd = (CFG && CFG.pedPunchCooldown !== undefined) ? CFG.pedPunchCooldown : 0.8;
+    this.punchAnimT = 0.3;
+    return true;
   }
 
   /**
@@ -67,6 +82,13 @@ export class PlayerPed {
    * @param {object} playerCar - Автомобиль игрока
    */
   update(dt, input, world, peds, playerCar) {
+    if (this.punchCd > 0) {
+      this.punchCd = Math.max(0, this.punchCd - dt);
+    }
+    if (this.punchAnimT > 0) {
+      this.punchAnimT = Math.max(0, this.punchAnimT - dt);
+    }
+
     let moveFwd = 0;
     let moveRight = 0;
 
@@ -262,7 +284,7 @@ export class PlayerPed {
   }
 
   /**
-   * Анимация суставов ног и рук при ходьбе/беге.
+   * Анимация суставов ног и рук при ходьбе/беге и ударе.
    */
   _animate() {
     if (!this.mesh) return;
@@ -290,6 +312,13 @@ export class PlayerPed {
         u.arms[0].rotation.x = 0;
         u.arms[1].rotation.x = 0;
       }
+    }
+
+    if (this.punchAnimT > 0 && u.arms && u.arms.length >= 2) {
+      const k = clamp(1.0 - this.punchAnimT / 0.3, 0, 1);
+      const armAngle = -Math.sin(k * Math.PI) * 1.2;
+      u.arms[1].rotation.x = armAngle; // правая рука вперёд
+      u.arms[0].rotation.x = -0.5;     // левая для баланса
     }
   }
 

@@ -342,6 +342,21 @@ export class Game {
       this.achievements.checkAll();
       // сам пешеход (отлёт/лежание) обрабатывается в peds._knockDown
     });
+    events.on('ped:punch', (d) => {
+      if (!d || !d.target) return;
+      const fine = (CFG && CFG.pedPunchFine !== undefined) ? CFG.pedPunchFine : 150;
+      const ratingLoss = (CFG && CFG.pedPunchRatingLoss !== undefined) ? CFG.pedPunchRatingLoss : 5;
+      this.addMoney(-fine);
+      this.setRating(this.rating - ratingLoss);
+      this.ui.toast('Нападение на прохожего! -' + fine + ' ₽, рейтинг -' + ratingLoss, '#ff7b72');
+      if (typeof this.police.checkPunchPed === 'function') {
+        this.police.checkPunchPed(this.playerPed, this.traffic);
+      }
+      if (typeof this.achievements.onPunchPed === 'function') {
+        this.achievements.onPunchPed();
+      }
+      this.achievements.checkAll();
+    });
     events.on('ped:kick', () => {
       this.shakeT = 0.22; this.shakeAmp = 0.32;
     });
@@ -723,6 +738,39 @@ export class Game {
     this.chaseCam.reset(this.player);
     this.setState('driving');
     this.audio.resumeRadio();
+  }
+
+  _tryPunch() {
+    if (!this.playerPed || !this.playerPed.punch()) return;
+
+    const px = this.playerPed.x, pz = this.playerPed.z;
+    const h = this.playerPed.heading;
+    const fwdX = Math.sin(h), fwdZ = Math.cos(h);
+    const punchRad = (CFG && CFG.pedPunchRadius !== undefined) ? CFG.pedPunchRadius : 2.0;
+    const punchArcCos = Math.cos((CFG && CFG.pedPunchArc !== undefined) ? CFG.pedPunchArc : Math.PI / 3);
+
+    let best = null, bestDist = punchRad;
+    if (this.peds && this.peds.cars) {
+      for (const p of this.peds.cars) {
+        if (!p.alive || p.isAnimal || !p.mesh || !p.mesh.visible) continue;
+        if (p.knockT > 0 || p.mode === 'flee') continue;
+        const dx = p.x - px, dz = p.z - pz;
+        const dist = Math.hypot(dx, dz);
+        if (dist > bestDist) continue;
+        const dot = (dx * fwdX + dz * fwdZ) / (dist || 1);
+        if (dot < punchArcCos) continue;
+        bestDist = dist;
+        best = p;
+      }
+    }
+
+    if (!best) return;
+
+    const dx = best.x - px, dz = best.z - pz;
+    this.peds._punchReaction(best, dx, dz);
+    Events.emit('ped:punch', { target: best });
+    this.shakeT = 0.2;
+    this.shakeAmp = 0.25;
   }
 
   _checkCollisionAt(x, z, radius = 0.4) {
@@ -1176,9 +1224,15 @@ export class Game {
       this.input.flush('interact');
       if (this.interact) this.interact.cb();
     }
+    if (this.input.take('punch')) {
+      this._tryPunch();
+    }
     if (this.input.take('map')) this.toggleMap();
     if (this.input.take('pause')) this.togglePause();
     this.input.flush();
+
+    // полиция: обновление кулдаунов
+    this.police.update(dt);
 
     // километраж пешком
     if (this.shiftStats && this.playerPed) {
@@ -1211,13 +1265,39 @@ export class Game {
   _updateWalkInteract() {
     this.interact = null;
     if (!this.playerPed) return;
-    const dCar = dist2D(this.playerPed.x, this.playerPed.z, this.player.x, this.player.z);
-    if (dCar <= CFG.carEnterDist) {
-      this.interact = {
-        label: 'Сесть в машину (E)',
-        cb: () => this.enterCar(),
-      };
-    } else {
+
+    // 1. Приоритет: удар по прохожему в конусе атаки
+    const h = this.playerPed.heading;
+    const fwdX = Math.sin(h), fwdZ = Math.cos(h);
+    const punchRad = (CFG && CFG.pedPunchRadius !== undefined) ? CFG.pedPunchRadius : 2.0;
+    const punchArcCos = Math.cos((CFG && CFG.pedPunchArc !== undefined) ? CFG.pedPunchArc : Math.PI / 3);
+    if (this.peds && this.peds.cars) {
+      for (const p of this.peds.cars) {
+        if (!p.alive || p.isAnimal || !p.mesh || !p.mesh.visible) continue;
+        if (p.knockT > 0 || p.mode === 'flee') continue;
+        const dx = p.x - this.playerPed.x, dz = p.z - this.playerPed.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > punchRad) continue;
+        const dot = (dx * fwdX + dz * fwdZ) / (dist || 1);
+        if (dot < punchArcCos) continue;
+        this.interact = { label: 'Ударить (F)', cb: () => this._tryPunch() };
+        break;
+      }
+    }
+
+    // 2. Вход в машину
+    if (!this.interact) {
+      const dCar = dist2D(this.playerPed.x, this.playerPed.z, this.player.x, this.player.z);
+      if (dCar <= CFG.carEnterDist) {
+        this.interact = {
+          label: 'Сесть в машину (E)',
+          cb: () => this.enterCar(),
+        };
+      }
+    }
+
+    // 3. Заправка
+    if (!this.interact && this.world && this.world.fuelStations) {
       for (const s of this.world.fuelStations) {
         if (dist2D(this.playerPed.x, this.playerPed.z, s.x, s.z) < CFG.refuelDist && this.player.fuel < this.player.stats.tank - 1) {
           this.interact = {
@@ -1228,6 +1308,7 @@ export class Game {
         }
       }
     }
+
     this.ui.setInteract(this.interact ? this.interact.label : null, this.interact ? this.interact.cb : null);
   }
 

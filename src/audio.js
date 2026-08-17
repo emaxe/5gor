@@ -69,6 +69,10 @@ export class AudioManager {
       if (!this._ready) return;
       this.sfx.thud();
     });
+    Events.on('ped:punch', () => {
+      if (!this._ready) return;
+      this.sfx.thud();
+    });
     Events.on('horn', (d = {}) => {
       if (!this._ready) return;
       if (d.sourceX !== undefined) {

@@ -34,6 +34,9 @@ const ACHIEVEMENTS = [
   { id: 'km_500',        name: 'Путешественник',       desc: 'Проедьте 500 км за все время',          icon: '🛣️', check: s => s.totalKm >= 500 },
   { id: 'police_fined',  name: 'Враг народа',          desc: 'Получите 5 штрафов от полиции',         icon: '🚨', check: s => s.policeFines >= 5 },
   { id: 'tips_5k',       name: 'Любимец клиентов',     desc: 'Заработайте 5 000 ₽ чаевых',            icon: '🎁', check: s => s.totalTips >= 5000 },
+  // --- Бойцовские ---
+  { id: 'hot_head',      name: 'Горячая голова',       desc: 'Нападите на 10 прохожих за смену',      icon: '👊', check: s => s.shiftPunches >= 10 },
+  { id: 'brawler',       name: 'Дерущийся таксист',    desc: 'Нападите на 50 прохожих за все время',  icon: '🥊', check: s => s.totalPunches >= 50 },
 ];
 
 const STORAGE_KEY = '5gor_achievements_v1';
@@ -67,6 +70,11 @@ export class AchievementManager {
     Events.on('hitPed', () => {
       this.stats.shiftPeds++;
     });
+    Events.on('ped:punch', () => {
+      this._lastPunchEventTime = Date.now();
+      this.stats.shiftPunches++;
+      this.stats.totalPunches++;
+    });
     Events.on('police:fine', () => {
       this.stats.policeFines++;
       this.checkAll();
@@ -75,6 +83,7 @@ export class AchievementManager {
       this.stats.shiftOrders = 0;
       this.stats.shiftCrashes = 0;
       this.stats.shiftPeds = 0;
+      this.stats.shiftPunches = 0;
     });
     Events.on('night:order', () => {
       this.stats.nightOrders++;
@@ -95,6 +104,8 @@ export class AchievementManager {
       policeFines: 0,
       shiftCrashes: 0,
       shiftPeds: 0,
+      shiftPunches: 0,
+      totalPunches: 0,
     };
   }
 
@@ -162,6 +173,19 @@ export class AchievementManager {
   }
 
   /**
+   * Зафиксировать удар по пешеходу.
+   */
+  onPunchPed() {
+    const now = Date.now();
+    if (!this._lastPunchEventTime || now - this._lastPunchEventTime > 50) {
+      this.stats.shiftPunches++;
+      this.stats.totalPunches++;
+    }
+    this._lastPunchEventTime = 0;
+    this.checkAll();
+  }
+
+  /**
    * Загрузить накопленную статистику из сохранения игры.
    * @param {Object} stats - Статистика из save
    */
@@ -172,6 +196,7 @@ export class AchievementManager {
     this.stats.totalTips = stats.tips || 0;
     this.stats.totalMissions = stats.missions || 0;
     this.stats.totalKm = stats.km || 0;
+    this.stats.totalPunches = stats.punches || stats.totalPunches || 0;
   }
 
   /**
@@ -189,6 +214,8 @@ export class AchievementManager {
       maxRating: this.stats.maxRating,
       nightOrders: this.stats.nightOrders,
       policeFines: this.stats.policeFines,
+      punches: this.stats.totalPunches,
+      totalPunches: this.stats.totalPunches,
     };
   }
 }

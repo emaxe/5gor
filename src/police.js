@@ -20,6 +20,7 @@ const VIOLATIONS = {
   speeding:  { id: 'speeding',  label: 'Превышение скорости!',            fine: 300,  ratingLoss: 3,  cooldown: 8 },
   redLight:  { id: 'redLight',  label: 'Проезд на красный свет!',          fine: 500,  ratingLoss: 5,  cooldown: 10 },
   hitPed:    { id: 'hitPed',    label: 'Сбит пешеход! Штраф от полиции.',   fine: 800,  ratingLoss: 10, cooldown: 12 },
+  pedPunch:  { id: 'pedPunch',  label: 'Нападение на прохожего!',          fine: 500,  ratingLoss: 5,  cooldown: 15 },
 };
 
 /** Радиус детекции нарушений патрульной машиной */
@@ -133,6 +134,17 @@ export class PoliceManager {
     if (this._onCooldown('hitPed')) return;
     if (!this._policeNearby(player, traffic)) return;
     this._fine(VIOLATIONS.hitPed);
+  }
+
+  /**
+   * Нападение на прохожего — штраф от полиции если рядом патруль.
+   * @param {import('./playerped.js').PlayerPed} playerPed
+   * @param {import('./traffic.js').TrafficManager} traffic
+   */
+  checkPunchPed(playerPed, traffic) {
+    if (this._onCooldown('pedPunch')) return;
+    if (!this._policeNearby(playerPed, traffic)) return;
+    this._fine(VIOLATIONS.pedPunch);
   }
 
   /**

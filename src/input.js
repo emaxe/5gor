@@ -15,7 +15,7 @@ export class InputManager {
     this.handbrake = false;
 
     // очереди одноразовых действий
-    this.queues = { interact: [], horn: [], lights: [], radio: [], map: [], pause: [], garage: [] };
+    this.queues = { interact: [], horn: [], lights: [], radio: [], map: [], pause: [], garage: [], punch: [] };
 
     // камера
     this.camYawDelta = 0;
@@ -50,7 +50,8 @@ export class InputManager {
       if (k === 'KeyM') this.queues.map.push(1);
       if (k === 'Escape' || k === 'KeyP') this.queues.pause.push(1);
       if (k === 'KeyG') this.queues.garage.push(1);
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyR', 'KeyM', 'ShiftLeft', 'ShiftRight'].includes(k)) e.preventDefault();
+      if (k === 'KeyF') this.queues.punch.push(1);
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyR', 'KeyM', 'KeyF', 'ShiftLeft', 'ShiftRight'].includes(k)) e.preventDefault();
     };
     const up = (e) => this.keys.delete(e.code);
     window.addEventListener('keydown', down);
@@ -58,18 +59,35 @@ export class InputManager {
   }
 
   _bindMouse() {
-    let dragging = false, lastX = 0, lastY = 0;
+    let dragging = false, lastX = 0, lastY = 0, startX = 0, startY = 0, startBtn = -1;
     this.canvas.addEventListener('pointerdown', (e) => {
-      if (e.button === 0 || e.button === 2) { dragging = true; lastX = e.clientX; lastY = e.clientY; }
+      if (e.button === 0 || e.button === 2) {
+        dragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        startX = e.clientX;
+        startY = e.clientY;
+        startBtn = e.button;
+      }
     });
     window.addEventListener('pointermove', (e) => {
       if (!dragging) return;
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
-      lastX = e.clientX; lastY = e.clientY;
+      lastX = e.clientX;
+      lastY = e.clientY;
       this.camYawDelta -= dx * 0.005;
       this.camPitchDelta += dy * 0.005;
     });
-    window.addEventListener('pointerup', () => { dragging = false; });
+    window.addEventListener('pointerup', (e) => {
+      if (dragging && startBtn === 0 && e.button === 0) {
+        const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
+        if (dist < 4) {
+          this.queues.punch.push(1);
+        }
+      }
+      dragging = false;
+      startBtn = -1;
+    });
     window.addEventListener('wheel', (e) => {
       // Не перехватывать скролл внутри меню/экранов — пусть карточки скроллятся
       if (e.target.closest('.screen, .card, #ach-list, #garage-list, #se-stats, #err-text')) return;

@@ -130,7 +130,7 @@ export const CFG = {
 
   // Рейтинг и прокачка
   ratingPerOrder: { normal: 4, urgent: 6, vip: 7, group: 9, tourist: 10, package: 5, drunk: 6, race: 12 },
-  ratingFail: { crash: 2, hitPed: 15, failOrder: 5, vipLeave: 8 },
+  ratingFail: { crash: 2, hitPed: 15, failOrder: 5, vipLeave: 8, pedPunch: 3 },
 
   // Смена: 12 реальных минут = 24 игровых часа
   shiftStartHour: 9,
@@ -156,6 +156,15 @@ export const CFG = {
   pedRunSpeed: 4.8,        // скорость спринта при зажатом Shift (м/с)
   carEnterDist: 3.0,       // максимальная дистанция посадки в авто (м)
   carExitMaxSpeed: 1.5,    // максимальная скорость авто для разрешения выхода (м/с)
+
+  // Удар / драка пешехода-игрока
+  pedPunchRadius: 2.0,       // дистанция удара (м)
+  pedPunchArc: Math.PI / 3,  // половина конуса поражения (60° = π/3)
+  pedPunchCooldown: 0.8,     // кулдаун между ударами (сек)
+  pedPunchKnockSpeed: 5.0,   // скорость отлёта цели (м/с)
+  pedPunchPanicRadius: 8.0,  // радиус паники свидетелей (м)
+  pedPunchFine: 150,         // штраф за нападение (₽)
+  pedPunchRatingLoss: 5,     // потеря рейтинга за нападение
 
   // Качество (устаревший алиас, держится ради обратной совместимости старых
   // сохранений — реальные настройки теперь в CFG.gfx)

@@ -243,6 +243,64 @@ const KICK_QUOTES = [
   "Ещё раз так проедешь — весь бампер разберу!"
 ];
 
+const PUNCH_ELDER_QUOTES = [
+  "Полиция! Хулиганы среди бела дня!",
+  "Милиция, спасите! Бьют деда!",
+  "Ироды, средь бела дня нападают!",
+  "Хулиган! Полицию зовите!",
+  "Ох, за что старика-то?!"
+];
+
+const PUNCH_GOPNIK_QUOTES = [
+  "Ты кого тронул, вася?!",
+  "Ты чё, попутал, джигит?!",
+  "Ща пацанов позову, тебе хана!",
+  "Ты на кого руку поднял?!",
+  "Слышь, ты щас сам ляжешь!"
+];
+
+const PUNCH_BUSINESS_QUOTES = [
+  "Я тебя засужу! Хулиганство!",
+  "Ты знаешь, кто я такой?! Охрана!",
+  "Нападение! В суд подам!",
+  "Ты за это ответишь по закону!"
+];
+
+const PUNCH_TOURIST_QUOTES = [
+  "Какой кошмар! Нападение на туриста!",
+  "Помогите, полиция! Беспредел!",
+  "Никакого курортного сервиса!",
+  "Спасите, маньяк в парке!"
+];
+
+const PUNCH_MOM_QUOTES = [
+  "Караул! Бандиты на улице!",
+  "Что вы творите, люди добрые?!",
+  "Помогите! Хулиганы!"
+];
+
+const PUNCH_WORKER_QUOTES = [
+  "Ты чё творишь, кулаками машешь?!",
+  "Слышь, ошалел совсем?!",
+  "Ща как дам в ответ!"
+];
+
+const PUNCH_DEFAULT_QUOTES = [
+  "Ай! За что?!",
+  "Помогите, хулиганы!",
+  "Милиция! Нападение!",
+  "Ты с ума сошёл?! Караул!",
+  "Ааах! Бьют!"
+];
+
+const PUNCH_WITNESS_QUOTES = [
+  "Драка! Бежим!",
+  "Караул, псих на улице!",
+  "Спасите! Бьют людей!",
+  "Милиция, помогите!",
+  "Бежим, тут неадекват!"
+];
+
 /**
  * Менеджер пешеходов и животных (спавн, осознанный ИИ движения к целям, анимации, ругань и животные).
  */
@@ -1324,6 +1382,10 @@ export class PedestrianManager {
   _checkNearMissAndKick(p, player, dt) {
     if (!player || p.knockT > 0 || p.mode === 'flee') return;
 
+    // Пинание и реакция на подрезание срабатывают только когда игрок за рулём автомобиля
+    const isCar = !!(player.stats && player.stats.carType);
+    if (!isCar) return;
+
     const dx = player.x - p.x;
     const dz = player.z - p.z;
     const dist = Math.hypot(dx, dz);
@@ -1484,6 +1546,53 @@ export class PedestrianManager {
       this.say(p, p.archetype === 'dog' ? "Уау-гав!" : "Мяу-у-у!", 2.0);
     } else {
       this.say(p, "Аааах!!", 2.0);
+    }
+  }
+
+  /* Реакция на удар кулаком от пешехода-игрока */
+  _punchReaction(p, dx, dz) {
+    p.fx = p.x; p.fz = p.z;
+    p.mode = 'walk';
+    p.knockT = 1.5;
+    p.cross = null; p.turn = null;
+    this._deactivate(p);
+
+    const sp = (CFG && CFG.pedPunchKnockSpeed !== undefined) ? CFG.pedPunchKnockSpeed : 5.0;
+    const len = Math.hypot(dx, dz) || 1;
+    p.fvx = (dx / len) * sp;
+    p.fvz = (dz / len) * sp;
+
+    // Реплика жертвы удара (архетипная)
+    if (p.isAnimal) {
+      this.say(p, p.archetype === 'dog' ? "Ску-у-ул! Гав!" : "Шшш-мяу!", 2.5);
+    } else {
+      let quote;
+      if (p.archetype === 'elder' || p.archetype === 'grandma') quote = choice(PUNCH_ELDER_QUOTES);
+      else if (p.archetype === 'gopnik') quote = choice(PUNCH_GOPNIK_QUOTES);
+      else if (p.archetype === 'businessman') quote = choice(PUNCH_BUSINESS_QUOTES);
+      else if (p.archetype === 'tourist') quote = choice(PUNCH_TOURIST_QUOTES);
+      else if (p.archetype === 'mom') quote = choice(PUNCH_MOM_QUOTES);
+      else if (p.archetype === 'worker') quote = choice(PUNCH_WORKER_QUOTES);
+      else quote = choice(PUNCH_DEFAULT_QUOTES);
+      this.say(p, quote, 2.5);
+    }
+
+    // Паника свидетелей в радиусе
+    const panicRadius = (CFG && CFG.pedPunchPanicRadius !== undefined) ? CFG.pedPunchPanicRadius : 8.0;
+    for (const other of this.cars) {
+      if (other === p || !other.alive || !other.mesh || !other.mesh.visible) continue;
+      if (other.knockT > 0) continue;
+      const odx = other.x - p.x;
+      const odz = other.z - p.z;
+      const odist = Math.hypot(odx, odz);
+      if (odist <= panicRadius && odist > 0.001) {
+        other.fx = other.x; other.fz = other.z;
+        this._deactivate(other);
+        this._startFlee(other, odx, odz, 4.0);
+        if (!other.isAnimal) {
+          this.say(other, choice(PUNCH_WITNESS_QUOTES), 2.0);
+        }
+      }
     }
   }
 

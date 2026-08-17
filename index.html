@@ -735,7 +735,7 @@ const CFG = {
 
   // Рейтинг и прокачка
   ratingPerOrder: { normal: 4, urgent: 6, vip: 7, group: 9, tourist: 10, package: 5, drunk: 6, race: 12 },
-  ratingFail: { crash: 2, hitPed: 15, failOrder: 5, vipLeave: 8 },
+  ratingFail: { crash: 2, hitPed: 15, failOrder: 5, vipLeave: 8, pedPunch: 3 },
 
   // Смена: 12 реальных минут = 24 игровых часа
   shiftStartHour: 9,
@@ -761,6 +761,15 @@ const CFG = {
   pedRunSpeed: 4.8,        // скорость спринта при зажатом Shift (м/с)
   carEnterDist: 3.0,       // максимальная дистанция посадки в авто (м)
   carExitMaxSpeed: 1.5,    // максимальная скорость авто для разрешения выхода (м/с)
+
+  // Удар / драка пешехода-игрока
+  pedPunchRadius: 2.0,       // дистанция удара (м)
+  pedPunchArc: Math.PI / 3,  // половина конуса поражения (60° = π/3)
+  pedPunchCooldown: 0.8,     // кулдаун между ударами (сек)
+  pedPunchKnockSpeed: 5.0,   // скорость отлёта цели (м/с)
+  pedPunchPanicRadius: 8.0,  // радиус паники свидетелей (м)
+  pedPunchFine: 150,         // штраф за нападение (₽)
+  pedPunchRatingLoss: 5,     // потеря рейтинга за нападение
 
   // Качество (устаревший алиас, держится ради обратной совместимости старых
   // сохранений — реальные настройки теперь в CFG.gfx)
@@ -4176,6 +4185,10 @@ class AudioManager {
       if (!this._ready) return;
       this.sfx.thud();
     });
+    Events.on('ped:punch', () => {
+      if (!this._ready) return;
+      this.sfx.thud();
+    });
     Events.on('horn', (d = {}) => {
       if (!this._ready) return;
       if (d.sourceX !== undefined) {
@@ -4429,7 +4442,7 @@ class InputManager {
     this.handbrake = false;
 
     // очереди одноразовых действий
-    this.queues = { interact: [], horn: [], lights: [], radio: [], map: [], pause: [], garage: [] };
+    this.queues = { interact: [], horn: [], lights: [], radio: [], map: [], pause: [], garage: [], punch: [] };
 
     // камера
     this.camYawDelta = 0;
@@ -4464,7 +4477,8 @@ class InputManager {
       if (k === 'KeyM') this.queues.map.push(1);
       if (k === 'Escape' || k === 'KeyP') this.queues.pause.push(1);
       if (k === 'KeyG') this.queues.garage.push(1);
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyR', 'KeyM', 'ShiftLeft', 'ShiftRight'].includes(k)) e.preventDefault();
+      if (k === 'KeyF') this.queues.punch.push(1);
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyR', 'KeyM', 'KeyF', 'ShiftLeft', 'ShiftRight'].includes(k)) e.preventDefault();
     };
     const up = (e) => this.keys.delete(e.code);
     window.addEventListener('keydown', down);
@@ -4472,18 +4486,35 @@ class InputManager {
   }
 
   _bindMouse() {
-    let dragging = false, lastX = 0, lastY = 0;
+    let dragging = false, lastX = 0, lastY = 0, startX = 0, startY = 0, startBtn = -1;
     this.canvas.addEventListener('pointerdown', (e) => {
-      if (e.button === 0 || e.button === 2) { dragging = true; lastX = e.clientX; lastY = e.clientY; }
+      if (e.button === 0 || e.button === 2) {
+        dragging = true;
+        lastX = e.clientX;
+        lastY = e.clientY;
+        startX = e.clientX;
+        startY = e.clientY;
+        startBtn = e.button;
+      }
     });
     window.addEventListener('pointermove', (e) => {
       if (!dragging) return;
       const dx = e.clientX - lastX, dy = e.clientY - lastY;
-      lastX = e.clientX; lastY = e.clientY;
+      lastX = e.clientX;
+      lastY = e.clientY;
       this.camYawDelta -= dx * 0.005;
       this.camPitchDelta += dy * 0.005;
     });
-    window.addEventListener('pointerup', () => { dragging = false; });
+    window.addEventListener('pointerup', (e) => {
+      if (dragging && startBtn === 0 && e.button === 0) {
+        const dist = Math.hypot(e.clientX - startX, e.clientY - startY);
+        if (dist < 4) {
+          this.queues.punch.push(1);
+        }
+      }
+      dragging = false;
+      startBtn = -1;
+    });
     window.addEventListener('wheel', (e) => {
       // Не перехватывать скролл внутри меню/экранов — пусть карточки скроллятся
       if (e.target.closest('.screen, .card, #ach-list, #garage-list, #se-stats, #err-text')) return;
@@ -8395,6 +8426,8 @@ class PlayerPed {
     this.speed = 0;
     this.walkPhase = 0;
     this.isRunning = false;
+    this.punchCd = 0;
+    this.punchAnimT = 0;
     this._tempVec = { x: 0, z: 0 };
     this.mesh = buildPedMesh('regular');
     if (this.mesh && this.scene) {
@@ -8418,10 +8451,23 @@ class PlayerPed {
     this.heading = heading;
     this.speed = 0;
     this.walkPhase = 0;
+    this.punchCd = 0;
+    this.punchAnimT = 0;
     if (this.mesh) {
       this.mesh.position.set(this.x, this.groundY, this.z);
       this.mesh.rotation.y = this.heading;
     }
+  }
+
+  /**
+   * Запустить действие удара (если кулдаун прошёл).
+   * @returns {boolean} true, если удар выполнен, иначе false
+   */
+  punch() {
+    if (this.punchCd > 0) return false;
+    this.punchCd = (CFG && CFG.pedPunchCooldown !== undefined) ? CFG.pedPunchCooldown : 0.8;
+    this.punchAnimT = 0.3;
+    return true;
   }
 
   /**
@@ -8433,6 +8479,13 @@ class PlayerPed {
    * @param {object} playerCar - Автомобиль игрока
    */
   update(dt, input, world, peds, playerCar) {
+    if (this.punchCd > 0) {
+      this.punchCd = Math.max(0, this.punchCd - dt);
+    }
+    if (this.punchAnimT > 0) {
+      this.punchAnimT = Math.max(0, this.punchAnimT - dt);
+    }
+
     let moveFwd = 0;
     let moveRight = 0;
 
@@ -8628,7 +8681,7 @@ class PlayerPed {
   }
 
   /**
-   * Анимация суставов ног и рук при ходьбе/беге.
+   * Анимация суставов ног и рук при ходьбе/беге и ударе.
    */
   _animate() {
     if (!this.mesh) return;
@@ -8656,6 +8709,13 @@ class PlayerPed {
         u.arms[0].rotation.x = 0;
         u.arms[1].rotation.x = 0;
       }
+    }
+
+    if (this.punchAnimT > 0 && u.arms && u.arms.length >= 2) {
+      const k = clamp(1.0 - this.punchAnimT / 0.3, 0, 1);
+      const armAngle = -Math.sin(k * Math.PI) * 1.2;
+      u.arms[1].rotation.x = armAngle; // правая рука вперёд
+      u.arms[0].rotation.x = -0.5;     // левая для баланса
     }
   }
 
@@ -9604,6 +9664,64 @@ const KICK_QUOTES = [
   "Получи за то, что чуть не задавил!",
   "Вот тебе, чтобы на красный не летал!",
   "Ещё раз так проедешь — весь бампер разберу!"
+];
+
+const PUNCH_ELDER_QUOTES = [
+  "Полиция! Хулиганы среди бела дня!",
+  "Милиция, спасите! Бьют деда!",
+  "Ироды, средь бела дня нападают!",
+  "Хулиган! Полицию зовите!",
+  "Ох, за что старика-то?!"
+];
+
+const PUNCH_GOPNIK_QUOTES = [
+  "Ты кого тронул, вася?!",
+  "Ты чё, попутал, джигит?!",
+  "Ща пацанов позову, тебе хана!",
+  "Ты на кого руку поднял?!",
+  "Слышь, ты щас сам ляжешь!"
+];
+
+const PUNCH_BUSINESS_QUOTES = [
+  "Я тебя засужу! Хулиганство!",
+  "Ты знаешь, кто я такой?! Охрана!",
+  "Нападение! В суд подам!",
+  "Ты за это ответишь по закону!"
+];
+
+const PUNCH_TOURIST_QUOTES = [
+  "Какой кошмар! Нападение на туриста!",
+  "Помогите, полиция! Беспредел!",
+  "Никакого курортного сервиса!",
+  "Спасите, маньяк в парке!"
+];
+
+const PUNCH_MOM_QUOTES = [
+  "Караул! Бандиты на улице!",
+  "Что вы творите, люди добрые?!",
+  "Помогите! Хулиганы!"
+];
+
+const PUNCH_WORKER_QUOTES = [
+  "Ты чё творишь, кулаками машешь?!",
+  "Слышь, ошалел совсем?!",
+  "Ща как дам в ответ!"
+];
+
+const PUNCH_DEFAULT_QUOTES = [
+  "Ай! За что?!",
+  "Помогите, хулиганы!",
+  "Милиция! Нападение!",
+  "Ты с ума сошёл?! Караул!",
+  "Ааах! Бьют!"
+];
+
+const PUNCH_WITNESS_QUOTES = [
+  "Драка! Бежим!",
+  "Караул, псих на улице!",
+  "Спасите! Бьют людей!",
+  "Милиция, помогите!",
+  "Бежим, тут неадекват!"
 ];
 
 /**
@@ -10687,6 +10805,10 @@ class PedestrianManager {
   _checkNearMissAndKick(p, player, dt) {
     if (!player || p.knockT > 0 || p.mode === 'flee') return;
 
+    // Пинание и реакция на подрезание срабатывают только когда игрок за рулём автомобиля
+    const isCar = !!(player.stats && player.stats.carType);
+    if (!isCar) return;
+
     const dx = player.x - p.x;
     const dz = player.z - p.z;
     const dist = Math.hypot(dx, dz);
@@ -10847,6 +10969,53 @@ class PedestrianManager {
       this.say(p, p.archetype === 'dog' ? "Уау-гав!" : "Мяу-у-у!", 2.0);
     } else {
       this.say(p, "Аааах!!", 2.0);
+    }
+  }
+
+  /* Реакция на удар кулаком от пешехода-игрока */
+  _punchReaction(p, dx, dz) {
+    p.fx = p.x; p.fz = p.z;
+    p.mode = 'walk';
+    p.knockT = 1.5;
+    p.cross = null; p.turn = null;
+    this._deactivate(p);
+
+    const sp = (CFG && CFG.pedPunchKnockSpeed !== undefined) ? CFG.pedPunchKnockSpeed : 5.0;
+    const len = Math.hypot(dx, dz) || 1;
+    p.fvx = (dx / len) * sp;
+    p.fvz = (dz / len) * sp;
+
+    // Реплика жертвы удара (архетипная)
+    if (p.isAnimal) {
+      this.say(p, p.archetype === 'dog' ? "Ску-у-ул! Гав!" : "Шшш-мяу!", 2.5);
+    } else {
+      let quote;
+      if (p.archetype === 'elder' || p.archetype === 'grandma') quote = choice(PUNCH_ELDER_QUOTES);
+      else if (p.archetype === 'gopnik') quote = choice(PUNCH_GOPNIK_QUOTES);
+      else if (p.archetype === 'businessman') quote = choice(PUNCH_BUSINESS_QUOTES);
+      else if (p.archetype === 'tourist') quote = choice(PUNCH_TOURIST_QUOTES);
+      else if (p.archetype === 'mom') quote = choice(PUNCH_MOM_QUOTES);
+      else if (p.archetype === 'worker') quote = choice(PUNCH_WORKER_QUOTES);
+      else quote = choice(PUNCH_DEFAULT_QUOTES);
+      this.say(p, quote, 2.5);
+    }
+
+    // Паника свидетелей в радиусе
+    const panicRadius = (CFG && CFG.pedPunchPanicRadius !== undefined) ? CFG.pedPunchPanicRadius : 8.0;
+    for (const other of this.cars) {
+      if (other === p || !other.alive || !other.mesh || !other.mesh.visible) continue;
+      if (other.knockT > 0) continue;
+      const odx = other.x - p.x;
+      const odz = other.z - p.z;
+      const odist = Math.hypot(odx, odz);
+      if (odist <= panicRadius && odist > 0.001) {
+        other.fx = other.x; other.fz = other.z;
+        this._deactivate(other);
+        this._startFlee(other, odx, odz, 4.0);
+        if (!other.isAnimal) {
+          this.say(other, choice(PUNCH_WITNESS_QUOTES), 2.0);
+        }
+      }
     }
   }
 
@@ -12349,6 +12518,7 @@ const VIOLATIONS = {
   speeding:  { id: 'speeding',  label: 'Превышение скорости!',            fine: 300,  ratingLoss: 3,  cooldown: 8 },
   redLight:  { id: 'redLight',  label: 'Проезд на красный свет!',          fine: 500,  ratingLoss: 5,  cooldown: 10 },
   hitPed:    { id: 'hitPed',    label: 'Сбит пешеход! Штраф от полиции.',   fine: 800,  ratingLoss: 10, cooldown: 12 },
+  pedPunch:  { id: 'pedPunch',  label: 'Нападение на прохожего!',          fine: 500,  ratingLoss: 5,  cooldown: 15 },
 };
 
 /** Радиус детекции нарушений патрульной машиной */
@@ -12465,6 +12635,17 @@ class PoliceManager {
   }
 
   /**
+   * Нападение на прохожего — штраф от полиции если рядом патруль.
+   * @param {import('./playerped.js').PlayerPed} playerPed
+   * @param {import('./traffic.js').TrafficManager} traffic
+   */
+  checkPunchPed(playerPed, traffic) {
+    if (this._onCooldown('pedPunch')) return;
+    if (!this._policeNearby(playerPed, traffic)) return;
+    this._fine(VIOLATIONS.pedPunch);
+  }
+
+  /**
    * Применить штраф: списать деньги, понизить рейтинг, показать тост.
    * @param {ViolationConfig} v
    */
@@ -12538,6 +12719,9 @@ const ACHIEVEMENTS = [
   { id: 'km_500',        name: 'Путешественник',       desc: 'Проедьте 500 км за все время',          icon: '🛣️', check: s => s.totalKm >= 500 },
   { id: 'police_fined',  name: 'Враг народа',          desc: 'Получите 5 штрафов от полиции',         icon: '🚨', check: s => s.policeFines >= 5 },
   { id: 'tips_5k',       name: 'Любимец клиентов',     desc: 'Заработайте 5 000 ₽ чаевых',            icon: '🎁', check: s => s.totalTips >= 5000 },
+  // --- Бойцовские ---
+  { id: 'hot_head',      name: 'Горячая голова',       desc: 'Нападите на 10 прохожих за смену',      icon: '👊', check: s => s.shiftPunches >= 10 },
+  { id: 'brawler',       name: 'Дерущийся таксист',    desc: 'Нападите на 50 прохожих за все время',  icon: '🥊', check: s => s.totalPunches >= 50 },
 ];
 
 const STORAGE_KEY = '5gor_achievements_v1';
@@ -12571,6 +12755,11 @@ class AchievementManager {
     Events.on('hitPed', () => {
       this.stats.shiftPeds++;
     });
+    Events.on('ped:punch', () => {
+      this._lastPunchEventTime = Date.now();
+      this.stats.shiftPunches++;
+      this.stats.totalPunches++;
+    });
     Events.on('police:fine', () => {
       this.stats.policeFines++;
       this.checkAll();
@@ -12579,6 +12768,7 @@ class AchievementManager {
       this.stats.shiftOrders = 0;
       this.stats.shiftCrashes = 0;
       this.stats.shiftPeds = 0;
+      this.stats.shiftPunches = 0;
     });
     Events.on('night:order', () => {
       this.stats.nightOrders++;
@@ -12599,6 +12789,8 @@ class AchievementManager {
       policeFines: 0,
       shiftCrashes: 0,
       shiftPeds: 0,
+      shiftPunches: 0,
+      totalPunches: 0,
     };
   }
 
@@ -12666,6 +12858,19 @@ class AchievementManager {
   }
 
   /**
+   * Зафиксировать удар по пешеходу.
+   */
+  onPunchPed() {
+    const now = Date.now();
+    if (!this._lastPunchEventTime || now - this._lastPunchEventTime > 50) {
+      this.stats.shiftPunches++;
+      this.stats.totalPunches++;
+    }
+    this._lastPunchEventTime = 0;
+    this.checkAll();
+  }
+
+  /**
    * Загрузить накопленную статистику из сохранения игры.
    * @param {Object} stats - Статистика из save
    */
@@ -12676,6 +12881,7 @@ class AchievementManager {
     this.stats.totalTips = stats.tips || 0;
     this.stats.totalMissions = stats.missions || 0;
     this.stats.totalKm = stats.km || 0;
+    this.stats.totalPunches = stats.punches || stats.totalPunches || 0;
   }
 
   /**
@@ -12693,6 +12899,8 @@ class AchievementManager {
       maxRating: this.stats.maxRating,
       nightOrders: this.stats.nightOrders,
       policeFines: this.stats.policeFines,
+      punches: this.stats.totalPunches,
+      totalPunches: this.stats.totalPunches,
     };
   }
 }
@@ -12842,7 +13050,18 @@ class UIManager {
     const hbBtn = this.$('btn-hb');
     if (hbBtn) {
       const hold = (key) => {
-        hbBtn.addEventListener('pointerdown', (e) => { e.preventDefault(); this.touch[key] = true; hbBtn._pressed = true; hbBtn.setPointerCapture(e.pointerId); });
+        hbBtn.addEventListener('pointerdown', (e) => {
+          e.preventDefault();
+          if (this._touchWalkMode) {
+            if (this.game && typeof this.game._tryPunch === 'function') {
+              this.game._tryPunch();
+            }
+            return;
+          }
+          this.touch[key] = true;
+          hbBtn._pressed = true;
+          hbBtn.setPointerCapture(e.pointerId);
+        });
         hbBtn.addEventListener('pointerup', () => { this.touch[key] = false; hbBtn._pressed = false; });
         hbBtn.addEventListener('pointercancel', () => { this.touch[key] = false; hbBtn._pressed = false; });
         hbBtn.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -12956,6 +13175,20 @@ class UIManager {
     } else {
       nw.classList.add('hidden');
     }
+
+    // Возврат тач-кнопки ручника и сброс прозрачности при вождении
+    if (this._touchWalkMode) {
+      this._touchWalkMode = false;
+      const hbBtn = this.$('btn-hb');
+      if (hbBtn) {
+        if (hbBtn.textContent !== '🛞') hbBtn.textContent = '🛞';
+        hbBtn.style.opacity = '';
+      }
+    }
+    const btnInteract = this.$('btn-interact');
+    if (btnInteract && btnInteract.style.opacity !== '') {
+      btnInteract.style.opacity = '';
+    }
   }
 
   updateWalkHud(ped, gameState, hour, playerCar) {
@@ -12979,6 +13212,21 @@ class UIManager {
     // Заказы и навигатор скрыты в пешем режиме
     els['order-card'].classList.add('hidden');
     els['nav-arrow-wrap'].classList.add('hidden');
+
+    // Кулдаун-индикатор кнопки взаимодействия
+    const onPunchCd = ped && ped.punchCd > 0;
+    const btnInteract = this.$('btn-interact');
+    if (btnInteract) {
+      btnInteract.style.opacity = onPunchCd ? '0.5' : '';
+    }
+
+    // Тач-кнопка удара в режиме ходьбы
+    this._touchWalkMode = true;
+    const hbBtn = this.$('btn-hb');
+    if (hbBtn) {
+      if (hbBtn.textContent !== '👊') hbBtn.textContent = '👊';
+      hbBtn.style.opacity = onPunchCd ? '0.5' : '';
+    }
   }
 
   /* ---------- Мини-карта (heading-up: карта вращается, стрелка всегда вверх) ---------- */
@@ -13183,11 +13431,14 @@ class UIManager {
     const wrap = this.$('btn-interact-wrap');
     if (label) {
       wrap.classList.remove('hidden');
-      this.$('btn-interact').textContent = label;
+      const btn = this.$('btn-interact');
+      if (btn) btn.textContent = label;
       this.interactCb = cb;
     } else {
       wrap.classList.add('hidden');
       this.interactCb = null;
+      const btn = this.$('btn-interact');
+      if (btn) btn.style.opacity = '';
     }
   }
 
@@ -13817,6 +14068,21 @@ class Game {
       this.achievements.checkAll();
       // сам пешеход (отлёт/лежание) обрабатывается в peds._knockDown
     });
+    events.on('ped:punch', (d) => {
+      if (!d || !d.target) return;
+      const fine = (CFG && CFG.pedPunchFine !== undefined) ? CFG.pedPunchFine : 150;
+      const ratingLoss = (CFG && CFG.pedPunchRatingLoss !== undefined) ? CFG.pedPunchRatingLoss : 5;
+      this.addMoney(-fine);
+      this.setRating(this.rating - ratingLoss);
+      this.ui.toast('Нападение на прохожего! -' + fine + ' ₽, рейтинг -' + ratingLoss, '#ff7b72');
+      if (typeof this.police.checkPunchPed === 'function') {
+        this.police.checkPunchPed(this.playerPed, this.traffic);
+      }
+      if (typeof this.achievements.onPunchPed === 'function') {
+        this.achievements.onPunchPed();
+      }
+      this.achievements.checkAll();
+    });
     events.on('ped:kick', () => {
       this.shakeT = 0.22; this.shakeAmp = 0.32;
     });
@@ -14198,6 +14464,39 @@ class Game {
     this.chaseCam.reset(this.player);
     this.setState('driving');
     this.audio.resumeRadio();
+  }
+
+  _tryPunch() {
+    if (!this.playerPed || !this.playerPed.punch()) return;
+
+    const px = this.playerPed.x, pz = this.playerPed.z;
+    const h = this.playerPed.heading;
+    const fwdX = Math.sin(h), fwdZ = Math.cos(h);
+    const punchRad = (CFG && CFG.pedPunchRadius !== undefined) ? CFG.pedPunchRadius : 2.0;
+    const punchArcCos = Math.cos((CFG && CFG.pedPunchArc !== undefined) ? CFG.pedPunchArc : Math.PI / 3);
+
+    let best = null, bestDist = punchRad;
+    if (this.peds && this.peds.cars) {
+      for (const p of this.peds.cars) {
+        if (!p.alive || p.isAnimal || !p.mesh || !p.mesh.visible) continue;
+        if (p.knockT > 0 || p.mode === 'flee') continue;
+        const dx = p.x - px, dz = p.z - pz;
+        const dist = Math.hypot(dx, dz);
+        if (dist > bestDist) continue;
+        const dot = (dx * fwdX + dz * fwdZ) / (dist || 1);
+        if (dot < punchArcCos) continue;
+        bestDist = dist;
+        best = p;
+      }
+    }
+
+    if (!best) return;
+
+    const dx = best.x - px, dz = best.z - pz;
+    this.peds._punchReaction(best, dx, dz);
+    Events.emit('ped:punch', { target: best });
+    this.shakeT = 0.2;
+    this.shakeAmp = 0.25;
   }
 
   _checkCollisionAt(x, z, radius = 0.4) {
@@ -14651,9 +14950,15 @@ class Game {
       this.input.flush('interact');
       if (this.interact) this.interact.cb();
     }
+    if (this.input.take('punch')) {
+      this._tryPunch();
+    }
     if (this.input.take('map')) this.toggleMap();
     if (this.input.take('pause')) this.togglePause();
     this.input.flush();
+
+    // полиция: обновление кулдаунов
+    this.police.update(dt);
 
     // километраж пешком
     if (this.shiftStats && this.playerPed) {
@@ -14686,13 +14991,39 @@ class Game {
   _updateWalkInteract() {
     this.interact = null;
     if (!this.playerPed) return;
-    const dCar = dist2D(this.playerPed.x, this.playerPed.z, this.player.x, this.player.z);
-    if (dCar <= CFG.carEnterDist) {
-      this.interact = {
-        label: 'Сесть в машину (E)',
-        cb: () => this.enterCar(),
-      };
-    } else {
+
+    // 1. Приоритет: удар по прохожему в конусе атаки
+    const h = this.playerPed.heading;
+    const fwdX = Math.sin(h), fwdZ = Math.cos(h);
+    const punchRad = (CFG && CFG.pedPunchRadius !== undefined) ? CFG.pedPunchRadius : 2.0;
+    const punchArcCos = Math.cos((CFG && CFG.pedPunchArc !== undefined) ? CFG.pedPunchArc : Math.PI / 3);
+    if (this.peds && this.peds.cars) {
+      for (const p of this.peds.cars) {
+        if (!p.alive || p.isAnimal || !p.mesh || !p.mesh.visible) continue;
+        if (p.knockT > 0 || p.mode === 'flee') continue;
+        const dx = p.x - this.playerPed.x, dz = p.z - this.playerPed.z;
+        const dist = Math.hypot(dx, dz);
+        if (dist > punchRad) continue;
+        const dot = (dx * fwdX + dz * fwdZ) / (dist || 1);
+        if (dot < punchArcCos) continue;
+        this.interact = { label: 'Ударить (F)', cb: () => this._tryPunch() };
+        break;
+      }
+    }
+
+    // 2. Вход в машину
+    if (!this.interact) {
+      const dCar = dist2D(this.playerPed.x, this.playerPed.z, this.player.x, this.player.z);
+      if (dCar <= CFG.carEnterDist) {
+        this.interact = {
+          label: 'Сесть в машину (E)',
+          cb: () => this.enterCar(),
+        };
+      }
+    }
+
+    // 3. Заправка
+    if (!this.interact && this.world && this.world.fuelStations) {
       for (const s of this.world.fuelStations) {
         if (dist2D(this.playerPed.x, this.playerPed.z, s.x, s.z) < CFG.refuelDist && this.player.fuel < this.player.stats.tank - 1) {
           this.interact = {
@@ -14703,6 +15034,7 @@ class Game {
         }
       }
     }
+
     this.ui.setInteract(this.interact ? this.interact.label : null, this.interact ? this.interact.cb : null);
   }
 
