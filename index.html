@@ -10332,7 +10332,7 @@ class PedestrianManager {
         waitT: 0, fx: 0, fz: 0, fvx: 0, fvz: 0, fleeT: 0, knockT: 0, hitCd: 0,
         angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30),
         violator: Math.random() < CFG.pedViolatorChance,
-        active: false, nearZone: false, laneOff: 0,
+        active: false, nearZone: false, laneOff: 0, _avoidTarget: 0,
         route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
         idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
         _blockedTurnIsec: null, _avoidSide: 0,
@@ -10425,6 +10425,7 @@ class PedestrianManager {
     p.fx = 0; p.fz = 0; p.fvx = 0; p.fvz = 0;
     p.fleeT = 0; p.knockT = 0; p.hitCd = 0;
     p.angerT = 0; p.kickT = 0; p.kickCd = 0; p.speechT = 0;
+    p.laneOff = 0; p._avoidTarget = 0;
     p.chatCd = rand(10, 30);
     if (p.speechSprite) updateSpeechSprite(p.speechSprite, '');
     const wp = this._worldPos(p, _tempPedWp);
@@ -10632,7 +10633,7 @@ class PedestrianManager {
   _activate(p) {
     if (!this.graph || p.isAnimal) return;
     if (p.knockT > 0 || p.mode === 'flee' || p.mode === 'kick') return;
-    p.route = null; p.routeIdx = 0; p.laneOff = 0;
+    p.route = null; p.routeIdx = 0; p._avoidTarget = 0;
     p._avoidSide = 0;
     this._nudgeOutOfObstacle(p);  // сдвинуться из препятствия если стоит внутри — ПОСЛЕ
                                    // сброса laneOff, иначе боковой сдвиг затирается (G4)
@@ -10677,6 +10678,7 @@ class PedestrianManager {
     p.active = false;
     p.route = null; p.routeIdx = 0;
     p.laneOff = 0;
+    p._avoidTarget = 0;
     p._avoidSide = 0;
     p._edgeKind = null; p.edgeEnd = 0;
     if (p.mode === 'idle') p.mode = this._restMode(p);
@@ -10831,6 +10833,7 @@ class PedestrianManager {
     p.cross = null; p.turn = null;
     p.idleT = rand(CFG.pedIdleTime[0], CFG.pedIdleTime[1]);
     p.laneOff = 0;
+    p._avoidTarget = 0;
   }
 
   /* Есть ли приближающаяся машина на нашей дороге рядом с переходом */
@@ -10860,12 +10863,28 @@ class PedestrianManager {
     return false;
   }
 
+  /* Плавное боковое смещение к целевому laneOff */
+  _stepLaneOff(p, dt) {
+    const target = p._avoidTarget || 0;
+    const cur = p.laneOff || 0;
+    if (target !== cur) {
+      const step = 3.0 * dt;
+      const d = target - cur;
+      if (Math.abs(d) <= step) {
+        p.laneOff = target;
+      } else {
+        p.laneOff = cur + Math.sign(d) * step;
+      }
+    }
+  }
+
   /* Осознанное движение по тротуару */
   _updateWalk(p, dt) {
     if (p.nearZone && !p.active) {
       p.speed = p.baseSpeed; // восстановление после предыдущей блокировки — см. _avoidStatic
       this._avoidStatic(p, dt);
     }
+    this._stepLaneOff(p, dt);
     p.pos += p.speed * dt * p.dir;
     if (p.turnT > 0) { p.turnT -= dt; return; }
     if (Math.abs(p.pos) > PED_TURN_LIMIT) {
@@ -11148,8 +11167,7 @@ class PedestrianManager {
       const cp = this._lanePoint(p, 0);
       const centerClear = !probeForwardBlocked(cp.x, cp.z, dirX, dirZ, FORWARD_DISTANCES, this._obstacleAtBound);
       if (centerClear || Math.abs(p.laneOff) < 0.02) {
-        p.laneOff *= Math.max(0, 1 - 4 * dt);
-        if (Math.abs(p.laneOff) < 0.02) p.laneOff = 0;
+        p._avoidTarget = 0;
       }
       p._stuckT = 0;
       return;
@@ -11164,7 +11182,7 @@ class PedestrianManager {
       const cand = clamp(baseOff + o, -1.5, 1.5);
       const pr0 = this._lanePoint(p, cand);
       if (!probeForwardBlocked(pr0.x, pr0.z, dirX, dirZ, FORWARD_DISTANCES, this._obstacleAtBound)) {
-        p.laneOff = cand; p._stuckT = 0;
+        p._avoidTarget = cand; p._stuckT = 0;
         // Гистерезис стороны (баг 2): запоминаем выбранную сторону, чтобы
         // при следующем кадре не перескакивать на противоположную, пока
         // препятствие не пройдено. Сбрасывается в _activate/_deactivate.
@@ -11226,7 +11244,7 @@ class PedestrianManager {
           // пешеход «глючит», дёргаясь между обгоном и препятствием (баг 2).
           const sidePt = this._lanePoint(p, candOff);
           if (!this._obstacleAt(sidePt.x, sidePt.z)) {
-            p.laneOff = candOff;
+            p._avoidTarget = candOff;
             p.speed = Math.min(p.baseSpeed * 1.25, p.speed + 0.5);
           }
         }
@@ -11284,6 +11302,7 @@ class PedestrianManager {
     // (grill-plan G2).
     if (!p.active || !p.route) return;
     this._avoidPeds(p, dt);
+    this._stepLaneOff(p, dt);
     p.pos += p.speed * dt * p.dir;
     if (p._edgeKind === 'walk' && Math.abs(p.pos - p.edgeEnd) < 0.7) {
       this._finishEdge(p);
@@ -11375,7 +11394,10 @@ class PedestrianManager {
           }
           // Пинок мог сбить пешехода на проезжую часть — вернуть на тротуар,
           // иначе он «зависает» посреди дороги (баг 1).
-          if (this._onRoadway(p)) this._snapToSidewalk(p);
+          if (this._onRoadway(p)) {
+            p.fx = p.x; p.fz = p.z;
+            this._snapToSidewalk(p);
+          }
         }
       }
       p.walk = (p.walk || 0) + dt * p.speed * (p.mode === 'run' ? 6 : 4);
@@ -11438,6 +11460,7 @@ class PedestrianManager {
   /* Увернуться от машины */
   _dodge(p, dx, dz, carSpeed) {
     p.fx = p.x; p.fz = p.z;
+    this._deactivate(p);
     this._startFlee(p, dx, dz, Math.max(3.2, carSpeed * 0.9 + 0.8));
   }
 
@@ -11446,6 +11469,7 @@ class PedestrianManager {
     p.fx = p.x; p.fz = p.z;
     p.mode = 'walk';
     p.knockT = 2.0;
+    this._deactivate(p);
     p.cross = null; p.turn = null;
     const sp = 3 + Math.min(carSpeed, 16) * 0.3;
     const len = Math.hypot(dx, dz) || 1;
@@ -11547,7 +11571,7 @@ class PedestrianManager {
       waitT: 0, fx: 0, fz: 0, fvx: 0, fvz: 0, fleeT: 0, knockT: 0, hitCd: 0,
       angerT: 0, kickT: 0, kickCd: 0, speechT: 0, chatCd: rand(10, 30), walk: 0,
       violator: Math.random() < CFG.pedViolatorChance,
-      active: false, nearZone: false, laneOff: 0,
+      active: false, nearZone: false, laneOff: 0, _avoidTarget: 0,
       route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
       idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
       _blockedTurnIsec: null,
@@ -11573,18 +11597,42 @@ class PedestrianManager {
 
   /* Вернуть убежавшего на тротуар */
   _snapToSidewalk(p) {
+    // 1. Определить, на какой ленте оставить пешехода (по знаку смещения)
     const rx = clamp(Math.round(p.fx / CFG.CELL) * CFG.CELL, -256, 256);
     const rz = clamp(Math.round(p.fz / CFG.CELL) * CFG.CELL, -256, 256);
+    let axis, coord, pos, side;
     if (Math.abs(p.fx - rx) <= Math.abs(p.fz - rz)) {
-      p.axis = 'z'; p.coord = rx; p.pos = clamp(p.fz, -256, 256); p.side = p.fx >= rx ? 1 : -1;
+      axis = 'z'; coord = rx; pos = clamp(p.fz, -256, 256); side = p.fx >= rx ? 1 : -1;
     } else {
-      p.axis = 'x'; p.coord = rz; p.pos = clamp(p.fx, -256, 256); p.side = p.fz >= rz ? 1 : -1;
+      axis = 'x'; coord = rz; pos = clamp(p.fx, -256, 256); side = p.fz >= rz ? 1 : -1;
     }
-    p.mode = (p.archetype === 'runner' || p.archetype === 'dog') ? 'run' : 'walk';
+    // 2. Точное боковое смещение от идеального центра тротуара coord+side*PED_SIDE
+    const off = axis === 'z' ? (p.fx - (coord + side * PED_SIDE)) : (p.fz - (coord + side * PED_SIDE));
+    // 3. Если пешеход не перешёл на другую сторону дороги — сохраняем laneOff
+    //    так, чтобы _worldPos выдал ровно (fx,fz): НУЛЕВОЙ скачок.
+    let savedLaneOff = 0;
+    if (Math.abs(off) <= PED_SIDE + 1.5) {
+      p.axis = axis; p.coord = coord; p.pos = pos; p.side = side;
+      savedLaneOff = off;
+    } else {
+      // перешёл дорогу / далеко на газон — fallback: прибить к идеальной ленте
+      p.axis = axis; p.coord = coord; p.pos = pos; p.side = side;
+      savedLaneOff = 0;
+    }
+    p.laneOff = savedLaneOff;
+    p._avoidTarget = 0;
+    p.mode = this._restMode(p);
     p.turnT = 0.8;
     p.speed = p.baseSpeed;
     this._assignNewTarget(p);
-    if (this.graph && p.active) this._activate(p);
+    if (this.graph && p.active) {
+      this._deactivate(p);   // сначала сброс
+      this._activate(p);     // пересчитать маршрут
+    }
+    // Восстанавливаем сохранённое значение laneOff после вызова _deactivate/_activate,
+    // чтобы гарантировать нулевой скачок мировой позиции
+    p.laneOff = savedLaneOff;
+    p._avoidTarget = 0;
   }
 
   _sync(p) {
