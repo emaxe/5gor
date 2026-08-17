@@ -1134,8 +1134,9 @@ export class Game {
       const cy = Math.cos(this.chaseCam.yaw), sy = Math.sin(this.chaseCam.yaw);
       const moveFwd = touch.gas - touch.brake;
       const moveRight = touch.steer;
-      this.input.walkRight = moveRight * cy + moveFwd * sy;
-      this.input.walkForward = -moveRight * sy + moveFwd * cy;
+      // экранное «вправо» = −X при взгляде в +Z → знак moveRight инвертирован
+      this.input.walkRight = -moveRight * cy + moveFwd * sy;
+      this.input.walkForward = moveRight * sy + moveFwd * cy;
     } else {
       this.input.walkForward = undefined;
       this.input.walkRight = undefined;

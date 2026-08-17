@@ -83,11 +83,13 @@ export class PlayerPed {
       }
     }
 
-    // Если угол камеры передан в input (при прямом чтении клавиш) — проецируем относительно камеры
+    // Если угол камеры передан в input (при прямом чтении клавиш) — проецируем относительно камеры.
+    // ВНИМАНИЕ: экранное «вправо» = −X при взгляде в +Z (камера за спиной, ось X зеркалится),
+    // поэтому знак moveRight инвертирован относительно наивной формулы.
     if (input && typeof input.camYaw === 'number' && typeof input.walkForward !== 'number') {
       const cy = Math.cos(input.camYaw), sy = Math.sin(input.camYaw);
-      this._tempVec.x = moveRight * cy + moveFwd * sy;
-      this._tempVec.z = -moveRight * sy + moveFwd * cy;
+      this._tempVec.x = -moveRight * cy + moveFwd * sy;
+      this._tempVec.z = moveRight * sy + moveFwd * cy;
     } else {
       this._tempVec.x = moveRight;
       this._tempVec.z = moveFwd;
