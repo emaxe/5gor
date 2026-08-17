@@ -61,7 +61,7 @@ export class PlayerCar {
     this.passengerCount = 0;
     /** @type {import('./config.js').Tuning} параметры тюнинга */
     this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false, bodyKit: 'stock', decal: 'none' };
-    this.groundY = 0.5;
+    this.groundY = 0;
     this._builtCarType = null;
     this._roll = 0; this._pitch = 0;
     this._blinkT = 0;
@@ -527,9 +527,11 @@ export class PlayerCar {
 
   setSteer(s) { this._steerIn = s; }
 
-  /* Постановка на землю с учётом рельефа */
+  /* Постановка на землю с учётом рельефа.
+     groundY = высота рельефа (без +0.5). Раньше +0.5 поднимал машину игрока на
+     полметра над асфальтом, в то время как трафик стоял на y=0 — игрок «парил». */
   snapToTerrain(world) {
-    this.groundY = 0.5 + world.heightAt(this.x, this.z);
+    this.groundY = world.heightAt(this.x, this.z);
     this._updateMeshPos();
   }
 

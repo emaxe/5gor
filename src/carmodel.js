@@ -195,6 +195,14 @@ function threeBoxCar(dims, o = {}) {
   const cabLen = len - hoodLen - trunkLen;
   const cabZ = (hoodLen - trunkLen) / 2;
 
+  // Прижать кабину к кузову: низ салона (стёкла) должен налегать на верх кузова,
+  // а не парить над ним. Верх кузова = deckY+deckH/2; низ кабины = cabY-cabH/2.
+  // Раньше при дефолтных sedan-параметрах зазор был 0.16м — кабина висела в воздухе.
+  const deckTop = opt.deckY + opt.deckH / 2;
+  const cabBottom = opt.cabY - opt.cabH / 2;
+  const cabDrop = Math.max(0, cabBottom - deckTop + 0.02); // нахлёст 0.02 в кузов (без щели)
+  if (cabDrop > 0) { opt.cabY -= cabDrop; opt.roofY -= cabDrop; }
+
   // Базовые блоки кузова (капот, салон, багажник, крыша)
   add(taperedBox(w * opt.beltW, opt.deckH, len, { y: opt.deckY }), 'body');
   add(taperedBox(w * 0.92, opt.deckH * 0.9, hoodLen, {

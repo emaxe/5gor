@@ -2140,6 +2140,14 @@ function threeBoxCar(dims, o = {}) {
   const cabLen = len - hoodLen - trunkLen;
   const cabZ = (hoodLen - trunkLen) / 2;
 
+  // Прижать кабину к кузову: низ салона (стёкла) должен налегать на верх кузова,
+  // а не парить над ним. Верх кузова = deckY+deckH/2; низ кабины = cabY-cabH/2.
+  // Раньше при дефолтных sedan-параметрах зазор был 0.16м — кабина висела в воздухе.
+  const deckTop = opt.deckY + opt.deckH / 2;
+  const cabBottom = opt.cabY - opt.cabH / 2;
+  const cabDrop = Math.max(0, cabBottom - deckTop + 0.02); // нахлёст 0.02 в кузов (без щели)
+  if (cabDrop > 0) { opt.cabY -= cabDrop; opt.roofY -= cabDrop; }
+
   // Базовые блоки кузова (капот, салон, багажник, крыша)
   add(taperedBox(w * opt.beltW, opt.deckH, len, { y: opt.deckY }), 'body');
   add(taperedBox(w * 0.92, opt.deckH * 0.9, hoodLen, {
@@ -8129,7 +8137,7 @@ class PlayerCar {
     this.passengerCount = 0;
     /** @type {import('./config.js').Tuning} параметры тюнинга */
     this.tuning = { color: 0xf2c12e, rims: 0xb8b8b8, rimStyle: 'disc', spoiler: false, bodyKit: 'stock', decal: 'none' };
-    this.groundY = 0.5;
+    this.groundY = 0;
     this._builtCarType = null;
     this._roll = 0; this._pitch = 0;
     this._blinkT = 0;
@@ -8595,9 +8603,11 @@ class PlayerCar {
 
   setSteer(s) { this._steerIn = s; }
 
-  /* Постановка на землю с учётом рельефа */
+  /* Постановка на землю с учётом рельефа.
+     groundY = высота рельефа (без +0.5). Раньше +0.5 поднимал машину игрока на
+     полметра над асфальтом, в то время как трафик стоял на y=0 — игрок «парил». */
   snapToTerrain(world) {
-    this.groundY = 0.5 + world.heightAt(this.x, this.z);
+    this.groundY = world.heightAt(this.x, this.z);
     this._updateMeshPos();
   }
 
