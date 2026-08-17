@@ -550,6 +550,7 @@ export class Game {
 
   openSettings(from) {
     this._settingsFrom = from || this.stateName;
+    if (this.ui) this.ui.syncDriverUI();
     this.setState('settings');
   }
 
@@ -568,6 +569,31 @@ export class Game {
 
   setSound(on) { this.soundOn = on; this.audio.setMaster(on); }
   setMusic(on) { this.musicOn = on; this.audio.setMusic(on); }
+
+  getDriverOptions() {
+    return this.upgrades.driver ? { ...this.upgrades.driver } : {
+      belly: false,
+      cap: true,
+      shirtColor: 0x283848,
+      pantsColor: 0x1a2430,
+      skinColor: 0xf5d0b0,
+      hairColor: 0x1a1a1a,
+    };
+  }
+
+  setDriverOption(key, value) {
+    if (!this.upgrades.driver) {
+      this.upgrades.driver = { ...this.getDriverOptions() };
+    }
+    this.upgrades.driver[key] = value;
+    this.save();
+    if (this.playerPed) {
+      this.playerPed.applyDriverOptions(this.upgrades.driver);
+    }
+    if (this.ui) {
+      this.ui.syncDriverUI();
+    }
+  }
 
   /* Слайдер громкости — протаскивание не должно писать в localStorage на
      каждый шаг, поэтому сохранение debounce'ится на 800мс */
@@ -722,7 +748,7 @@ export class Game {
       return;
     }
 
-    this.playerPed = new PlayerPed(this.scene);
+    this.playerPed = new PlayerPed(this.scene, this.upgrades.driver || {});
     this.playerPed.setPos(spawnPos.x, spawnPos.z, this.player.heading);
     this.chaseCam.setTargetMode('ped');
     this.chaseCam.reset(this.playerPed);

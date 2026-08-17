@@ -2,6 +2,13 @@ import { CFG, DISTRICTS, UPGRADES, CARS, TUNING } from './config.js';
 import { fmtMoney, fmtTime, fmtClock, choice } from './utils.js';
 import { Events } from './eventbus.js';
 
+const DRIVER_PALETTES = {
+  shirt: [0x283848, 0x503525, 0x304030, 0x222226, 0x485868, 0x5c4033, 0x334455, 0x8a2424],
+  pants: [0x1a2430, 0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x222222, 0xd0c0aa],
+  skin:  [0xffdbac, 0xf5d0b0, 0xd8a878, 0xc89060, 0xa87850],
+  hair:  [0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0x8a2a2a, 0xd8c8a8, 0x8a7a6a],
+};
+
 /**
  * Менеджер пользовательского интерфейса (экраны, HUD, карта, гараж, уведомления).
  */
@@ -131,6 +138,15 @@ export class UIManager {
     gfxField('sel-traffic-density', 'trafficDensity', parseFloat);
     gfxField('sel-ped-density', 'pedDensity', parseFloat);
     gfxField('chk-rain', 'rain');
+    // кастомизация водителя
+    on('chk-driver-belly', () => {
+      const el = this.$('chk-driver-belly');
+      if (el) this.game.setDriverOption('belly', el.checked);
+    });
+    on('chk-driver-cap', () => {
+      const el = this.$('chk-driver-cap');
+      if (el) this.game.setDriverOption('cap', el.checked);
+    });
     // клавиатура: Esc/M/G обрабатывает Game через очереди InputManager
   }
 
@@ -766,6 +782,7 @@ export class UIManager {
     this.$('chk-music').checked = music;
     this.syncVolumeUI();
     this.syncGfxUI();
+    this.syncDriverUI();
   }
 
   /* Слайдеры громкости + список станций — синхронизируются с audio.getVolumes()
@@ -805,6 +822,41 @@ export class UIManager {
     this.$('sel-traffic-density').value = String(g.trafficDensity);
     this.$('sel-ped-density').value = String(g.pedDensity);
     this.$('chk-rain').checked = g.rain;
+  }
+
+  syncDriverUI() {
+    const opts = this.game.getDriverOptions();
+
+    const chkBelly = this.$('chk-driver-belly');
+    if (chkBelly) chkBelly.checked = !!opts.belly;
+
+    const chkCap = this.$('chk-driver-cap');
+    if (chkCap) chkCap.checked = opts.cap !== false;
+
+    const swatchGroups = [
+      { id: 'driver-shirt-swatches', key: 'shirtColor', colors: DRIVER_PALETTES.shirt },
+      { id: 'driver-pants-swatches', key: 'pantsColor', colors: DRIVER_PALETTES.pants },
+      { id: 'driver-skin-swatches',  key: 'skinColor',  colors: DRIVER_PALETTES.skin },
+      { id: 'driver-hair-swatches',  key: 'hairColor',  colors: DRIVER_PALETTES.hair },
+    ];
+
+    for (const grp of swatchGroups) {
+      const container = this.$(grp.id);
+      if (!container) continue;
+      container.innerHTML = '';
+      const curVal = opts[grp.key];
+      for (const color of grp.colors) {
+        const s = document.createElement('div');
+        const hex = '#' + color.toString(16).padStart(6, '0');
+        const isActive = curVal === color;
+        s.className = 'swatch' + (isActive ? ' active' : '');
+        s.style.backgroundColor = hex;
+        s.addEventListener('click', () => {
+          this.game.setDriverOption(grp.key, color);
+        });
+        container.appendChild(s);
+      }
+    }
   }
 
   updateRadioDisplay(st) {

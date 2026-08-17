@@ -16,6 +16,7 @@ export class UpgradeSystem {
     this.carId = 'taxi';
     this.tuning = { color: '#f2c12e', rims: 0, spoiler: false, bodyKit: 0, decal: defaultDecalIndex(this.carId) };
     this.ownedCars = ['taxi'];
+    this.driver = null;
   }
 
   costOf(upId) {
@@ -77,6 +78,7 @@ export class UpgradeSystem {
         stats: data.stats, day: data.day,
         sound: data.sound, music: data.music, quality: CFG.quality, gfx: CFG.gfx,
         audioVol: data.audioVol, radio: data.radio,
+        driver: this.driver,
       }));
     } catch (e) { /* приватный режим */ }
   }
@@ -90,6 +92,7 @@ export class UpgradeSystem {
       this.tuning = { ...this.tuning, ...(d.tuning || {}) };
       this.carId = d.carId || 'taxi';
       this.ownedCars = d.ownedCars || ['taxi'];
+      this.driver = d.driver || null;
       // старые сохранения (до появления декалей) не содержат tuning.decal —
       // считаем дефолт по фактическому carId сейчас, а не по 'taxi' из
       // constructor() (иначе игрок, уже сменивший машину в старом сохранении,

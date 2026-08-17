@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG } from './config.js';
-import { clamp, dist2D, circleAABB, turnToward, buildPedMesh } from './utils.js';
+import { clamp, dist2D, circleAABB, turnToward, buildPedMesh, buildDriverMesh } from './utils.js';
 
 /* Габариты кузова автомобиля для вычисления капсульного коллайдера (длина, ширина) */
 const PED_CAR_SHAPES = {
@@ -19,9 +19,11 @@ const PED_CAR_SHAPES = {
 export class PlayerPed {
   /**
    * @param {THREE.Scene} scene - Трёхмерная сцена Three.js
+   * @param {object} [options={}] - Опции кастомизации водителя
    */
-  constructor(scene) {
+  constructor(scene, options = {}) {
     this.scene = scene;
+    this.options = options ? { ...options } : {};
     this.x = 0;
     this.z = 0;
     this.groundY = 0;
@@ -39,7 +41,7 @@ export class PlayerPed {
     this.knockT = 0;
     this.isKnockedOut = false;
     this._tempVec = { x: 0, z: 0 };
-    this.mesh = buildPedMesh('regular');
+    this.mesh = buildDriverMesh(this.options);
     if (this.mesh && this.scene) {
       this.scene.add(this.mesh);
     }
@@ -195,8 +197,8 @@ export class PlayerPed {
       const isShift = !!((input && input.keys && (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight'))) || (input && input.isRunning));
       this.isRunning = isShift && hasMove;
 
-      const walkSpeed = (CFG && CFG.pedWalkSpeed) || 2.4;
-      const runSpeed = (CFG && CFG.pedRunSpeed) || 4.8;
+      const walkSpeed = (CFG && CFG.pedWalkSpeed) || 3.1;
+      const runSpeed = (CFG && CFG.pedRunSpeed) || 5.8;
       const targetMaxSpeed = this.isRunning ? runSpeed : walkSpeed;
 
       if (hasMove) {
@@ -414,6 +416,27 @@ export class PlayerPed {
       const armAngle = -Math.sin(k * Math.PI) * 1.2;
       u.arms[1].rotation.x = armAngle; // правая рука вперёд
       u.arms[0].rotation.x = -0.5;     // левая для баланса
+    }
+  }
+
+  /**
+   * Применить новые опции кастомизации водителя и пересоздать 3D-меш.
+   * @param {object} options
+   */
+  applyDriverOptions(options) {
+    if (this.mesh && this.scene) {
+      this.scene.remove(this.mesh);
+    }
+    this.options = options ? { ...options } : {};
+    this.mesh = buildDriverMesh(this.options);
+    if (this.mesh && this.scene) {
+      this.scene.add(this.mesh);
+      this.mesh.position.set(this.x, this.groundY, this.z);
+      if (this.isKnockedOut) {
+        this.mesh.rotation.set(Math.PI / 2 * 0.8, this.heading, 0);
+      } else {
+        this.mesh.rotation.set(0, this.heading, 0);
+      }
     }
   }
 

@@ -251,6 +251,9 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
   width: 16px; height: 16px; border: none; border-radius: 50%; background: #f2c12e; cursor: pointer;
 }
 .vol-val { font-size: 12px; color: #8b949e; text-align: right; font-variant-numeric: tabular-nums; }
+.driver-opt-row { display: flex; align-items: center; gap: 10px; padding: 4px 0; flex-wrap: wrap; }
+.driver-opt-label { font-size: 14px; font-weight: 600; color: #c9d1d9; min-width: 65px; }
+.driver-swatches { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 
 /* ---------- Гараж ---------- */
 #garage .card { width: 520px; max-width: 94vw; }
@@ -563,6 +566,26 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
     <label><input type="checkbox" id="chk-rain" checked> Дождь</label>
     <div class="settings-hint">Плотность трафика и пешеходов применяется с новой смены</div>
 
+    <div class="settings-group">Водитель</div>
+    <label><input type="checkbox" id="chk-driver-belly"> Животик (пузо)</label>
+    <label><input type="checkbox" id="chk-driver-cap" checked> Кепка таксиста</label>
+    <div class="driver-opt-row">
+      <span class="driver-opt-label">Куртка:</span>
+      <div id="driver-shirt-swatches" class="driver-swatches"></div>
+    </div>
+    <div class="driver-opt-row">
+      <span class="driver-opt-label">Брюки:</span>
+      <div id="driver-pants-swatches" class="driver-swatches"></div>
+    </div>
+    <div class="driver-opt-row">
+      <span class="driver-opt-label">Кожа:</span>
+      <div id="driver-skin-swatches" class="driver-swatches"></div>
+    </div>
+    <div class="driver-opt-row">
+      <span class="driver-opt-label">Волосы:</span>
+      <div id="driver-hair-swatches" class="driver-swatches"></div>
+    </div>
+
     <button id="btn-settings-back">← Назад</button>
   </div>
 </div>
@@ -757,8 +780,8 @@ const CFG = {
   pedIdleTime: [5, 15],      // пауза пешехода после прибытия, сек
 
   // Пешеход-игрок (выход из машины)
-  pedWalkSpeed: 2.4,       // базовая скорость ходьбы водителя (м/с)
-  pedRunSpeed: 4.8,        // скорость спринта при зажатом Shift (м/с)
+  pedWalkSpeed: 3.1,       // базовая скорость ходьбы водителя (м/с)
+  pedRunSpeed: 5.8,        // скорость спринта при зажатом Shift (м/с)
   carEnterDist: 3.0,       // максимальная дистанция посадки в авто (м)
   carExitMaxSpeed: 1.5,    // максимальная скорость авто для разрешения выхода (м/с)
 
@@ -1679,6 +1702,144 @@ function buildPedMesh(archetype) {
 
   g.scale.set(scaleXZ, scaleY, scaleXZ);
   g.userData = { legs, arms, archetype: arch, isAnimal: false };
+  return g;
+}
+
+/* Детализированная модель водителя такси с кастомизацией */
+function buildDriverMesh(options = {}) {
+  const belly = options.belly !== undefined ? !!options.belly : (Math.random() < 0.45);
+  const cap = options.cap !== undefined ? !!options.cap : true;
+  const skin = options.skinColor || choice([0xf5d0b0, 0xd8a878, 0xc89060, 0xa87850, 0xffdbac]);
+  const shirt = options.shirtColor || choice([0x283848, 0x503525, 0x304030, 0x222226, 0x485868, 0x5c4033, 0x334455]);
+  const pants = options.pantsColor || choice([0x1a2430, 0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x222222]);
+  const hairC = options.hairColor || choice([0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0x8a7a6a]);
+
+  const g = new THREE.Group();
+  const parts = [];
+
+  // 1. Торс и живот
+  if (belly) {
+    // Полный торс с животиком
+    parts.push({ g: new THREE.BoxGeometry(0.60, 0.68, 0.38).translate(0, 1.05, 0), c: shirt });
+    parts.push({ g: new THREE.BoxGeometry(0.48, 0.38, 0.14).translate(0, 0.96, 0.19), c: shirt });
+    // Ремень и пряжка
+    parts.push({ g: new THREE.BoxGeometry(0.56, 0.08, 0.40).translate(0, 0.73, 0.01), c: 0x1a1a1a });
+    parts.push({ g: new THREE.BoxGeometry(0.10, 0.08, 0.04).translate(0, 0.73, 0.22), c: 0xd4af37 });
+  } else {
+    // Обычный торс
+    parts.push({ g: new THREE.BoxGeometry(0.56, 0.68, 0.34).translate(0, 1.05, 0), c: shirt });
+    // Ремень и пряжка
+    parts.push({ g: new THREE.BoxGeometry(0.52, 0.08, 0.34).translate(0, 0.73, 0), c: 0x1a1a1a });
+    parts.push({ g: new THREE.BoxGeometry(0.10, 0.08, 0.04).translate(0, 0.73, 0.18), c: 0xd4af37 });
+  }
+
+  // Молния куртки по центру
+  const fz = belly ? 0.265 : 0.175;
+  parts.push({ g: new THREE.BoxGeometry(0.04, 0.64, 0.02).translate(0, 1.05, fz), c: 0xcccccc });
+
+  // Воротник
+  parts.push({ g: new THREE.BoxGeometry(0.32, 0.08, 0.08).translate(0, 1.36, belly ? 0.14 : 0.11), c: shirt });
+
+  // Шашечки такси на правой стороне груди
+  const cx = 0.14;
+  const cy = 1.15;
+  const cz = belly ? 0.265 : 0.175;
+  parts.push({ g: new THREE.BoxGeometry(0.20, 0.05, 0.01).translate(cx, cy, cz), c: 0x111111 });
+  const checkOffsets = [-0.06, -0.02, 0.02, 0.06];
+  for (let i = 0; i < checkOffsets.length; i++) {
+    parts.push({
+      g: new THREE.BoxGeometry(0.038, 0.045, 0.015).translate(cx + checkOffsets[i], cy, cz + 0.005),
+      c: (i % 2 === 0 ? 0xf5b020 : 0x111111)
+    });
+  }
+
+  // Бейджик таксиста на левой стороне груди
+  const bx = -0.14;
+  const by = 1.15;
+  const bz = belly ? 0.265 : 0.175;
+  parts.push({ g: new THREE.BoxGeometry(0.09, 0.11, 0.015).translate(bx, by, bz), c: 0xf5b020 });
+  parts.push({ g: new THREE.BoxGeometry(0.07, 0.08, 0.02).translate(bx, by, bz + 0.004), c: 0xffffff });
+  parts.push({ g: new THREE.BoxGeometry(0.028, 0.035, 0.025).translate(bx - 0.015, by + 0.012, bz + 0.007), c: 0x224477 });
+  parts.push({ g: new THREE.BoxGeometry(0.045, 0.015, 0.025).translate(bx, by - 0.018, bz + 0.007), c: 0x333333 });
+
+  // Рация на поясе
+  const radioX = belly ? -0.32 : -0.28;
+  parts.push({ g: new THREE.BoxGeometry(0.08, 0.13, 0.06).translate(radioX, 0.85, 0), c: 0x222222 });
+  parts.push({ g: new THREE.CylinderGeometry(0.01, 0.01, 0.10, 4).translate(radioX, 0.96, 0), c: 0x111111 });
+
+  // Шея и голова
+  parts.push({ g: new THREE.CylinderGeometry(0.11, 0.12, 0.12, 8).translate(0, 1.41, 0), c: skin });
+  parts.push({ g: new THREE.SphereGeometry(0.26, 10, 8).translate(0, 1.62, 0), c: skin });
+  parts.push({ g: new THREE.BoxGeometry(0.06, 0.06, 0.06).translate(0, 1.62, 0.26), c: skin });
+
+  // Очки-авиаторы
+  parts.push({ g: new THREE.BoxGeometry(0.36, 0.08, 0.05).translate(0, 1.64, 0.24), c: 0x15181c });
+  parts.push({ g: new THREE.BoxGeometry(0.06, 0.02, 0.055).translate(0, 1.66, 0.245), c: 0xd4af37 });
+
+  // Усы
+  parts.push({ g: new THREE.BoxGeometry(0.14, 0.04, 0.04).translate(0, 1.55, 0.26), c: hairC });
+
+  // Волосы (база)
+  parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 1.63, 0), c: hairC });
+
+  // Кепка таксиста с козырьком и шашечками
+  if (cap) {
+    // Тулья кепки
+    parts.push({ g: new THREE.CylinderGeometry(0.29, 0.28, 0.08, 10).translate(0, 1.76, 0.02), c: 0x1f2328 });
+    // Козырёк
+    parts.push({ g: new THREE.BoxGeometry(0.26, 0.025, 0.16).translate(0, 1.73, 0.24), c: 0x111111 });
+    // Кнопка сверху
+    parts.push({ g: new THREE.CylinderGeometry(0.035, 0.035, 0.02, 6).translate(0, 1.81, 0.02), c: 0xf5b020 });
+    // Околыш с шашечками на кепке
+    parts.push({ g: new THREE.BoxGeometry(0.28, 0.035, 0.02).translate(0, 1.75, 0.20), c: 0x111111 });
+    const capCheckers = [-0.09, -0.03, 0.03, 0.09];
+    for (let i = 0; i < capCheckers.length; i++) {
+      parts.push({
+        g: new THREE.BoxGeometry(0.05, 0.03, 0.025).translate(capCheckers[i], 1.75, 0.205),
+        c: (i % 2 === 0 ? 0xf5b020 : 0x111111)
+      });
+    }
+  } else {
+    // Причёска без головного убора
+    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.64, 0), c: hairC });
+  }
+
+  const staticMesh = new THREE.Mesh(mergeColored(parts), getPedColoredMat());
+  g.add(staticMesh);
+
+  // Ноги (брюки + обувь)
+  const legGeo = new THREE.BoxGeometry(0.19, 0.75, 0.21);
+  legGeo.translate(0, -0.375, 0);
+  const shoeGeo = new THREE.BoxGeometry(0.21, 0.12, 0.32);
+  shoeGeo.translate(0, -0.77, 0.04);
+  const legGeoMerged = mergeColored([{ g: legGeo, c: pants }, { g: shoeGeo, c: 0x1f1f23 }]);
+  const legs = [];
+  const legSpread = belly ? 0.15 : 0.13;
+  for (const s of [-1, 1]) {
+    const leg = new THREE.Group();
+    leg.add(new THREE.Mesh(legGeoMerged, getPedColoredMat()));
+    leg.position.set(legSpread * s, 1.05, 0);
+    g.add(leg);
+    legs.push(leg);
+  }
+
+  // Руки (рукава одежды + кисти рук)
+  const armSleeveGeo = new THREE.BoxGeometry(0.16, 0.48, 0.16);
+  armSleeveGeo.translate(0, -0.24, 0);
+  const handGeo = new THREE.BoxGeometry(0.13, 0.14, 0.13);
+  handGeo.translate(0, -0.55, 0);
+  const armGeoMerged = mergeColored([{ g: armSleeveGeo, c: shirt }, { g: handGeo, c: skin }]);
+  const arms = [];
+  const armSpread = belly ? 0.42 : 0.39;
+  for (const s of [-1, 1]) {
+    const arm = new THREE.Group();
+    arm.add(new THREE.Mesh(armGeoMerged, getPedColoredMat()));
+    arm.position.set(armSpread * s, 1.32, 0);
+    g.add(arm);
+    arms.push(arm);
+  }
+
+  g.userData = { legs, arms, archetype: 'driver', isAnimal: false };
   return g;
 }
 
@@ -8474,9 +8635,11 @@ const PED_CAR_SHAPES = {
 class PlayerPed {
   /**
    * @param {THREE.Scene} scene - Трёхмерная сцена Three.js
+   * @param {object} [options={}] - Опции кастомизации водителя
    */
-  constructor(scene) {
+  constructor(scene, options = {}) {
     this.scene = scene;
+    this.options = options ? { ...options } : {};
     this.x = 0;
     this.z = 0;
     this.groundY = 0;
@@ -8494,7 +8657,7 @@ class PlayerPed {
     this.knockT = 0;
     this.isKnockedOut = false;
     this._tempVec = { x: 0, z: 0 };
-    this.mesh = buildPedMesh('regular');
+    this.mesh = buildDriverMesh(this.options);
     if (this.mesh && this.scene) {
       this.scene.add(this.mesh);
     }
@@ -8650,8 +8813,8 @@ class PlayerPed {
       const isShift = !!((input && input.keys && (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight'))) || (input && input.isRunning));
       this.isRunning = isShift && hasMove;
 
-      const walkSpeed = (CFG && CFG.pedWalkSpeed) || 2.4;
-      const runSpeed = (CFG && CFG.pedRunSpeed) || 4.8;
+      const walkSpeed = (CFG && CFG.pedWalkSpeed) || 3.1;
+      const runSpeed = (CFG && CFG.pedRunSpeed) || 5.8;
       const targetMaxSpeed = this.isRunning ? runSpeed : walkSpeed;
 
       if (hasMove) {
@@ -8869,6 +9032,27 @@ class PlayerPed {
       const armAngle = -Math.sin(k * Math.PI) * 1.2;
       u.arms[1].rotation.x = armAngle; // правая рука вперёд
       u.arms[0].rotation.x = -0.5;     // левая для баланса
+    }
+  }
+
+  /**
+   * Применить новые опции кастомизации водителя и пересоздать 3D-меш.
+   * @param {object} options
+   */
+  applyDriverOptions(options) {
+    if (this.mesh && this.scene) {
+      this.scene.remove(this.mesh);
+    }
+    this.options = options ? { ...options } : {};
+    this.mesh = buildDriverMesh(this.options);
+    if (this.mesh && this.scene) {
+      this.scene.add(this.mesh);
+      this.mesh.position.set(this.x, this.groundY, this.z);
+      if (this.isKnockedOut) {
+        this.mesh.rotation.set(Math.PI / 2 * 0.8, this.heading, 0);
+      } else {
+        this.mesh.rotation.set(0, this.heading, 0);
+      }
     }
   }
 
@@ -12653,6 +12837,7 @@ class UpgradeSystem {
     this.carId = 'taxi';
     this.tuning = { color: '#f2c12e', rims: 0, spoiler: false, bodyKit: 0, decal: defaultDecalIndex(this.carId) };
     this.ownedCars = ['taxi'];
+    this.driver = null;
   }
 
   costOf(upId) {
@@ -12714,6 +12899,7 @@ class UpgradeSystem {
         stats: data.stats, day: data.day,
         sound: data.sound, music: data.music, quality: CFG.quality, gfx: CFG.gfx,
         audioVol: data.audioVol, radio: data.radio,
+        driver: this.driver,
       }));
     } catch (e) { /* приватный режим */ }
   }
@@ -12727,6 +12913,7 @@ class UpgradeSystem {
       this.tuning = { ...this.tuning, ...(d.tuning || {}) };
       this.carId = d.carId || 'taxi';
       this.ownedCars = d.ownedCars || ['taxi'];
+      this.driver = d.driver || null;
       // старые сохранения (до появления декалей) не содержат tuning.decal —
       // считаем дефолт по фактическому carId сейчас, а не по 'taxi' из
       // constructor() (иначе игрок, уже сменивший машину в старом сохранении,
@@ -13169,6 +13356,13 @@ class AchievementManager {
 
 
 
+const DRIVER_PALETTES = {
+  shirt: [0x283848, 0x503525, 0x304030, 0x222226, 0x485868, 0x5c4033, 0x334455, 0x8a2424],
+  pants: [0x1a2430, 0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x222222, 0xd0c0aa],
+  skin:  [0xffdbac, 0xf5d0b0, 0xd8a878, 0xc89060, 0xa87850],
+  hair:  [0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0x8a2a2a, 0xd8c8a8, 0x8a7a6a],
+};
+
 /**
  * Менеджер пользовательского интерфейса (экраны, HUD, карта, гараж, уведомления).
  */
@@ -13298,6 +13492,15 @@ class UIManager {
     gfxField('sel-traffic-density', 'trafficDensity', parseFloat);
     gfxField('sel-ped-density', 'pedDensity', parseFloat);
     gfxField('chk-rain', 'rain');
+    // кастомизация водителя
+    on('chk-driver-belly', () => {
+      const el = this.$('chk-driver-belly');
+      if (el) this.game.setDriverOption('belly', el.checked);
+    });
+    on('chk-driver-cap', () => {
+      const el = this.$('chk-driver-cap');
+      if (el) this.game.setDriverOption('cap', el.checked);
+    });
     // клавиатура: Esc/M/G обрабатывает Game через очереди InputManager
   }
 
@@ -13933,6 +14136,7 @@ class UIManager {
     this.$('chk-music').checked = music;
     this.syncVolumeUI();
     this.syncGfxUI();
+    this.syncDriverUI();
   }
 
   /* Слайдеры громкости + список станций — синхронизируются с audio.getVolumes()
@@ -13972,6 +14176,41 @@ class UIManager {
     this.$('sel-traffic-density').value = String(g.trafficDensity);
     this.$('sel-ped-density').value = String(g.pedDensity);
     this.$('chk-rain').checked = g.rain;
+  }
+
+  syncDriverUI() {
+    const opts = this.game.getDriverOptions();
+
+    const chkBelly = this.$('chk-driver-belly');
+    if (chkBelly) chkBelly.checked = !!opts.belly;
+
+    const chkCap = this.$('chk-driver-cap');
+    if (chkCap) chkCap.checked = opts.cap !== false;
+
+    const swatchGroups = [
+      { id: 'driver-shirt-swatches', key: 'shirtColor', colors: DRIVER_PALETTES.shirt },
+      { id: 'driver-pants-swatches', key: 'pantsColor', colors: DRIVER_PALETTES.pants },
+      { id: 'driver-skin-swatches',  key: 'skinColor',  colors: DRIVER_PALETTES.skin },
+      { id: 'driver-hair-swatches',  key: 'hairColor',  colors: DRIVER_PALETTES.hair },
+    ];
+
+    for (const grp of swatchGroups) {
+      const container = this.$(grp.id);
+      if (!container) continue;
+      container.innerHTML = '';
+      const curVal = opts[grp.key];
+      for (const color of grp.colors) {
+        const s = document.createElement('div');
+        const hex = '#' + color.toString(16).padStart(6, '0');
+        const isActive = curVal === color;
+        s.className = 'swatch' + (isActive ? ' active' : '');
+        s.style.backgroundColor = hex;
+        s.addEventListener('click', () => {
+          this.game.setDriverOption(grp.key, color);
+        });
+        container.appendChild(s);
+      }
+    }
   }
 
   updateRadioDisplay(st) {
@@ -14537,6 +14776,7 @@ class Game {
 
   openSettings(from) {
     this._settingsFrom = from || this.stateName;
+    if (this.ui) this.ui.syncDriverUI();
     this.setState('settings');
   }
 
@@ -14555,6 +14795,31 @@ class Game {
 
   setSound(on) { this.soundOn = on; this.audio.setMaster(on); }
   setMusic(on) { this.musicOn = on; this.audio.setMusic(on); }
+
+  getDriverOptions() {
+    return this.upgrades.driver ? { ...this.upgrades.driver } : {
+      belly: false,
+      cap: true,
+      shirtColor: 0x283848,
+      pantsColor: 0x1a2430,
+      skinColor: 0xf5d0b0,
+      hairColor: 0x1a1a1a,
+    };
+  }
+
+  setDriverOption(key, value) {
+    if (!this.upgrades.driver) {
+      this.upgrades.driver = { ...this.getDriverOptions() };
+    }
+    this.upgrades.driver[key] = value;
+    this.save();
+    if (this.playerPed) {
+      this.playerPed.applyDriverOptions(this.upgrades.driver);
+    }
+    if (this.ui) {
+      this.ui.syncDriverUI();
+    }
+  }
 
   /* Слайдер громкости — протаскивание не должно писать в localStorage на
      каждый шаг, поэтому сохранение debounce'ится на 800мс */
@@ -14709,7 +14974,7 @@ class Game {
       return;
     }
 
-    this.playerPed = new PlayerPed(this.scene);
+    this.playerPed = new PlayerPed(this.scene, this.upgrades.driver || {});
     this.playerPed.setPos(spawnPos.x, spawnPos.z, this.player.heading);
     this.chaseCam.setTargetMode('ped');
     this.chaseCam.reset(this.playerPed);
