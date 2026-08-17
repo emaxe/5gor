@@ -10335,7 +10335,7 @@ class PedestrianManager {
         active: false, nearZone: false, laneOff: 0,
         route: null, routeIdx: 0, _edgeKind: null, edgeEnd: 0,
         idleT: 0, _blockedT: 0, _stuckT: 0, _reroute: 0,
-        _blockedTurnIsec: null,
+        _blockedTurnIsec: null, _avoidSide: 0,
       };
       this.cars.push(ped);
       this.scene.add(mesh);
@@ -10589,6 +10589,9 @@ class PedestrianManager {
       p.nearZone = d <= CFG.pedNearRadius;
       if (!p.active && d <= CFG.pedActiveRadius) {
         if (activations >= 2 || p._reroute > 0) continue;
+        // Не прерывать переход/ожидание/поворот активацией — иначе _activate
+        // сбросит p.cross и пешеход «зависнет» на проезжей части (баг 1).
+        if (p.mode === 'cross' || p.mode === 'wait' || p.mode === 'turn') continue;
         this._activate(p);
         activations++;
       } else if (p.active && d > CFG.pedActiveRadius + 5 && p.mode !== 'cross' && p.mode !== 'wait' && p.mode !== 'turn') {
@@ -10630,6 +10633,7 @@ class PedestrianManager {
     if (!this.graph || p.isAnimal) return;
     if (p.knockT > 0 || p.mode === 'flee' || p.mode === 'kick') return;
     p.route = null; p.routeIdx = 0; p.laneOff = 0;
+    p._avoidSide = 0;
     this._nudgeOutOfObstacle(p);  // сдвинуться из препятствия если стоит внутри — ПОСЛЕ
                                    // сброса laneOff, иначе боковой сдвиг затирается (G4)
 
@@ -10673,6 +10677,7 @@ class PedestrianManager {
     p.active = false;
     p.route = null; p.routeIdx = 0;
     p.laneOff = 0;
+    p._avoidSide = 0;
     p._edgeKind = null; p.edgeEnd = 0;
     if (p.mode === 'idle') p.mode = this._restMode(p);
   }
@@ -10741,13 +10746,22 @@ class PedestrianManager {
   _pickRandomNode(fromId, dist) {
     const g = this.graph;
     const candidates = [];
+    const midCandidates = [];
     for (const n of g.nodes) {
       if ((n.kind !== 'lane' && n.kind !== 'mid') || n.id === fromId) continue;
       const d = dist[n.id];
-      if (d >= 1 && d <= 3) candidates.push(n.id);
+      if (d >= 1 && d <= 3) {
+        candidates.push(n.id);
+        if (n.kind === 'mid') midCandidates.push(n.id);
+      }
     }
-    if (!candidates.length) return null;
-    return candidates[Math.floor(Math.random() * candidates.length)];
+    // Предпочитаем mid-узлы (середины кварталов) — цель на lane-узле
+    // перекрёстка заставляла пешехода idle-ить прямо на проезжей части.
+    // Fallback на lane, если mid-узлов в диапазоне нет (иначе активация
+    // молча ничего не делает).
+    const pool = midCandidates.length ? midCandidates : candidates;
+    if (!pool.length) return null;
+    return pool[Math.floor(Math.random() * pool.length)];
   }
 
   /* Маршрут -> массив дескрипторов рёбер (сливаем пару cross через центр в
@@ -10934,7 +10948,10 @@ class PedestrianManager {
     if (!jwalk) p.pos = Math.round(p.pos / CFG.CELL) * CFG.CELL;
     p.mode = p.isAnimal ? 'cross' : 'wait'; // Животные сразу идут на переход
     p.waitT = 0;
-    const crossSpeed = p.isAnimal ? p.speed * 1.5 : p.speed * 1.3;
+    // MIN_CROSS_SPEED: если _avoidStatic обнулил p.speed (заблокирован
+    // препятствием), crossSpeed=0 дал бы dur=Infinity — пешеход навсегда
+    // застревал в mode='cross' на краю дороги («стоит посреди дороги»).
+    const crossSpeed = Math.max(p.isAnimal ? p.speed * 1.5 : p.speed * 1.3, 0.5);
     p.cross = {
       from: p.side * PED_SIDE,
       to: -p.side * PED_SIDE,
@@ -10990,6 +11007,10 @@ class PedestrianManager {
     } else {
       c.t += dt;
     }
+
+    // Таймаут-страж: если переход затянулся (красный/машины/застревание),
+    // отменяем его — иначе пешеход «висит» на проезжей части бесконечно.
+    if (c.t > 30) { this._cancelCross(p); return; }
 
     if (c.t >= c.dur) {
       p.side = c.to > 0 ? 1 : -1;
@@ -11120,16 +11141,35 @@ class PedestrianManager {
     // this._obstacleAtBound — захостен один раз в конструкторе (grill-plan G9), не
     // аллоцировать замыкание здесь каждый кадр на каждого пешехода.
     if (!probeForwardBlocked(probe0.x, probe0.z, dirX, dirZ, FORWARD_DISTANCES, this._obstacleAtBound)) {
-      p.laneOff *= Math.max(0, 1 - 4 * dt);
-      if (Math.abs(p.laneOff) < 0.02) p.laneOff = 0;
+      // Decay только если центр реально свободен (пешеход прошёл препятствие).
+      // Раньше decay тянул laneOff к 0, НЕ проверяя препятствие на центральной
+      // оси: пешеход обходил объект сбоку, его затягивало обратно в центр,
+      // он снова упирался и прыгал на ±1.4 — «пила»/джиттер (баг 2).
+      const cp = this._lanePoint(p, 0);
+      const centerClear = !probeForwardBlocked(cp.x, cp.z, dirX, dirZ, FORWARD_DISTANCES, this._obstacleAtBound);
+      if (centerClear || Math.abs(p.laneOff) < 0.02) {
+        p.laneOff *= Math.max(0, 1 - 4 * dt);
+        if (Math.abs(p.laneOff) < 0.02) p.laneOff = 0;
+      }
       p._stuckT = 0;
       return;
     }
-    for (const o of [1.4, -1.4, 2.4, -2.4]) {
+    // Гистерезис стороны (баг 2): если пешеход уже ушёл вбок обходить
+    // препятствие, сначала пробуем кандидатов на той же стороне — иначе
+    // каждый кадр он перескакивает на противоположную и дёргается.
+    const ordered = p._avoidSide !== 0
+      ? (p._avoidSide > 0 ? [1.4, 2.4, -1.4, -2.4] : [-1.4, -2.4, 1.4, 2.4])
+      : [1.4, -1.4, 2.4, -2.4];
+    for (const o of ordered) {
       const cand = clamp(baseOff + o, -1.5, 1.5);
       const pr0 = this._lanePoint(p, cand);
       if (!probeForwardBlocked(pr0.x, pr0.z, dirX, dirZ, FORWARD_DISTANCES, this._obstacleAtBound)) {
-        p.laneOff = cand; p._stuckT = 0; return;
+        p.laneOff = cand; p._stuckT = 0;
+        // Гистерезис стороны (баг 2): запоминаем выбранную сторону, чтобы
+        // при следующем кадре не перескакивать на противоположную, пока
+        // препятствие не пройдено. Сбрасывается в _activate/_deactivate.
+        p._avoidSide = cand >= 0 ? 1 : -1;
+        return;
       }
     }
     // заблокировано с обеих сторон
@@ -11143,6 +11183,10 @@ class PedestrianManager {
         // новой целью, минуя препятствие
         p.route = null; p.routeIdx = 0; p.active = false; p._reroute = 0.3;
       } else {
+        // Разворот при тупике (баг 2): сбрасываем targetIsec, иначе
+        // _updateWalk тут же развернёт пешехода обратно в препятствие и он
+        // будет дёргаться туда-сюда бесконечно.
+        p.targetIsec = null;
         p.dir = -p.dir; p.turnT = 0.5;
       }
     }
@@ -11175,10 +11219,16 @@ class PedestrianManager {
           // знак гарантированно разный, они расходятся. Для обгона (тот же
           // dir, лидер медленнее) сторона по-прежнему выбирается от лидера.
           const headOn = o.dir !== p.dir;
-          p.laneOff = headOn
+          const candOff = headOn
             ? (p.dir > 0 ? 1.4 : -1.4)
             : ((o.laneOff || 0) >= 0 ? -1.4 : 1.4);
-          p.speed = Math.min(p.baseSpeed * 1.25, p.speed + 0.5);
+          // Не уходить вбок прямо в статику (столб/дерево/светофор) — иначе
+          // пешеход «глючит», дёргаясь между обгоном и препятствием (баг 2).
+          const sidePt = this._lanePoint(p, candOff);
+          if (!this._obstacleAt(sidePt.x, sidePt.z)) {
+            p.laneOff = candOff;
+            p.speed = Math.min(p.baseSpeed * 1.25, p.speed + 0.5);
+          }
         }
       } else {
         p._blockedT = 0;
@@ -11323,6 +11373,9 @@ class PedestrianManager {
             p.turn = null; p.cross = null;
             this._deactivate(p);
           }
+          // Пинок мог сбить пешехода на проезжую часть — вернуть на тротуар,
+          // иначе он «зависает» посреди дороги (баг 1).
+          if (this._onRoadway(p)) this._snapToSidewalk(p);
         }
       }
       p.walk = (p.walk || 0) + dt * p.speed * (p.mode === 'run' ? 6 : 4);
@@ -11503,6 +11556,14 @@ class PedestrianManager {
       this._activate(ped);
     }
     return ped;
+  }
+
+  /* Пешеход на проезжей части (не на тротуаре): поперечное смещение от
+     центра дороги меньше ширины тротуара PED_SIDE. Используется после
+     пинка/отлёта, чтобы вернуть пешехода на тротуар (баг 1). */
+  _onRoadway(p) {
+    const off = p.axis === 'z' ? Math.abs(p.x - p.coord) : Math.abs(p.z - p.coord);
+    return off < PED_SIDE;
   }
 
   /* Вернуть убежавшего на тротуар */
