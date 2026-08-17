@@ -14690,27 +14690,23 @@ class Game {
     this.player.velX = 0;
     this.player.velZ = 0;
 
-    // Выбираем свободную точку для высадки водителя (слева, справа, сзади, спереди)
+    // Водитель всегда выходит из ЛЕВОЙ двери (со стороны водителя).
+    // При коллизии пробуем чуть дальше по левой стороне, но не на другие стороны.
     const h = this.player.heading;
-    const doorOffset = 1.5;
-    const candidates = [
-      // Слева (со стороны водителя)
-      { x: this.player.x - Math.cos(h) * doorOffset, z: this.player.z + Math.sin(h) * doorOffset },
-      // Справа
-      { x: this.player.x + Math.cos(h) * doorOffset, z: this.player.z - Math.sin(h) * doorOffset },
-      // Сзади
-      { x: this.player.x - Math.sin(h) * 2.4, z: this.player.z - Math.cos(h) * 2.4 },
-      // Спереди
-      { x: this.player.x + Math.sin(h) * 2.4, z: this.player.z + Math.cos(h) * 2.4 },
-    ];
-
-    let spawnPos = candidates[0];
-    for (let i = 0; i < candidates.length; i++) {
-      const pos = candidates[i];
+    const perpX = -Math.cos(h); // левая сторона (перпендикуляр влево от направления)
+    const perpZ = Math.sin(h);
+    const offsets = [1.5, 2.0, 2.5, 3.0];
+    let spawnPos = null;
+    for (const off of offsets) {
+      const pos = { x: this.player.x + perpX * off, z: this.player.z + perpZ * off };
       if (!this._checkCollisionAt(pos.x, pos.z, 0.4)) {
         spawnPos = pos;
         break;
       }
+    }
+    if (!spawnPos) {
+      this.ui.toast('Слева нет места, чтобы выйти!', '#ffb030');
+      return;
     }
 
     this.playerPed = new PlayerPed(this.scene);
