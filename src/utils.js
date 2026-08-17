@@ -813,7 +813,8 @@ export function detachParcelBox(pedMesh) {
 const _circleAABBRes = { nx: 0, nz: 0, depth: 0 };
 
 /* Коллизия круга с AABB. Возвращает _circleAABBRes (мутируется) или null */
-export function circleAABB(px, pz, r, box) {
+export function circleAABB(px, pz, r, box, playerY = 0, playerH = 1.5) {
+  if (box.y !== undefined && box.y !== Infinity && playerY + playerH > box.y) return null;
   const cx = clamp(px, box.x0, box.x1);
   const cz = clamp(pz, box.z0, box.z1);
   let dx = px - cx, dz = pz - cz;

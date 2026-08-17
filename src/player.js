@@ -336,14 +336,15 @@ export class PlayerCar {
   }
 
   _resolveAt(px, pz, rc, sep, world, traffic) {
+    const py = world.heightAt ? world.heightAt(px, pz) : 0;
     // здания
     for (const b of world.buildings) {
-      const c = circleAABB(px, pz, rc, b);
+      const c = circleAABB(px, pz, rc, b, py, 1.5);
       if (c) this._resolve(c, false, world);
     }
     // пропсы (столбы, знаки, киоски, ограды)
     for (const p of world.propsAABB) {
-      const c = circleAABB(px, pz, rc, p);
+      const c = circleAABB(px, pz, rc, p, py, 1.5);
       if (c) this._resolve(c, false, world);
     }
     // круглые коллайдеры (озеро)

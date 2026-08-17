@@ -238,11 +238,12 @@ export class PlayerPed {
    */
   _collide(world, peds, playerCar) {
     if (!world) return;
+    const py = world.heightAt ? world.heightAt(this.x, this.z) : 0;
 
     // 1. Здания: circleAABB (радиус 0.35) с выталкиванием по нормали
     if (world.buildings) {
       for (let i = 0; i < world.buildings.length; i++) {
-        const c = circleAABB(this.x, this.z, 0.35, world.buildings[i]);
+        const c = circleAABB(this.x, this.z, 0.35, world.buildings[i], py, 1.7);
         if (c) {
           this.x += c.nx * c.depth;
           this.z += c.nz * c.depth;
@@ -260,7 +261,7 @@ export class PlayerPed {
           const bucket = world._propHash.get((cx + dx) + ',' + (cz + dz));
           if (!bucket) continue;
           for (let i = 0; i < bucket.length; i++) {
-            const c = circleAABB(this.x, this.z, 0.35, bucket[i]);
+            const c = circleAABB(this.x, this.z, 0.35, bucket[i], py, 1.7);
             if (c) {
               this.x += c.nx * c.depth;
               this.z += c.nz * c.depth;
@@ -270,7 +271,7 @@ export class PlayerPed {
       }
     } else if (world.propsAABB) {
       for (let i = 0; i < world.propsAABB.length; i++) {
-        const c = circleAABB(this.x, this.z, 0.35, world.propsAABB[i]);
+        const c = circleAABB(this.x, this.z, 0.35, world.propsAABB[i], py, 1.7);
         if (c) {
           this.x += c.nx * c.depth;
           this.z += c.nz * c.depth;

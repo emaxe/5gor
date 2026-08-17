@@ -355,7 +355,7 @@ export class TrafficManager {
         const aheadPos = car.pos + car.dir * 5;
         const ax = car.axis === 'z' ? car.coord - car.dir * 2.5 : aheadPos;
         const az = car.axis === 'z' ? aheadPos : car.coord + car.dir * 2.5;
-        if (world._checkPropCollision(ax, az, 1.0)) {
+        if (world._checkPropCollision(ax, az, 1.0, 0, 1.5)) {
           car.target = 0;
         }
       }

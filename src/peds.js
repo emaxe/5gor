@@ -1313,7 +1313,7 @@ export class PedestrianManager {
   _obstacleAt(x, z) {
     const w = this.world;
     if (!w) return false;
-    if (w._checkPropCollision(x, z, 0.4)) return true;
+    if (w._checkPropCollision(x, z, 0.4, 0, 1.7)) return true;
     if (this._buildingHash) {
       const cell = 16;
       const cx = Math.floor(x / cell), cz = Math.floor(z / cell);
