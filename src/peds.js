@@ -378,7 +378,7 @@ export class PedestrianManager {
   say(p, text, duration = 3.0) {
     if (!p.speechSprite) {
       p.speechSprite = makeSpeechSprite(text);
-      p.mesh.add(p.speechSprite);
+      this.scene.add(p.speechSprite);
     } else {
       updateSpeechSprite(p.speechSprite, text);
     }
@@ -561,7 +561,7 @@ export class PedestrianManager {
       const arch = choice(archTypes);
       const mesh = this._buildPed(arch);
       const speechSprite = makeSpeechSprite();
-      mesh.add(speechSprite);
+      this.scene.add(speechSprite);
 
       const isAnimal = arch === 'dog' || arch === 'cat';
 
@@ -1877,12 +1877,28 @@ export class PedestrianManager {
 
   _sync(p) {
     const h = this.world ? this.world.heightAt(p.x, p.z) : 0;
-    p.mesh.position.set(p.x, h + 0.02, p.z);
     if (p.knockT > 0) {
-      p.mesh.rotation.set(0, Math.atan2(p.fvx, p.fvz), Math.PI / 2);
+      const yaw = Math.atan2(p.fvx, p.fvz);
+      const headDist = p.isAnimal ? 0.4 : 1.2;
+      const headX = p.x - Math.cos(yaw) * headDist;
+      const headZ = p.z + Math.sin(yaw) * headDist;
+      const hHead = this.world ? this.world.heightAt(headX, headZ) : h;
+      const effH = Math.max(h, hHead);
+      // Подъём на полуширину тела, чтобы нижний бок лежал на асфальте:
+      // человек 0.28 (торс 0.56), собака 0.18 (0.32×1.1), кошка 0.11 (0.22×0.95)
+      const lift = p.isAnimal
+        ? (p.archetype === 'cat' ? 0.11 : 0.18)
+        : 0.28;
+      p.mesh.position.set(p.x, effH + lift, p.z);
+      p.mesh.rotation.set(0, yaw, Math.PI / 2);
     } else {
+      p.mesh.position.set(p.x, h + 0.02, p.z);
       p.mesh.rotation.x = 0; p.mesh.rotation.z = 0;
       p.mesh.rotation.y = this._heading(p);
+    }
+    if (p.speechSprite) {
+      const speechY = p.knockT > 0 ? (h + 1.2) : (h + 2.4);
+      p.speechSprite.position.set(p.x, speechY, p.z);
     }
   }
 
