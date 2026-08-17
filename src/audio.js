@@ -288,6 +288,8 @@ export class AudioManager {
   getCurrentStation() { return this.radio.getCurrentStation(); }
   getStationId() { return this.radio.getStationId(); }
   setStationId(id) { this.radio.setStationId(id); }
+  pauseRadio() { this.radio.stop(); }
+  resumeRadio() { if (this.musicOn && this.engine.enabled) this.radio.start(); }
 
   /* --- Громкости и мьют --- */
   setEnabled(on) { this.engine.setMasterEnabled(on); }

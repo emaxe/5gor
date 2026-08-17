@@ -25,6 +25,7 @@ MODULES = [
     "pedgraph.js",
     "pedavoid.js",
     "player.js",
+    "playerped.js",
     "traffic.js",
     "peds.js",
     "camera.js",

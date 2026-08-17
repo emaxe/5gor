@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { CFG, CFG_GFX_PRESETS, WEATHER_DEFS } from './config.js';
-import { clamp, lerp, pickWeighted, showError } from './utils.js';
+import { clamp, lerp, pickWeighted, showError, dist2D, fmtMoney, circleAABB } from './utils.js';
 import { Events } from './eventbus.js';
 import { World } from './citygen.js';
 import { PlayerCar } from './player.js';
+import { PlayerPed } from './playerped.js';
 import { TRAFFIC_TYPES, TrafficManager, WORLD_INTERSECTIONS } from './traffic.js';
 import { PedestrianManager } from './peds.js';
 import { ChaseCamera } from './camera.js';
@@ -65,8 +66,10 @@ void main() {
  */
 export class Game {
   constructor() {
-    /** @type {string} текущее состояние игры ('boot'|'menu'|'driving'|'pause'|'garage'|'settings'|'map'|'shiftend') */
+    /** @type {string} текущее состояние игры ('boot'|'menu'|'driving'|'walking'|'pause'|'garage'|'settings'|'map'|'shiftend') */
     this.stateName = 'boot';
+    /** @type {PlayerPed|null} пешеходный аватар игрока при выходе из машины */
+    this.playerPed = null;
     /** @type {number} количество денег у игрока */
     this.money = CFG.startMoney;
     /** @type {number} текущий рейтинг */
@@ -422,7 +425,7 @@ export class Game {
     if (name === 'menu') {
       this.ui.showScreen('menu', true);
       this.ui.showHud(false);
-    } else if (name === 'driving') {
+    } else if (name === 'driving' || name === 'walking') {
       this.ui.showScreen(null);
       this.ui.showHud(true);
     } else if (name === 'pause') {
@@ -434,7 +437,7 @@ export class Game {
       this.ui.showScreen('settings', true);
     } else if (name === 'map') {
       this.ui.showScreen('map', true);
-      this.ui.renderBigMap(this.player, this.orders, this.world);
+      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null);
     } else if (name === 'shiftend') {
       this.ui.showScreen('shiftend', true);
       this.ui.renderShiftEnd({ money: this.money, rating: this.rating, day: this.day }, this.shiftStats);
@@ -457,6 +460,10 @@ export class Game {
   }
 
   _startShift(day) {
+    if (this.playerPed) {
+      this.playerPed.dispose();
+      this.playerPed = null;
+    }
     this.day = day;
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
@@ -474,6 +481,7 @@ export class Game {
     this.player.setPos(0, 20, 0);
     this.player.repair();
     this.player.wash();
+    this.chaseCam.setTargetMode('car');
     this.chaseCam.reset(this.player);
     this.setState('driving');
     Events.emit('shift:started');
@@ -497,17 +505,22 @@ export class Game {
   }
 
   togglePause() {
-    if (this.stateName === 'driving') { this.setState('pause'); this.save(); }
-    else if (this.stateName === 'pause') { this.setState('driving'); }
+    if (this.stateName === 'driving' || this.stateName === 'walking') {
+      this._pauseFrom = this.stateName;
+      this.setState('pause');
+      this.save();
+    } else if (this.stateName === 'pause') {
+      this.setState(this._pauseFrom || 'driving');
+    }
   }
 
   openGarage(from) {
-    this._garageFrom = from;
+    this._garageFrom = from || this.stateName;
     this.setState('garage');
   }
 
   closeGarage() {
-    this.setState(this._garageFrom === 'menu' ? 'menu' : this._garageFrom === 'pause' ? 'pause' : 'driving');
+    this.setState(this._garageFrom === 'menu' ? 'menu' : this._garageFrom === 'pause' ? 'pause' : this._garageFrom === 'walking' ? 'walking' : 'driving');
     this.save();
   }
 
@@ -517,12 +530,16 @@ export class Game {
   }
 
   closeSettings() {
-    this.setState(this._settingsFrom === 'menu' ? 'menu' : this._settingsFrom === 'pause' ? 'pause' : 'driving');
+    this.setState(this._settingsFrom === 'menu' ? 'menu' : this._settingsFrom === 'pause' ? 'pause' : this._settingsFrom === 'walking' ? 'walking' : 'driving');
   }
 
   toggleMap() {
-    if (this.stateName === 'map') this.setState('driving');
-    else if (this.stateName === 'driving') this.setState('map');
+    if (this.stateName === 'map') {
+      this.setState(this._mapFrom || 'driving');
+    } else if (this.stateName === 'driving' || this.stateName === 'walking') {
+      this._mapFrom = this.stateName;
+      this.setState('map');
+    }
   }
 
   setSound(on) { this.soundOn = on; this.audio.setMaster(on); }
@@ -639,9 +656,83 @@ export class Game {
     this.player.fuel = Math.min(this.player.stats.tank, this.player.fuel + CFG.towFuel);
     const n = this._nearestIntersection(this.player.x, this.player.z);
     this.player.setPos(n.x, n.z, 0);
+    if (this.playerPed) {
+      this.playerPed.dispose();
+      this.playerPed = null;
+    }
+    this.chaseCam.setTargetMode('car');
+    this.chaseCam.reset(this.player);
     this.ui.toast('Эвакуатор доставил машину на перекрёсток', '#7ee787');
     this.audio.chime();
     this.setState('driving');
+  }
+
+  exitCar() {
+    if (this.stateName !== 'driving') return;
+    if (Math.abs(this.player.speed) > CFG.carExitMaxSpeed) {
+      this.ui.toast('Остановитесь, чтобы выйти!', '#ffb030');
+      return;
+    }
+
+    // Полная остановка автомобиля
+    this.player.speed = 0;
+    this.player.velX = 0;
+    this.player.velZ = 0;
+
+    // Выбираем свободную точку для высадки водителя (слева, справа, сзади, спереди)
+    const h = this.player.heading;
+    const doorOffset = 1.5;
+    const candidates = [
+      // Слева (со стороны водителя)
+      { x: this.player.x - Math.cos(h) * doorOffset, z: this.player.z + Math.sin(h) * doorOffset },
+      // Справа
+      { x: this.player.x + Math.cos(h) * doorOffset, z: this.player.z - Math.sin(h) * doorOffset },
+      // Сзади
+      { x: this.player.x - Math.sin(h) * 2.4, z: this.player.z - Math.cos(h) * 2.4 },
+      // Спереди
+      { x: this.player.x + Math.sin(h) * 2.4, z: this.player.z + Math.cos(h) * 2.4 },
+    ];
+
+    let spawnPos = candidates[0];
+    for (let i = 0; i < candidates.length; i++) {
+      const pos = candidates[i];
+      if (!this._checkCollisionAt(pos.x, pos.z, 0.4)) {
+        spawnPos = pos;
+        break;
+      }
+    }
+
+    this.playerPed = new PlayerPed(this.scene);
+    this.playerPed.setPos(spawnPos.x, spawnPos.z, this.player.heading);
+    this.chaseCam.setTargetMode('ped');
+    this.chaseCam.reset(this.playerPed);
+    this.setState('walking');
+    this.audio.pauseRadio();
+  }
+
+  enterCar() {
+    if (this.stateName !== 'walking' || !this.playerPed) return;
+    const d = dist2D(this.playerPed.x, this.playerPed.z, this.player.x, this.player.z);
+    if (d > CFG.carEnterDist) {
+      this.ui.toast('Подойдите ближе к машине!', '#ffb030');
+      return;
+    }
+    this.playerPed.dispose();
+    this.playerPed = null;
+    this.chaseCam.setTargetMode('car');
+    this.chaseCam.reset(this.player);
+    this.setState('driving');
+    this.audio.resumeRadio();
+  }
+
+  _checkCollisionAt(x, z, radius = 0.4) {
+    if (this.world && this.world._checkPropCollision && this.world._checkPropCollision(x, z, radius)) return true;
+    if (this.world && this.world.buildings) {
+      for (let i = 0; i < this.world.buildings.length; i++) {
+        if (circleAABB(x, z, radius, this.world.buildings[i])) return true;
+      }
+    }
+    return false;
   }
 
   _nearestIntersection(x, z) {
@@ -902,6 +993,11 @@ export class Game {
       this._drive(dt);
       return;
     }
+    if (st === 'walking') {
+      this._renderThrottle = 0;
+      this._walk(dt);
+      return;
+    }
     // пауза, карта, настройки, итоги — мир замер, троттлинг рендера
     this._renderThrottle = 1;
   }
@@ -1027,6 +1123,113 @@ export class Game {
     if (this._saveTimer > 30) { this._saveTimer = 0; this.save(); }
   }
 
+  _walk(dt) {
+    const time = this._updateTime(dt);
+    const w = time.w;
+    this.world.update(dt, this.hour, this.weather);
+
+    // ввод: поддержка клавиатуры и сенсорного джойстика
+    const touch = this.ui.getTouchInput();
+    if (touch && (touch.gas > 0 || touch.brake > 0 || Math.abs(touch.steer) > 0.05)) {
+      const cy = Math.cos(this.chaseCam.yaw), sy = Math.sin(this.chaseCam.yaw);
+      const moveFwd = touch.gas - touch.brake;
+      const moveRight = touch.steer;
+      this.input.walkRight = moveRight * cy + moveFwd * sy;
+      this.input.walkForward = -moveRight * sy + moveFwd * cy;
+    } else {
+      this.input.walkForward = undefined;
+      this.input.walkRight = undefined;
+      this.input.camYaw = this.chaseCam.yaw;
+    }
+
+    if (this.playerPed) {
+      this.playerPed.update(dt, this.input, this.world, this.peds, this.player);
+    }
+
+    // трафик и пешеходы
+    const density = w.traffic * (this.hour >= 22 || this.hour < 6 ? 0.55 : 1);
+    const isNight = this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour;
+    const prevViolator = CFG.pedViolatorChance;
+    if (isNight) CFG.pedViolatorChance = Math.min(0.35, prevViolator * 1.4);
+    this.traffic.update(dt, this.player, this.world, density, this.peds);
+    this.peds.update(dt, this.playerPed || this.player, this.traffic, this.world);
+    CFG.pedViolatorChance = prevViolator;
+
+    // камера
+    if (this.playerPed) {
+      this.chaseCam.applyInput(this.input, dt);
+      this.chaseCam.targetYaw = this.playerPed.heading;
+      this.chaseCam.update(dt, this.playerPed);
+    }
+    if (this.shakeT > 0) {
+      this.shakeT -= dt;
+      const k = this.shakeT * this.shakeAmp;
+      this.chaseCam.position.x += (Math.random() - 0.5) * k;
+      this.chaseCam.position.y += (Math.random() - 0.5) * k;
+      this.chaseCam.position.z += (Math.random() - 0.5) * k;
+    }
+
+    // взаимодействие
+    this._updateWalkInteract();
+    if (this.input.take('interact')) {
+      this.input.flush('interact');
+      if (this.interact) this.interact.cb();
+    }
+    if (this.input.take('map')) this.toggleMap();
+    if (this.input.take('pause')) this.togglePause();
+    this.input.flush();
+
+    // километраж пешком
+    if (this.shiftStats && this.playerPed) {
+      this.shiftStats.km += this.playerPed.speed * dt / 1000;
+    }
+
+    // HUD (троттлинг до ~15 Гц)
+    this._hudAccum = (this._hudAccum || 0) + dt;
+    if (this._hudAccum >= 1 / 15) {
+      this._hudAccum = 0;
+      if (this.playerPed) {
+        this.ui.updateWalkHud(this.playerPed, this, this.hour, this.player);
+      }
+    }
+
+    // миникарта (троттлинг до ~20 Гц)
+    this._minimapAccum = (this._minimapAccum || 0) + dt;
+    if (this._minimapAccum >= 1 / 20) {
+      this._minimapAccum = 0;
+      if (this.playerPed) {
+        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player);
+      }
+    }
+
+    // автосохранение
+    this._saveTimer += dt;
+    if (this._saveTimer > 30) { this._saveTimer = 0; this.save(); }
+  }
+
+  _updateWalkInteract() {
+    this.interact = null;
+    if (!this.playerPed) return;
+    const dCar = dist2D(this.playerPed.x, this.playerPed.z, this.player.x, this.player.z);
+    if (dCar <= CFG.carEnterDist) {
+      this.interact = {
+        label: 'Сесть в машину (E)',
+        cb: () => this.enterCar(),
+      };
+    } else {
+      for (const s of this.world.fuelStations) {
+        if (dist2D(this.playerPed.x, this.playerPed.z, s.x, s.z) < CFG.refuelDist && this.player.fuel < this.player.stats.tank - 1) {
+          this.interact = {
+            label: 'Заправиться (' + fmtMoney(Math.round((this.player.stats.tank - this.player.fuel) * CFG.fuelPrice)) + ')',
+            cb: () => this.refuel(),
+          };
+          break;
+        }
+      }
+    }
+    this.ui.setInteract(this.interact ? this.interact.label : null, this.interact ? this.interact.cb : null);
+  }
+
   _updateInteract() {
     this.interact = null;
     const a = this.orders.active;
@@ -1060,6 +1263,12 @@ export class Game {
           break;
         }
       }
+    }
+    if (!this.interact && Math.abs(this.player.speed) <= CFG.carExitMaxSpeed) {
+      this.interact = {
+        label: 'Выйти из машины (E)',
+        cb: () => this.exitCar(),
+      };
     }
     this.ui.setInteract(this.interact ? this.interact.label : null, this.interact ? this.interact.cb : null);
   }

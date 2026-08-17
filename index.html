@@ -756,6 +756,12 @@ const CFG = {
   pedViolatorChance: 0.08,   // ~8% нарушают ПДД (переход на красный/jwalk)
   pedIdleTime: [5, 15],      // пауза пешехода после прибытия, сек
 
+  // Пешеход-игрок (выход из машины)
+  pedWalkSpeed: 2.4,       // базовая скорость ходьбы водителя (м/с)
+  pedRunSpeed: 4.8,        // скорость спринта при зажатом Shift (м/с)
+  carEnterDist: 3.0,       // максимальная дистанция посадки в авто (м)
+  carExitMaxSpeed: 1.5,    // максимальная скорость авто для разрешения выхода (м/с)
+
   // Качество (устаревший алиас, держится ради обратной совместимости старых
   // сохранений — реальные настройки теперь в CFG.gfx)
   quality: 'high', // high | low (вкл/выкл тени, pixelRatio)
@@ -4389,6 +4395,8 @@ class AudioManager {
   getCurrentStation() { return this.radio.getCurrentStation(); }
   getStationId() { return this.radio.getStationId(); }
   setStationId(id) { this.radio.setStationId(id); }
+  pauseRadio() { this.radio.stop(); }
+  resumeRadio() { if (this.musicOn && this.engine.enabled) this.radio.start(); }
 
   /* --- Громкости и мьют --- */
   setEnabled(on) { this.engine.setMasterEnabled(on); }
@@ -4428,6 +4436,12 @@ class InputManager {
     this.camPitchDelta = 0;
     this.camZoomDelta = 0;
 
+    // пешеход
+    this.walkForward = undefined;
+    this.walkRight = undefined;
+    this.camYaw = 0;
+    this.isRunning = false;
+
     // сенсорный руль
     this.steerTouch = null;   // pointerId активного руля
     this.steerOrigin = 0;
@@ -4450,7 +4464,7 @@ class InputManager {
       if (k === 'KeyM') this.queues.map.push(1);
       if (k === 'Escape' || k === 'KeyP') this.queues.pause.push(1);
       if (k === 'KeyG') this.queues.garage.push(1);
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyR', 'KeyM'].includes(k)) e.preventDefault();
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyR', 'KeyM', 'ShiftLeft', 'ShiftRight'].includes(k)) e.preventDefault();
     };
     const up = (e) => this.keys.delete(e.code);
     window.addEventListener('keydown', down);
@@ -8350,6 +8364,309 @@ class PlayerCar {
   }
 }
 
+/* ===== playerped.js ===== */
+
+
+
+/* Габариты кузова автомобиля для вычисления капсульного коллайдера (длина, ширина) */
+const PED_CAR_SHAPES = {
+  taxi:     { w: 1.9,  len: 4.3 },
+  classic:  { w: 1.85, len: 4.0 },
+  comfort:  { w: 1.92, len: 4.25 },
+  minivan:  { w: 2.05, len: 4.7 },
+  business: { w: 1.95, len: 4.6 },
+  sport:    { w: 1.9,  len: 4.35 },
+  offroad:  { w: 2.05, len: 4.8 },
+};
+
+/**
+ * Класс пешехода-аватара игрока (физика, коллизии, визуал и анимация ходьбы/бега).
+ */
+class PlayerPed {
+  /**
+   * @param {THREE.Scene} scene - Трёхмерная сцена Three.js
+   */
+  constructor(scene) {
+    this.scene = scene;
+    this.x = 0;
+    this.z = 0;
+    this.groundY = 0;
+    this.heading = 0;
+    this.speed = 0;
+    this.walkPhase = 0;
+    this.isRunning = false;
+    this._tempVec = { x: 0, z: 0 };
+    this.mesh = buildPedMesh('regular');
+    if (this.mesh && this.scene) {
+      this.scene.add(this.mesh);
+    }
+  }
+
+  get position() {
+    return { x: this.x, z: this.z };
+  }
+
+  /**
+   * Установить позицию и направление взгляда пешехода.
+   * @param {number} x
+   * @param {number} z
+   * @param {number} heading
+   */
+  setPos(x, z, heading = 0) {
+    this.x = x;
+    this.z = z;
+    this.heading = heading;
+    this.speed = 0;
+    this.walkPhase = 0;
+    if (this.mesh) {
+      this.mesh.position.set(this.x, this.groundY, this.z);
+      this.mesh.rotation.y = this.heading;
+    }
+  }
+
+  /**
+   * Обновление состояния пешехода за кадр.
+   * @param {number} dt - Прошедшее время в секундах
+   * @param {object} input - Ввод игрока
+   * @param {object} world - Мир (здания, пропсы, рельеф, коллайдеры)
+   * @param {object} peds - Менеджер пешеходов NPC
+   * @param {object} playerCar - Автомобиль игрока
+   */
+  update(dt, input, world, peds, playerCar) {
+    let moveFwd = 0;
+    let moveRight = 0;
+
+    if (input) {
+      if (typeof input.walkForward === 'number' || typeof input.walkRight === 'number') {
+        moveFwd = input.walkForward || 0;
+        moveRight = input.walkRight || 0;
+      } else if (input.keys) {
+        const k = input.keys;
+        if (k.has('KeyW') || k.has('ArrowUp')) moveFwd += 1;
+        if (k.has('KeyS') || k.has('ArrowDown')) moveFwd -= 1;
+        if (k.has('KeyD') || k.has('ArrowRight')) moveRight += 1;
+        if (k.has('KeyA') || k.has('ArrowLeft')) moveRight -= 1;
+      }
+    }
+
+    // Если угол камеры передан в input (при прямом чтении клавиш) — проецируем относительно камеры
+    if (input && typeof input.camYaw === 'number' && typeof input.walkForward !== 'number') {
+      const cy = Math.cos(input.camYaw), sy = Math.sin(input.camYaw);
+      this._tempVec.x = moveRight * cy + moveFwd * sy;
+      this._tempVec.z = -moveRight * sy + moveFwd * cy;
+    } else {
+      this._tempVec.x = moveRight;
+      this._tempVec.z = moveFwd;
+    }
+
+    const lenSq = this._tempVec.x * this._tempVec.x + this._tempVec.z * this._tempVec.z;
+    const len = Math.sqrt(lenSq);
+    const hasMove = len > 1e-4;
+
+    if (lenSq > 1) {
+      const invLen = 1 / len;
+      this._tempVec.x *= invLen;
+      this._tempVec.z *= invLen;
+    }
+
+    const isShift = !!((input && input.keys && (input.keys.has('ShiftLeft') || input.keys.has('ShiftRight'))) || (input && input.isRunning));
+    this.isRunning = isShift && hasMove;
+
+    const walkSpeed = (CFG && CFG.pedWalkSpeed) || 2.4;
+    const runSpeed = (CFG && CFG.pedRunSpeed) || 4.8;
+    const targetMaxSpeed = this.isRunning ? runSpeed : walkSpeed;
+
+    if (hasMove) {
+      this.speed = targetMaxSpeed * Math.min(1, len);
+      this.x += this._tempVec.x * this.speed * dt;
+      this.z += this._tempVec.z * this.speed * dt;
+
+      const targetHeading = Math.atan2(this._tempVec.x, this._tempVec.z);
+      this.heading = turnToward(this.heading, targetHeading, dt * 14.0);
+
+      this.walkPhase += dt * this.speed * (this.isRunning ? 3.6 : 3.0);
+    } else {
+      this.speed = 0;
+    }
+
+    this._collide(world, peds, playerCar);
+
+    if (world && typeof world.heightAt === 'function') {
+      this.groundY = world.heightAt(this.x, this.z);
+    }
+
+    if (this.mesh) {
+      this.mesh.position.set(this.x, this.groundY, this.z);
+      this.mesh.rotation.y = this.heading;
+      this._animate();
+    }
+  }
+
+  /**
+   * Разрешение коллизий со статикой, машиной игрока, водоёмами и границами карты.
+   * @param {object} world
+   * @param {object} peds
+   * @param {object} playerCar
+   */
+  _collide(world, peds, playerCar) {
+    if (!world) return;
+
+    // 1. Здания: circleAABB (радиус 0.35) с выталкиванием по нормали
+    if (world.buildings) {
+      for (let i = 0; i < world.buildings.length; i++) {
+        const c = circleAABB(this.x, this.z, 0.35, world.buildings[i]);
+        if (c) {
+          this.x += c.nx * c.depth;
+          this.z += c.nz * c.depth;
+        }
+      }
+    }
+
+    // 2. Пропсы и заборы: spatial hash или propsAABB
+    if (world._propHash) {
+      const cell = world._propHashCell || 10;
+      const cx = Math.floor(this.x / cell);
+      const cz = Math.floor(this.z / cell);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const bucket = world._propHash.get((cx + dx) + ',' + (cz + dz));
+          if (!bucket) continue;
+          for (let i = 0; i < bucket.length; i++) {
+            const c = circleAABB(this.x, this.z, 0.35, bucket[i]);
+            if (c) {
+              this.x += c.nx * c.depth;
+              this.z += c.nz * c.depth;
+            }
+          }
+        }
+      }
+    } else if (world.propsAABB) {
+      for (let i = 0; i < world.propsAABB.length; i++) {
+        const c = circleAABB(this.x, this.z, 0.35, world.propsAABB[i]);
+        if (c) {
+          this.x += c.nx * c.depth;
+          this.z += c.nz * c.depth;
+        }
+      }
+    }
+
+    // 3. Озёра и фонтаны: круглые коллайдеры
+    if (world.circleColliders) {
+      for (let i = 0; i < world.circleColliders.length; i++) {
+        const cld = world.circleColliders[i];
+        const d = dist2D(this.x, this.z, cld.x, cld.z);
+        const rr = cld.r + 0.35;
+        if (d < rr) {
+          if (d > 1e-6) {
+            const nx = (this.x - cld.x) / d;
+            const nz = (this.z - cld.z) / d;
+            const depth = rr - d;
+            this.x += nx * depth;
+            this.z += nz * depth;
+          } else {
+            this.z += rr;
+          }
+        }
+      }
+    }
+
+    // 4. Своя машина: капсульный коллайдер (3 круга)
+    if (playerCar) {
+      const cType = (playerCar.stats && playerCar.stats.carType) || 'taxi';
+      const shape = PED_CAR_SHAPES[cType] || PED_CAR_SHAPES.taxi;
+      const halfW = shape.w / 2;
+      const halfL = shape.len / 2;
+      const rc = halfW * 1.03;
+      const sep = halfL - halfW;
+      const fwdX = Math.sin(playerCar.heading), fwdZ = Math.cos(playerCar.heading);
+      const totalR = rc + 0.35;
+
+      const offs = [sep, 0, -sep];
+      for (let i = 0; i < 3; i++) {
+        const cx = playerCar.x + fwdX * offs[i];
+        const cz = playerCar.z + fwdZ * offs[i];
+        const d = dist2D(this.x, this.z, cx, cz);
+        if (d < totalR && d > 1e-6) {
+          const nx = (this.x - cx) / d;
+          const nz = (this.z - cz) / d;
+          const depth = totalR - d;
+          this.x += nx * depth;
+          this.z += nz * depth;
+        }
+      }
+    }
+
+    // Пешеходы NPC (мягкое расталкивание)
+    if (peds && peds.cars) {
+      for (let i = 0; i < peds.cars.length; i++) {
+        const p = peds.cars[i];
+        if (p.alive === false || p.x === undefined || p.z === undefined) continue;
+        if (p.mesh && !p.mesh.visible) continue;
+        const d = dist2D(this.x, this.z, p.x, p.z);
+        const rr = 0.7;
+        if (d < rr && d > 1e-4) {
+          const nx = (this.x - p.x) / d;
+          const nz = (this.z - p.z) / d;
+          const depth = (rr - d) * 0.5;
+          this.x += nx * depth;
+          this.z += nz * depth;
+        }
+      }
+    }
+
+    // 5. Границы карты: город (±308) + серпантин Машука на севере
+    let nx = clamp(this.x, -308, 308);
+    let nz = clamp(this.z, -308, 308);
+    if (this.z < -300 && Math.abs(this.x) <= 85) {
+      nx = this.x;
+      nz = clamp(this.z, -470, -300);
+    }
+    this.x = nx;
+    this.z = nz;
+  }
+
+  /**
+   * Анимация суставов ног и рук при ходьбе/беге.
+   */
+  _animate() {
+    if (!this.mesh) return;
+    const u = this.mesh.userData;
+    if (!u) return;
+
+    const moving = this.speed > 0.05;
+    if (moving) {
+      const amp = this.isRunning ? 0.82 : 0.55;
+      const sw = Math.sin(this.walkPhase);
+      if (u.legs && u.legs.length >= 2) {
+        u.legs[0].rotation.x = sw * amp;
+        u.legs[1].rotation.x = -sw * amp;
+      }
+      if (u.arms && u.arms.length >= 2) {
+        u.arms[0].rotation.x = -sw * amp * 0.72;
+        u.arms[1].rotation.x = sw * amp * 0.72;
+      }
+    } else {
+      if (u.legs && u.legs.length >= 2) {
+        u.legs[0].rotation.x = 0;
+        u.legs[1].rotation.x = 0;
+      }
+      if (u.arms && u.arms.length >= 2) {
+        u.arms[0].rotation.x = 0;
+        u.arms[1].rotation.x = 0;
+      }
+    }
+  }
+
+  /**
+   * Удалить меш пешехода из сцены.
+   */
+  dispose() {
+    if (this.mesh && this.scene) {
+      this.scene.remove(this.mesh);
+    }
+  }
+}
+
 /* ===== traffic.js ===== */
 
 
@@ -10617,24 +10934,47 @@ const _tempCamLookTarget = new THREE.Vector3();
 class ChaseCamera {
   constructor(camera) {
     this.camera = camera;
-    this.yaw = 0;          // абсолютный угол вокруг машины
+    this.targetMode = 'car'; // 'car' | 'ped'
+    this.yaw = 0;          // абсолютный угол вокруг объекта
     this.pitch = 0.38;     // высота
-    this.dist = 9.5;
+    this.isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+    this.dist = this.isTouch ? 11 : 9.5;
+    this.targetDist = this.dist;
+    this.targetHeight = 0.8;
+    this.focusHeight = 0.8;
     this.targetYaw = 0;
     this.autoReturnT = 0;
-    this.isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
-    if (this.isTouch) { this.pitch = 0.52; this.dist = 11; }
+    if (this.isTouch) { this.pitch = 0.52; }
     this.position = new THREE.Vector3(0, 6, 14);
     this.look = new THREE.Vector3(0, 1, 0);
   }
 
-  reset(car) {
-    this.yaw = car.heading;
-    this.targetYaw = car.heading;
+  /**
+   * Переключить режим камеры (машина или пешеход).
+   * @param {'car'|'ped'} mode
+   */
+  setTargetMode(mode) {
+    this.targetMode = mode;
+    if (mode === 'ped') {
+      this.targetDist = this.isTouch ? 4.2 : 3.6;
+      this.targetHeight = 1.35;
+    } else {
+      this.targetDist = this.isTouch ? 11 : 9.5;
+      this.targetHeight = 0.8;
+    }
+  }
+
+  reset(target) {
+    this.yaw = target.heading || 0;
+    this.targetYaw = target.heading || 0;
     this.pitch = this.isTouch ? 0.52 : 0.38;
-    this.dist = this.isTouch ? 11 : 9.5;
-    this.position.set(car.x, 6, car.z + 12);
-    this.look.set(car.x, 1, car.z);
+    this.dist = this.targetMode === 'ped' ? (this.isTouch ? 4.2 : 3.6) : (this.isTouch ? 11 : 9.5);
+    this.targetDist = this.dist;
+    this.focusHeight = this.targetMode === 'ped' ? 1.35 : 0.8;
+    this.targetHeight = this.focusHeight;
+    const gy = target.groundY || 0;
+    this.position.set(target.x, gy + 6, target.z + 12);
+    this.look.set(target.x, gy + this.focusHeight, target.z);
   }
 
   /* Вращение/зум из ввода (дельты за кадр) */
@@ -10642,13 +10982,16 @@ class ChaseCamera {
     if (Math.abs(input.camYawDelta) > 0.0001 || Math.abs(input.camPitchDelta) > 0.0001 || Math.abs(input.camZoomDelta) > 0.0001) {
       this.yaw += input.camYawDelta;
       this.pitch = clamp(this.pitch + input.camPitchDelta, 0.12, 1.1);
-      this.dist = clamp(this.dist + input.camZoomDelta, 5, 16);
+      const minD = this.targetMode === 'ped' ? 2 : 5;
+      const maxD = this.targetMode === 'ped' ? 8 : 16;
+      this.dist = clamp(this.dist + input.camZoomDelta, minD, maxD);
+      this.targetDist = this.dist;
       this.autoReturnT = 3.0;
     }
     input.camYawDelta = 0;
     input.camPitchDelta = 0;
     input.camZoomDelta = 0;
-    // плавный возврат за машину
+    // плавный возврат за объект
     if (this.autoReturnT > 0) {
       this.autoReturnT -= dt;
     } else {
@@ -10656,21 +10999,27 @@ class ChaseCamera {
     }
   }
 
-  update(dt, car) {
-    const targetYaw = car.heading;
+  update(dt, target) {
+    const targetYaw = target.heading || 0;
     // автоцентровка при движении вперёд без ручного вращения
     if (this.autoReturnT <= 0) {
       this.targetYaw = targetYaw;
     }
+    // плавный переход дистанции и высоты фокуса при смене режима
+    this.dist = lerp(this.dist, this.targetDist, 1 - Math.pow(0.01, dt));
+    this.focusHeight = lerp(this.focusHeight, this.targetHeight, 1 - Math.pow(0.01, dt));
+
     const cy = Math.cos(this.yaw), sy = Math.sin(this.yaw);
     const cp = Math.cos(this.pitch), sp = Math.sin(this.pitch);
+    const gy = target.groundY || 0;
+    const camBaseHeight = this.targetMode === 'ped' ? 0.6 : 1.2;
     _tempCamDesired.set(
-      car.x - sy * cp * this.dist,
-      car.groundY + 1.2 + sp * this.dist,
-      car.z - cy * cp * this.dist
+      target.x - sy * cp * this.dist,
+      gy + camBaseHeight + sp * this.dist,
+      target.z - cy * cp * this.dist
     );
     this.position.lerp(_tempCamDesired, 1 - Math.pow(0.001, dt));
-    _tempCamLookTarget.set(car.x, car.groundY + 0.8, car.z);
+    _tempCamLookTarget.set(target.x, gy + this.focusHeight, target.z);
     this.look.lerp(_tempCamLookTarget, 1 - Math.pow(0.002, dt));
     this.camera.position.copy(this.position);
     this.camera.lookAt(this.look);
@@ -12607,8 +12956,31 @@ class UIManager {
     }
   }
 
+  updateWalkHud(ped, gameState, hour, playerCar) {
+    const els = this._els;
+    this._setText(els.money, fmtMoney(gameState.money));
+    const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
+    this._setText(els.rating, stars + ' ' + Math.round(gameState.rating));
+    this._setText(els.clock, fmtClock(hour));
+    this._setText(els.day, 'День ' + gameState.day);
+    const kmh = Math.round(Math.abs(ped.speed) * 3.6);
+    els['speed-val'].textContent = kmh;
+
+    // Состояние автомобиля игрока
+    if (playerCar && playerCar.stats) {
+      els['fuel-bar'].style.width = clamp(playerCar.fuel / playerCar.stats.tank * 100, 0, 100) + '%';
+      els['dmg-bar'].style.width = playerCar.damage + '%';
+      els['dmg-bar'].style.background = playerCar.damage > 60 ? '#ff7b72' : 'linear-gradient(90deg,#e3b341,#ff7b72)';
+      els['dirt-tip'].classList.toggle('hidden', playerCar.dirt < 0.35);
+    }
+
+    // Заказы и навигатор скрыты в пешем режиме
+    els['order-card'].classList.add('hidden');
+    els['nav-arrow-wrap'].classList.add('hidden');
+  }
+
   /* ---------- Мини-карта (heading-up: карта вращается, стрелка всегда вверх) ---------- */
-  renderMinimap(player, orders, world, traffic) {
+  renderMinimap(player, orders, world, traffic, car) {
     const c = this.$('minimap');
     const g = c.getContext('2d');
     const W = c.width;
@@ -12617,7 +12989,7 @@ class UIManager {
     const scale = W / view;
     g.clearRect(0, 0, W, W);
     g.save();
-    // поворот: направление машины (heading) всегда смотрит вверх экрана
+    // поворот: направление игрока (heading) всегда смотрит вверх экрана
     g.translate(W / 2, W / 2);
     g.rotate(player.heading - Math.PI);
     g.translate(-player.x * scale, -player.z * scale);
@@ -12630,8 +13002,8 @@ class UIManager {
     }
     // маршрут до точки высадки, если взят заказ (по дорожной сетке: L-путь через
     // ближайшую вертикальную дорогу; мир-координаты уже в повёрнутом контексте)
-    const activeDrop = orders.activeDrop;
-    if (orders.active && activeDrop) {
+    const activeDrop = orders && orders.activeDrop;
+    if (orders && orders.active && activeDrop) {
       const CELL = 64;
       const vx = Math.round(player.x / CELL) * CELL;
       const rx = (x) => x * scale, rz = (z) => z * scale;
@@ -12648,9 +13020,9 @@ class UIManager {
     // полицейские машины
     if (traffic && traffic.cars) {
       const flash = Math.floor(Date.now() / 300) % 2 === 0;
-      for (const car of traffic.cars) {
-        if (!car.alive || !car.mesh || !car.mesh.visible || car.beacon !== 'police') continue;
-        const cx = car.x * scale, cy = car.z * scale;
+      for (const tcar of traffic.cars) {
+        if (!tcar.alive || !tcar.mesh || !tcar.mesh.visible || tcar.beacon !== 'police') continue;
+        const cx = tcar.x * scale, cy = tcar.z * scale;
         g.fillStyle = flash ? '#ff4040' : '#4a6aff';
         g.beginPath(); g.arc(cx, cy, 4.5, 0, Math.PI * 2); g.fill();
         g.strokeStyle = 'rgba(0, 0, 0, 0.8)'; g.lineWidth = 1;
@@ -12658,13 +13030,15 @@ class UIManager {
       }
     }
     // заказы
-    for (const o of orders.open) {
-      const x = o.pickup.x * scale, y = o.pickup.z * scale;
-      g.fillStyle = o.color;
-      g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill();
+    if (orders && orders.open) {
+      for (const o of orders.open) {
+        const x = o.pickup.x * scale, y = o.pickup.z * scale;
+        g.fillStyle = o.color;
+        g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill();
+      }
     }
     // цель
-    const drop = orders.activeDrop;
+    const drop = orders && orders.activeDrop;
     if (drop) {
       const x = drop.x * scale, y = drop.z * scale;
       g.fillStyle = '#ff4040';
@@ -12672,8 +13046,23 @@ class UIManager {
       g.strokeStyle = '#fff'; g.lineWidth = 1.5;
       g.beginPath(); g.arc(x, y, 8, 0, 7); g.stroke();
     }
+    // машина игрока в режиме пешехода
+    if (car && car !== player) {
+      const cx = car.x * scale, cz = car.z * scale;
+      g.save();
+      g.translate(cx, cz);
+      g.rotate(car.heading);
+      g.fillStyle = '#f2c12e';
+      g.fillRect(-2.5 * scale, -5 * scale, 5 * scale, 10 * scale);
+      g.strokeStyle = '#1a1a1a';
+      g.lineWidth = 1;
+      g.strokeRect(-2.5 * scale, -5 * scale, 5 * scale, 10 * scale);
+      g.fillStyle = '#ffffff';
+      g.fillRect(-1.2 * scale, -1.5 * scale, 2.4 * scale, 3 * scale);
+      g.restore();
+    }
     g.restore();
-    // стрелка игрока — фиксированная, всегда вверх (направление машины)
+    // стрелка игрока — фиксированная, всегда вверх
     g.save();
     g.translate(W / 2, W / 2);
     g.fillStyle = '#f2c12e';
@@ -12727,7 +13116,7 @@ class UIManager {
   }
 
   /* ---------- Большая карта ---------- */
-  renderBigMap(player, orders, world) {
+  renderBigMap(player, orders, world, car) {
     const c = this.$('bigmap');
     const availW = window.innerWidth * 0.96, availH = window.innerHeight * 0.86;
     const size = Math.min(availW, availH);
@@ -12753,15 +13142,17 @@ class UIManager {
       g.fillText(d.name, x, y + 4);
     }
     // заказы
-    for (const o of orders.open) {
-      const x = (o.pickup.x + 320) / 640 * size, y = (o.pickup.z + 320) / 640 * size;
-      g.fillStyle = o.color;
-      g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill();
-      g.font = 'bold 11px system-ui'; g.fillStyle = '#fff'; g.textAlign = 'center';
-      g.fillText(o.icon, x, y + 4);
+    if (orders && orders.open) {
+      for (const o of orders.open) {
+        const x = (o.pickup.x + 320) / 640 * size, y = (o.pickup.z + 320) / 640 * size;
+        g.fillStyle = o.color;
+        g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill();
+        g.font = 'bold 11px system-ui'; g.fillStyle = '#fff'; g.textAlign = 'center';
+        g.fillText(o.icon, x, y + 4);
+      }
     }
     // цель
-    const drop = orders.activeDrop;
+    const drop = orders && orders.activeDrop;
     if (drop) {
       const x = (drop.x + 320) / 640 * size, y = (drop.z + 320) / 640 * size;
       g.strokeStyle = '#ff4040'; g.lineWidth = 4;
@@ -12769,9 +13160,18 @@ class UIManager {
       g.strokeStyle = '#fff'; g.lineWidth = 1.5;
       g.beginPath(); g.arc(x, y, 15, 0, 7); g.stroke();
     }
+    // машина (если игрок идёт пешком)
+    if (car && car !== player) {
+      const cx = (car.x + 320) / 640 * size, cz = (car.z + 320) / 640 * size;
+      g.fillStyle = '#f2c12e';
+      g.beginPath(); g.arc(cx, cz, 6, 0, 7); g.fill();
+      g.strokeStyle = '#1a1a1a'; g.lineWidth = 1.5; g.stroke();
+      g.font = '10px system-ui'; g.fillStyle = '#000'; g.textAlign = 'center';
+      g.fillText('🚕', cx, cz + 3);
+    }
     // игрок
     const px = (player.x + 320) / 640 * size, py = (player.z + 320) / 640 * size;
-    g.fillStyle = '#f2c12e';
+    g.fillStyle = car ? '#58a6ff' : '#f2c12e';
     g.beginPath(); g.arc(px, py, 7, 0, 7); g.fill();
     g.strokeStyle = '#1a1a1a'; g.lineWidth = 2; g.stroke();
   }
@@ -13088,6 +13488,7 @@ class UIManager {
 
 
 
+
 // Таблица цвета неба по часу суток + переиспользуемые Color-объекты для
 // _updateTime (каждый кадр) — вместо new THREE.Color(...) на каждый вызов (OPT-18)
 const SKY_TABLE = [
@@ -13138,8 +13539,10 @@ void main() {
  */
 class Game {
   constructor() {
-    /** @type {string} текущее состояние игры ('boot'|'menu'|'driving'|'pause'|'garage'|'settings'|'map'|'shiftend') */
+    /** @type {string} текущее состояние игры ('boot'|'menu'|'driving'|'walking'|'pause'|'garage'|'settings'|'map'|'shiftend') */
     this.stateName = 'boot';
+    /** @type {PlayerPed|null} пешеходный аватар игрока при выходе из машины */
+    this.playerPed = null;
     /** @type {number} количество денег у игрока */
     this.money = CFG.startMoney;
     /** @type {number} текущий рейтинг */
@@ -13495,7 +13898,7 @@ class Game {
     if (name === 'menu') {
       this.ui.showScreen('menu', true);
       this.ui.showHud(false);
-    } else if (name === 'driving') {
+    } else if (name === 'driving' || name === 'walking') {
       this.ui.showScreen(null);
       this.ui.showHud(true);
     } else if (name === 'pause') {
@@ -13507,7 +13910,7 @@ class Game {
       this.ui.showScreen('settings', true);
     } else if (name === 'map') {
       this.ui.showScreen('map', true);
-      this.ui.renderBigMap(this.player, this.orders, this.world);
+      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null);
     } else if (name === 'shiftend') {
       this.ui.showScreen('shiftend', true);
       this.ui.renderShiftEnd({ money: this.money, rating: this.rating, day: this.day }, this.shiftStats);
@@ -13530,6 +13933,10 @@ class Game {
   }
 
   _startShift(day) {
+    if (this.playerPed) {
+      this.playerPed.dispose();
+      this.playerPed = null;
+    }
     this.day = day;
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
@@ -13547,6 +13954,7 @@ class Game {
     this.player.setPos(0, 20, 0);
     this.player.repair();
     this.player.wash();
+    this.chaseCam.setTargetMode('car');
     this.chaseCam.reset(this.player);
     this.setState('driving');
     Events.emit('shift:started');
@@ -13570,17 +13978,22 @@ class Game {
   }
 
   togglePause() {
-    if (this.stateName === 'driving') { this.setState('pause'); this.save(); }
-    else if (this.stateName === 'pause') { this.setState('driving'); }
+    if (this.stateName === 'driving' || this.stateName === 'walking') {
+      this._pauseFrom = this.stateName;
+      this.setState('pause');
+      this.save();
+    } else if (this.stateName === 'pause') {
+      this.setState(this._pauseFrom || 'driving');
+    }
   }
 
   openGarage(from) {
-    this._garageFrom = from;
+    this._garageFrom = from || this.stateName;
     this.setState('garage');
   }
 
   closeGarage() {
-    this.setState(this._garageFrom === 'menu' ? 'menu' : this._garageFrom === 'pause' ? 'pause' : 'driving');
+    this.setState(this._garageFrom === 'menu' ? 'menu' : this._garageFrom === 'pause' ? 'pause' : this._garageFrom === 'walking' ? 'walking' : 'driving');
     this.save();
   }
 
@@ -13590,12 +14003,16 @@ class Game {
   }
 
   closeSettings() {
-    this.setState(this._settingsFrom === 'menu' ? 'menu' : this._settingsFrom === 'pause' ? 'pause' : 'driving');
+    this.setState(this._settingsFrom === 'menu' ? 'menu' : this._settingsFrom === 'pause' ? 'pause' : this._settingsFrom === 'walking' ? 'walking' : 'driving');
   }
 
   toggleMap() {
-    if (this.stateName === 'map') this.setState('driving');
-    else if (this.stateName === 'driving') this.setState('map');
+    if (this.stateName === 'map') {
+      this.setState(this._mapFrom || 'driving');
+    } else if (this.stateName === 'driving' || this.stateName === 'walking') {
+      this._mapFrom = this.stateName;
+      this.setState('map');
+    }
   }
 
   setSound(on) { this.soundOn = on; this.audio.setMaster(on); }
@@ -13712,9 +14129,83 @@ class Game {
     this.player.fuel = Math.min(this.player.stats.tank, this.player.fuel + CFG.towFuel);
     const n = this._nearestIntersection(this.player.x, this.player.z);
     this.player.setPos(n.x, n.z, 0);
+    if (this.playerPed) {
+      this.playerPed.dispose();
+      this.playerPed = null;
+    }
+    this.chaseCam.setTargetMode('car');
+    this.chaseCam.reset(this.player);
     this.ui.toast('Эвакуатор доставил машину на перекрёсток', '#7ee787');
     this.audio.chime();
     this.setState('driving');
+  }
+
+  exitCar() {
+    if (this.stateName !== 'driving') return;
+    if (Math.abs(this.player.speed) > CFG.carExitMaxSpeed) {
+      this.ui.toast('Остановитесь, чтобы выйти!', '#ffb030');
+      return;
+    }
+
+    // Полная остановка автомобиля
+    this.player.speed = 0;
+    this.player.velX = 0;
+    this.player.velZ = 0;
+
+    // Выбираем свободную точку для высадки водителя (слева, справа, сзади, спереди)
+    const h = this.player.heading;
+    const doorOffset = 1.5;
+    const candidates = [
+      // Слева (со стороны водителя)
+      { x: this.player.x - Math.cos(h) * doorOffset, z: this.player.z + Math.sin(h) * doorOffset },
+      // Справа
+      { x: this.player.x + Math.cos(h) * doorOffset, z: this.player.z - Math.sin(h) * doorOffset },
+      // Сзади
+      { x: this.player.x - Math.sin(h) * 2.4, z: this.player.z - Math.cos(h) * 2.4 },
+      // Спереди
+      { x: this.player.x + Math.sin(h) * 2.4, z: this.player.z + Math.cos(h) * 2.4 },
+    ];
+
+    let spawnPos = candidates[0];
+    for (let i = 0; i < candidates.length; i++) {
+      const pos = candidates[i];
+      if (!this._checkCollisionAt(pos.x, pos.z, 0.4)) {
+        spawnPos = pos;
+        break;
+      }
+    }
+
+    this.playerPed = new PlayerPed(this.scene);
+    this.playerPed.setPos(spawnPos.x, spawnPos.z, this.player.heading);
+    this.chaseCam.setTargetMode('ped');
+    this.chaseCam.reset(this.playerPed);
+    this.setState('walking');
+    this.audio.pauseRadio();
+  }
+
+  enterCar() {
+    if (this.stateName !== 'walking' || !this.playerPed) return;
+    const d = dist2D(this.playerPed.x, this.playerPed.z, this.player.x, this.player.z);
+    if (d > CFG.carEnterDist) {
+      this.ui.toast('Подойдите ближе к машине!', '#ffb030');
+      return;
+    }
+    this.playerPed.dispose();
+    this.playerPed = null;
+    this.chaseCam.setTargetMode('car');
+    this.chaseCam.reset(this.player);
+    this.setState('driving');
+    this.audio.resumeRadio();
+  }
+
+  _checkCollisionAt(x, z, radius = 0.4) {
+    if (this.world && this.world._checkPropCollision && this.world._checkPropCollision(x, z, radius)) return true;
+    if (this.world && this.world.buildings) {
+      for (let i = 0; i < this.world.buildings.length; i++) {
+        if (circleAABB(x, z, radius, this.world.buildings[i])) return true;
+      }
+    }
+    return false;
   }
 
   _nearestIntersection(x, z) {
@@ -13975,6 +14466,11 @@ class Game {
       this._drive(dt);
       return;
     }
+    if (st === 'walking') {
+      this._renderThrottle = 0;
+      this._walk(dt);
+      return;
+    }
     // пауза, карта, настройки, итоги — мир замер, троттлинг рендера
     this._renderThrottle = 1;
   }
@@ -14100,6 +14596,113 @@ class Game {
     if (this._saveTimer > 30) { this._saveTimer = 0; this.save(); }
   }
 
+  _walk(dt) {
+    const time = this._updateTime(dt);
+    const w = time.w;
+    this.world.update(dt, this.hour, this.weather);
+
+    // ввод: поддержка клавиатуры и сенсорного джойстика
+    const touch = this.ui.getTouchInput();
+    if (touch && (touch.gas > 0 || touch.brake > 0 || Math.abs(touch.steer) > 0.05)) {
+      const cy = Math.cos(this.chaseCam.yaw), sy = Math.sin(this.chaseCam.yaw);
+      const moveFwd = touch.gas - touch.brake;
+      const moveRight = touch.steer;
+      this.input.walkRight = moveRight * cy + moveFwd * sy;
+      this.input.walkForward = -moveRight * sy + moveFwd * cy;
+    } else {
+      this.input.walkForward = undefined;
+      this.input.walkRight = undefined;
+      this.input.camYaw = this.chaseCam.yaw;
+    }
+
+    if (this.playerPed) {
+      this.playerPed.update(dt, this.input, this.world, this.peds, this.player);
+    }
+
+    // трафик и пешеходы
+    const density = w.traffic * (this.hour >= 22 || this.hour < 6 ? 0.55 : 1);
+    const isNight = this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour;
+    const prevViolator = CFG.pedViolatorChance;
+    if (isNight) CFG.pedViolatorChance = Math.min(0.35, prevViolator * 1.4);
+    this.traffic.update(dt, this.player, this.world, density, this.peds);
+    this.peds.update(dt, this.playerPed || this.player, this.traffic, this.world);
+    CFG.pedViolatorChance = prevViolator;
+
+    // камера
+    if (this.playerPed) {
+      this.chaseCam.applyInput(this.input, dt);
+      this.chaseCam.targetYaw = this.playerPed.heading;
+      this.chaseCam.update(dt, this.playerPed);
+    }
+    if (this.shakeT > 0) {
+      this.shakeT -= dt;
+      const k = this.shakeT * this.shakeAmp;
+      this.chaseCam.position.x += (Math.random() - 0.5) * k;
+      this.chaseCam.position.y += (Math.random() - 0.5) * k;
+      this.chaseCam.position.z += (Math.random() - 0.5) * k;
+    }
+
+    // взаимодействие
+    this._updateWalkInteract();
+    if (this.input.take('interact')) {
+      this.input.flush('interact');
+      if (this.interact) this.interact.cb();
+    }
+    if (this.input.take('map')) this.toggleMap();
+    if (this.input.take('pause')) this.togglePause();
+    this.input.flush();
+
+    // километраж пешком
+    if (this.shiftStats && this.playerPed) {
+      this.shiftStats.km += this.playerPed.speed * dt / 1000;
+    }
+
+    // HUD (троттлинг до ~15 Гц)
+    this._hudAccum = (this._hudAccum || 0) + dt;
+    if (this._hudAccum >= 1 / 15) {
+      this._hudAccum = 0;
+      if (this.playerPed) {
+        this.ui.updateWalkHud(this.playerPed, this, this.hour, this.player);
+      }
+    }
+
+    // миникарта (троттлинг до ~20 Гц)
+    this._minimapAccum = (this._minimapAccum || 0) + dt;
+    if (this._minimapAccum >= 1 / 20) {
+      this._minimapAccum = 0;
+      if (this.playerPed) {
+        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player);
+      }
+    }
+
+    // автосохранение
+    this._saveTimer += dt;
+    if (this._saveTimer > 30) { this._saveTimer = 0; this.save(); }
+  }
+
+  _updateWalkInteract() {
+    this.interact = null;
+    if (!this.playerPed) return;
+    const dCar = dist2D(this.playerPed.x, this.playerPed.z, this.player.x, this.player.z);
+    if (dCar <= CFG.carEnterDist) {
+      this.interact = {
+        label: 'Сесть в машину (E)',
+        cb: () => this.enterCar(),
+      };
+    } else {
+      for (const s of this.world.fuelStations) {
+        if (dist2D(this.playerPed.x, this.playerPed.z, s.x, s.z) < CFG.refuelDist && this.player.fuel < this.player.stats.tank - 1) {
+          this.interact = {
+            label: 'Заправиться (' + fmtMoney(Math.round((this.player.stats.tank - this.player.fuel) * CFG.fuelPrice)) + ')',
+            cb: () => this.refuel(),
+          };
+          break;
+        }
+      }
+    }
+    this.ui.setInteract(this.interact ? this.interact.label : null, this.interact ? this.interact.cb : null);
+  }
+
   _updateInteract() {
     this.interact = null;
     const a = this.orders.active;
@@ -14133,6 +14736,12 @@ class Game {
           break;
         }
       }
+    }
+    if (!this.interact && Math.abs(this.player.speed) <= CFG.carExitMaxSpeed) {
+      this.interact = {
+        label: 'Выйти из машины (E)',
+        cb: () => this.exitCar(),
+      };
     }
     this.ui.setInteract(this.interact ? this.interact.label : null, this.interact ? this.interact.cb : null);
   }

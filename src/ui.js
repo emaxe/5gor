@@ -260,8 +260,31 @@ export class UIManager {
     }
   }
 
+  updateWalkHud(ped, gameState, hour, playerCar) {
+    const els = this._els;
+    this._setText(els.money, fmtMoney(gameState.money));
+    const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
+    this._setText(els.rating, stars + ' ' + Math.round(gameState.rating));
+    this._setText(els.clock, fmtClock(hour));
+    this._setText(els.day, 'День ' + gameState.day);
+    const kmh = Math.round(Math.abs(ped.speed) * 3.6);
+    els['speed-val'].textContent = kmh;
+
+    // Состояние автомобиля игрока
+    if (playerCar && playerCar.stats) {
+      els['fuel-bar'].style.width = clamp(playerCar.fuel / playerCar.stats.tank * 100, 0, 100) + '%';
+      els['dmg-bar'].style.width = playerCar.damage + '%';
+      els['dmg-bar'].style.background = playerCar.damage > 60 ? '#ff7b72' : 'linear-gradient(90deg,#e3b341,#ff7b72)';
+      els['dirt-tip'].classList.toggle('hidden', playerCar.dirt < 0.35);
+    }
+
+    // Заказы и навигатор скрыты в пешем режиме
+    els['order-card'].classList.add('hidden');
+    els['nav-arrow-wrap'].classList.add('hidden');
+  }
+
   /* ---------- Мини-карта (heading-up: карта вращается, стрелка всегда вверх) ---------- */
-  renderMinimap(player, orders, world, traffic) {
+  renderMinimap(player, orders, world, traffic, car) {
     const c = this.$('minimap');
     const g = c.getContext('2d');
     const W = c.width;
@@ -270,7 +293,7 @@ export class UIManager {
     const scale = W / view;
     g.clearRect(0, 0, W, W);
     g.save();
-    // поворот: направление машины (heading) всегда смотрит вверх экрана
+    // поворот: направление игрока (heading) всегда смотрит вверх экрана
     g.translate(W / 2, W / 2);
     g.rotate(player.heading - Math.PI);
     g.translate(-player.x * scale, -player.z * scale);
@@ -283,8 +306,8 @@ export class UIManager {
     }
     // маршрут до точки высадки, если взят заказ (по дорожной сетке: L-путь через
     // ближайшую вертикальную дорогу; мир-координаты уже в повёрнутом контексте)
-    const activeDrop = orders.activeDrop;
-    if (orders.active && activeDrop) {
+    const activeDrop = orders && orders.activeDrop;
+    if (orders && orders.active && activeDrop) {
       const CELL = 64;
       const vx = Math.round(player.x / CELL) * CELL;
       const rx = (x) => x * scale, rz = (z) => z * scale;
@@ -301,9 +324,9 @@ export class UIManager {
     // полицейские машины
     if (traffic && traffic.cars) {
       const flash = Math.floor(Date.now() / 300) % 2 === 0;
-      for (const car of traffic.cars) {
-        if (!car.alive || !car.mesh || !car.mesh.visible || car.beacon !== 'police') continue;
-        const cx = car.x * scale, cy = car.z * scale;
+      for (const tcar of traffic.cars) {
+        if (!tcar.alive || !tcar.mesh || !tcar.mesh.visible || tcar.beacon !== 'police') continue;
+        const cx = tcar.x * scale, cy = tcar.z * scale;
         g.fillStyle = flash ? '#ff4040' : '#4a6aff';
         g.beginPath(); g.arc(cx, cy, 4.5, 0, Math.PI * 2); g.fill();
         g.strokeStyle = 'rgba(0, 0, 0, 0.8)'; g.lineWidth = 1;
@@ -311,13 +334,15 @@ export class UIManager {
       }
     }
     // заказы
-    for (const o of orders.open) {
-      const x = o.pickup.x * scale, y = o.pickup.z * scale;
-      g.fillStyle = o.color;
-      g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill();
+    if (orders && orders.open) {
+      for (const o of orders.open) {
+        const x = o.pickup.x * scale, y = o.pickup.z * scale;
+        g.fillStyle = o.color;
+        g.beginPath(); g.arc(x, y, 4, 0, 7); g.fill();
+      }
     }
     // цель
-    const drop = orders.activeDrop;
+    const drop = orders && orders.activeDrop;
     if (drop) {
       const x = drop.x * scale, y = drop.z * scale;
       g.fillStyle = '#ff4040';
@@ -325,8 +350,23 @@ export class UIManager {
       g.strokeStyle = '#fff'; g.lineWidth = 1.5;
       g.beginPath(); g.arc(x, y, 8, 0, 7); g.stroke();
     }
+    // машина игрока в режиме пешехода
+    if (car && car !== player) {
+      const cx = car.x * scale, cz = car.z * scale;
+      g.save();
+      g.translate(cx, cz);
+      g.rotate(car.heading);
+      g.fillStyle = '#f2c12e';
+      g.fillRect(-2.5 * scale, -5 * scale, 5 * scale, 10 * scale);
+      g.strokeStyle = '#1a1a1a';
+      g.lineWidth = 1;
+      g.strokeRect(-2.5 * scale, -5 * scale, 5 * scale, 10 * scale);
+      g.fillStyle = '#ffffff';
+      g.fillRect(-1.2 * scale, -1.5 * scale, 2.4 * scale, 3 * scale);
+      g.restore();
+    }
     g.restore();
-    // стрелка игрока — фиксированная, всегда вверх (направление машины)
+    // стрелка игрока — фиксированная, всегда вверх
     g.save();
     g.translate(W / 2, W / 2);
     g.fillStyle = '#f2c12e';
@@ -380,7 +420,7 @@ export class UIManager {
   }
 
   /* ---------- Большая карта ---------- */
-  renderBigMap(player, orders, world) {
+  renderBigMap(player, orders, world, car) {
     const c = this.$('bigmap');
     const availW = window.innerWidth * 0.96, availH = window.innerHeight * 0.86;
     const size = Math.min(availW, availH);
@@ -406,15 +446,17 @@ export class UIManager {
       g.fillText(d.name, x, y + 4);
     }
     // заказы
-    for (const o of orders.open) {
-      const x = (o.pickup.x + 320) / 640 * size, y = (o.pickup.z + 320) / 640 * size;
-      g.fillStyle = o.color;
-      g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill();
-      g.font = 'bold 11px system-ui'; g.fillStyle = '#fff'; g.textAlign = 'center';
-      g.fillText(o.icon, x, y + 4);
+    if (orders && orders.open) {
+      for (const o of orders.open) {
+        const x = (o.pickup.x + 320) / 640 * size, y = (o.pickup.z + 320) / 640 * size;
+        g.fillStyle = o.color;
+        g.beginPath(); g.arc(x, y, 6, 0, 7); g.fill();
+        g.font = 'bold 11px system-ui'; g.fillStyle = '#fff'; g.textAlign = 'center';
+        g.fillText(o.icon, x, y + 4);
+      }
     }
     // цель
-    const drop = orders.activeDrop;
+    const drop = orders && orders.activeDrop;
     if (drop) {
       const x = (drop.x + 320) / 640 * size, y = (drop.z + 320) / 640 * size;
       g.strokeStyle = '#ff4040'; g.lineWidth = 4;
@@ -422,9 +464,18 @@ export class UIManager {
       g.strokeStyle = '#fff'; g.lineWidth = 1.5;
       g.beginPath(); g.arc(x, y, 15, 0, 7); g.stroke();
     }
+    // машина (если игрок идёт пешком)
+    if (car && car !== player) {
+      const cx = (car.x + 320) / 640 * size, cz = (car.z + 320) / 640 * size;
+      g.fillStyle = '#f2c12e';
+      g.beginPath(); g.arc(cx, cz, 6, 0, 7); g.fill();
+      g.strokeStyle = '#1a1a1a'; g.lineWidth = 1.5; g.stroke();
+      g.font = '10px system-ui'; g.fillStyle = '#000'; g.textAlign = 'center';
+      g.fillText('🚕', cx, cz + 3);
+    }
     // игрок
     const px = (player.x + 320) / 640 * size, py = (player.z + 320) / 640 * size;
-    g.fillStyle = '#f2c12e';
+    g.fillStyle = car ? '#58a6ff' : '#f2c12e';
     g.beginPath(); g.arc(px, py, 7, 0, 7); g.fill();
     g.strokeStyle = '#1a1a1a'; g.lineWidth = 2; g.stroke();
   }

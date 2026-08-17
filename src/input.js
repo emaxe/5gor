@@ -22,6 +22,12 @@ export class InputManager {
     this.camPitchDelta = 0;
     this.camZoomDelta = 0;
 
+    // пешеход
+    this.walkForward = undefined;
+    this.walkRight = undefined;
+    this.camYaw = 0;
+    this.isRunning = false;
+
     // сенсорный руль
     this.steerTouch = null;   // pointerId активного руля
     this.steerOrigin = 0;
@@ -44,7 +50,7 @@ export class InputManager {
       if (k === 'KeyM') this.queues.map.push(1);
       if (k === 'Escape' || k === 'KeyP') this.queues.pause.push(1);
       if (k === 'KeyG') this.queues.garage.push(1);
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyR', 'KeyM'].includes(k)) e.preventDefault();
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyE', 'KeyH', 'KeyL', 'KeyR', 'KeyM', 'ShiftLeft', 'ShiftRight'].includes(k)) e.preventDefault();
     };
     const up = (e) => this.keys.delete(e.code);
     window.addEventListener('keydown', down);
