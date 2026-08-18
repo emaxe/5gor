@@ -1,16 +1,26 @@
 import { Events } from './eventbus.js';
 
+const RADIO_FALLBACK_FREQS = {
+  pyatigorsk: { root: 110.00, fifth: 164.81 },
+  synth: { root: 73.42, fifth: 110.00 },
+  kavkaz: { root: 73.42, fifth: 110.00 },
+  rock: { root: 55.00, fifth: 82.41 },
+  chanson: { root: 110.00, fifth: 164.81 },
+  chilled: { root: 65.41, fifth: 98.00 },
+};
+
 /* Радиодвижок на Tone.js: Tone.Transport вместо рекурсивного setTimeout
    (без дрейфа при просадке FPS), настоящие инструменты (MembraneSynth,
    NoiseSynth, MetalSynth, MonoSynth, PolySynth) вместо трёх осцилляторов
    вручную, индивидуальный BPM и текстура на станцию, кроссфейд-перестройка,
-   даккинг на речь/краш, приглушение по дистанции камеры.
+   даккинг на речь/краш, приглушение по дистанции камеры, мастеринг-эквалайзер
+   и компрессор, адаптация под скорость и дождь, а также нативный
+   fallback-дрон при недоступности Tone.js CDN.
 
    Tone.js подключается вторым CDN-скриптом рядом с three.js (build.py).
    Если CDN недоступен (window.Tone отсутствует/window.__toneFailed) —
-   радио молча остаётся без звука, вся остальная игра не страдает: статик
-   при переключении станции реализован на чистом Web Audio через
-   AudioEngine.noiseBurst/tone и не зависит от Tone вовсе. */
+   радио запускает атмосферный fallback-дрон на чистом Web Audio
+   через AudioEngine. */
 export class RadioEngine {
   constructor(engine) {
     this.engine = engine;
@@ -20,14 +30,23 @@ export class RadioEngine {
     this._setup = false;
     this._hour = 9;
     this._night = false;
+    this._camDist = 7;
+    this._highSpeed = false;
+    this._isRain = false;
+    this._walkMode = false;
+    this._lastFilterFreq = null;
+    this._lastCamGain = null;
+    this._stationReverb = 0.12;
+    this._fallbackNodes = null;
 
     this.stations = [
       { id: 'off', name: 'Радио ВЫКЛ', genre: 'Тишина', icon: '🔇' },
-      { id: 'pyatigorsk', name: 'Пятигорск FM', genre: 'Лоу-фай Чилл', icon: '📻', bpm: 84 },
-      { id: 'synth', name: 'Машук Synth 80s', genre: 'Ретровейв / Синт', icon: '🌆', bpm: 116 },
-      { id: 'kavkaz', name: 'Кавказ Beat', genre: 'Динамичный Этно-бит', icon: '⛰️', bpm: 128 },
-      { id: 'chanson', name: 'Кавказ Шансон', genre: 'Душевный Блатняк', icon: '🪕', bpm: 104 },
-      { id: 'chilled', name: 'Ночной Курорт', genre: 'Эмбиент Дезерт', icon: '🌙', bpm: 72 },
+      { id: 'pyatigorsk', name: 'Пятигорск FM', genre: 'Лоу-фай Чилл', icon: '📻', bpm: 84, freq: 98.4 },
+      { id: 'synth', name: 'Машук Synth 80s', genre: 'Ретровейв / Синт', icon: '🌆', bpm: 116, freq: 103.7 },
+      { id: 'kavkaz', name: 'Кавказ Beat', genre: 'Динамичный Этно-бит', icon: '⛰️', bpm: 128, freq: 91.2 },
+      { id: 'rock', name: 'Бештау Rock & Drive', genre: 'Драйвовый Рок', icon: '🎸', bpm: 140, freq: 89.1 },
+      { id: 'chanson', name: 'Кавказ Шансон', genre: 'Душевный Блатняк', icon: '🪕', bpm: 104, freq: 105.5 },
+      { id: 'chilled', name: 'Ночной Курорт', genre: 'Эмбиент Дезерт', icon: '🌙', bpm: 72, freq: 94.3 },
     ];
     this.currentStationIndex = 1; // По умолчанию Пятигорск FM
   }
@@ -99,7 +118,10 @@ export class RadioEngine {
   _crossfadeTo(newIndex) {
     this.currentStationIndex = newIndex;
     this._playStatic();
-    if (!this._toneAvailable) return;
+    if (!this._toneAvailable) {
+      this._updateFallbackStation();
+      return;
+    }
     const now = Tone.now();
     this._fadeGain.gain.cancelScheduledValues(now);
     this._fadeGain.gain.setValueAtTime(this._fadeGain.gain.value, now);
@@ -110,19 +132,82 @@ export class RadioEngine {
     this._applyStationColor(this.getCurrentStation());
   }
 
-  /* Приглушение и приглушение верхов радио, когда камера отдаляется от
-     машины (радио «играет из салона») */
-  setCamDist(dist) {
-    if (!this._toneAvailable) return;
-    // Вызывается каждый кадр из updateVehicle() — не перепланируем автоматизацию,
-    // если дистанция камеры почти не изменилась (иначе 60 rampTo()/сек впустую)
-    if (this._lastCamDist !== undefined && Math.abs(dist - this._lastCamDist) < 0.15) return;
-    this._lastCamDist = dist;
+  /* Единый расчёт фильтрации радио и громкости салона с учётом:
+     - дистанции камеры (удаление -> приглушение верхов и тише)
+     - скорости (высокая скорость -> раскрытие верхов _radioLP до ~12000 Гц)
+     - дождя (дождь -> срез верхов до ~4500 Гц в салоне) */
+  _applyRadioFilter(rampSec = 0.2) {
+    if (!this._toneAvailable || !this._radioLP || !this._camGain) return;
+    const dist = this._camDist !== undefined ? this._camDist : 7;
     const t = Math.max(0, Math.min(1, (dist - 5) / (16 - 5)));
-    const freq = 6500 - t * (6500 - 900);
+
+    // Базовый срез верхов в салоне: 6500 Гц в ясную погоду, 4500 Гц в дождь
+    const maxFreq = this._isRain ? 4500 : 6500;
+    let targetFreq = maxFreq - t * (maxFreq - 900);
+
+    // Скоростной бонус: при быстрой езде верха раскрываются ярче (до ~12000 Гц)
+    if (this._highSpeed) {
+      const boost = this._isRain ? 3000 : 5500;
+      targetFreq += (1 - t * 0.7) * boost;
+    }
+    // Пеший режим «из окна машины»: сильный срез верхов (как сквозь стекло)
+    if (this._walkMode) {
+      targetFreq = Math.min(targetFreq, 2000);
+    }
+    targetFreq = Math.round(Math.min(14000, Math.max(400, targetFreq)));
     const gainMul = 1 - t * 0.45;
-    this._radioLP.frequency.rampTo(freq, 0.15);
-    this._camGain.gain.rampTo(gainMul, 0.15);
+
+    // Избегаем спама автоматизаций при минорных изменениях
+    if (this._lastFilterFreq === null || Math.abs(targetFreq - this._lastFilterFreq) > 40) {
+      this._lastFilterFreq = targetFreq;
+      this._radioLP.frequency.rampTo(targetFreq, rampSec);
+    }
+    if (this._lastCamGain === null || Math.abs(gainMul - this._lastCamGain) > 0.02) {
+      this._lastCamGain = gainMul;
+      this._camGain.gain.rampTo(gainMul, rampSec);
+    }
+  }
+
+  /* Приглушение радио и срез верхов при отдалении камеры от салона */
+  setCamDist(dist) {
+    if (this._camDist !== undefined && Math.abs(dist - this._camDist) < 0.15) return;
+    this._camDist = dist;
+    this._applyRadioFilter(0.15);
+  }
+
+  /* Реакция на скорость (High-Speed Excitement): при быстрой езде верха раскрываются */
+  setSpeed(speed, maxSpeed) {
+    const limit = (maxSpeed || 34) * 0.65;
+    const isHigh = speed > limit;
+    if (isHigh !== this._highSpeed) {
+      this._highSpeed = isHigh;
+      this._applyRadioFilter(0.3);
+    }
+  }
+
+  /* Реакция на дождь: приглушение верхов (запотевший салон) + лёгкий прирост реверберации */
+  setRain(isRain) {
+    const rain = !!isRain;
+    if (rain !== this._isRain) {
+      this._isRain = rain;
+      this._applyRadioFilter(0.3);
+      if (this._toneAvailable && this._reverbSend) {
+        const revTarget = (this._stationReverb || 0.12) + (rain ? 0.10 : 0);
+        this._reverbSend.gain.rampTo(revTarget, 0.3);
+      }
+    }
+  }
+
+  /* Пеший режим «радио из окна машины»: приглушение и срез верхов,
+     имитация звука, доносящегося из салона стоящей машины */
+  setWalkMode(on) {
+    const walk = !!on;
+    if (walk === this._walkMode) return;
+    this._walkMode = walk;
+    this._applyRadioFilter(0.35);
+    if (this._toneAvailable && this._fadeGain) {
+      this._fadeGain.gain.rampTo(walk ? 0.3 : 1, 0.35);
+    }
   }
 
   /* Даккинг радио на речь пассажира/крик/столкновение */
@@ -151,26 +236,34 @@ export class RadioEngine {
   }
 
   /* Текстурный «цвет» станции: Chebyshev-дисторшн для лоу-фая, хорус для
-     ретро-синта и шансона, лёгкий драйв для этно-бита, длинный реверб для
-     чилл-аута */
+     ретро-синта и шансона, лёгкий драйв для этно-бита, перегруз для рока,
+     длинный реверб для чилл-аута */
   _applyStationColor(st) {
     if (!this._toneAvailable) return;
     const targets = { crush: 0, chorus: 0, dist: 0, reverb: 0.12 };
     if (st.id === 'pyatigorsk') { targets.crush = 0.35; targets.reverb = 0.16; }
     else if (st.id === 'synth') { targets.chorus = 0.55; }
     else if (st.id === 'kavkaz') { targets.dist = 0.18; }
+    else if (st.id === 'rock') { targets.dist = 0.35; targets.crush = 0.15; }
     else if (st.id === 'chanson') { targets.chorus = 0.35; }
     else if (st.id === 'chilled') { targets.reverb = 0.4; }
+    this._stationReverb = targets.reverb;
+    const finalReverb = targets.reverb + (this._isRain ? 0.10 : 0);
     this._crush.wet.rampTo(targets.crush, 0.3);
     this._chorus.wet.rampTo(targets.chorus, 0.3);
     this._distDrone.wet.rampTo(targets.dist, 0.3);
-    this._reverbSend.gain.rampTo(targets.reverb, 0.3);
+    this._reverbSend.gain.rampTo(finalReverb, 0.3);
   }
 
   start() {
     if (!this.engine.ready) return;
     if (!this._setup) this._setupGraph();
-    if (!this._toneAvailable) return; // без Tone.js играть нечем — статик всё ещё работает
+    if (!this._toneAvailable) {
+      if (this.musicOn && this.engine.enabled) {
+        this._startFallback();
+      }
+      return;
+    }
     if (this._running) return;
     this._running = true;
     this._scheduleStep();
@@ -179,6 +272,7 @@ export class RadioEngine {
   stop() {
     this._running = false;
     if (this._timer) { clearTimeout(this._timer); this._timer = null; }
+    this._stopFallback();
   }
 
   /* Собственный планировщик шагов поверх ctx.currentTime — НЕ Tone.Transport.
@@ -209,13 +303,111 @@ export class RadioEngine {
 
   setMusicOn(on) {
     this.musicOn = on;
+    if (!this._toneAvailable) {
+      if (on && this.engine.enabled) this._startFallback();
+      else this._stopFallback();
+    }
+  }
+
+  /* Нативный fallback-дрон на чистом Web Audio, если CDN Tone.js недоступен */
+  _startFallback() {
+    if (this._toneAvailable) return;
+    const e = this.engine;
+    if (!e.enabled || !e.ctx || !this.musicOn) return;
+    const st = this.getCurrentStation();
+    if (!st || st.id === 'off') {
+      this._stopFallback();
+      return;
+    }
+    const pair = RADIO_FALLBACK_FREQS[st.id] || { root: 110.0, fifth: 165.0 };
+    const c = e.ctx;
+    const t = c.currentTime;
+
+    if (this._fallbackNodes) {
+      try {
+        this._fallbackNodes.osc1.frequency.setTargetAtTime(pair.root, t, 0.2);
+        this._fallbackNodes.osc2.frequency.setTargetAtTime(pair.fifth, t, 0.2);
+      } catch (err) {}
+      return;
+    }
+
+    try {
+      const osc1 = c.createOscillator();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(pair.root, t);
+
+      const osc2 = c.createOscillator();
+      osc2.type = 'triangle';
+      osc2.frequency.setValueAtTime(pair.fifth, t);
+
+      const flt = c.createBiquadFilter();
+      flt.type = 'lowpass';
+      flt.frequency.setValueAtTime(800, t);
+
+      const gain = c.createGain();
+      gain.gain.setValueAtTime(0.001, t);
+      gain.gain.linearRampToValueAtTime(0.05, t + 0.3);
+
+      osc1.connect(flt);
+      osc2.connect(flt);
+      flt.connect(gain);
+      gain.connect(e.buses.music);
+
+      osc1.start(t);
+      osc2.start(t);
+
+      this._fallbackNodes = { osc1, osc2, flt, gain };
+    } catch (err) {
+      console.warn('fallback radio drone error', err);
+    }
+  }
+
+  _stopFallback() {
+    if (!this._fallbackNodes) return;
+    const { osc1, osc2, flt, gain } = this._fallbackNodes;
+    this._fallbackNodes = null;
+    try {
+      const c = this.engine?.ctx;
+      if (c && gain) {
+        const t = c.currentTime;
+        gain.gain.setValueAtTime(gain.gain.value, t);
+        gain.gain.linearRampToValueAtTime(0.0001, t + 0.15);
+        setTimeout(() => {
+          try {
+            osc1.stop();
+            osc2.stop();
+            osc1.disconnect();
+            osc2.disconnect();
+            flt.disconnect();
+            gain.disconnect();
+          } catch (e) {}
+        }, 180);
+      } else {
+        osc1.stop();
+        osc2.stop();
+        osc1.disconnect();
+        osc2.disconnect();
+        flt.disconnect();
+        gain.disconnect();
+      }
+    } catch (err) {}
+  }
+
+  _updateFallbackStation() {
+    if (this._toneAvailable) return;
+    const st = this.getCurrentStation();
+    if (!st || st.id === 'off' || !this.musicOn) {
+      this._stopFallback();
+    } else {
+      this._startFallback();
+    }
   }
 
   _setupGraph() {
     this._setup = true;
     if (typeof window.Tone === 'undefined' || window.__toneFailed) {
       this._toneAvailable = false;
-      console.warn('Tone.js недоступен — радио будет без звука (статик при переключении по-прежнему работает)');
+      console.warn('Tone.js недоступен — включён нативный fallback-дрон радио');
       return;
     }
     try {
@@ -230,7 +422,7 @@ export class RadioEngine {
       this._applyBpm();
       this._applyStationColor(this.getCurrentStation());
     } catch (e) {
-      console.warn('Tone.js init error — радио будет без звука', e);
+      console.warn('Tone.js init error — включён нативный fallback-дрон радио', e);
       this._toneAvailable = false;
     }
   }
@@ -238,26 +430,24 @@ export class RadioEngine {
   _buildToneGraph() {
     const e = this.engine;
 
-    // Шинная цепочка: инструменты -> fadeGain(кроссфейд) -> duckGain(даккинг)
-    // -> camGain(дистанция камеры) -> текстурные инсерты -> LP(дистанция) -> нативная шина музыки
-    //                                                      \-> reverbSend -> Reverb -> нативная шина музыки (параллельно)
+    // Шинная цепочка:
+    // инструменты (bass, pad, lead, snare, clap, hat) -> _sidechain -> _fadeGain
+    // _kick (бочка) -------------------------------------------------> _fadeGain (напрямую в обход _sidechain)
+    // -> _duckGain (даккинг) -> _camGain (дистанция камеры)
+    // -> [crush, chorus, distDrone, radioLP, EQ3, Compressor] -> e.buses.music
+    // \-> _reverbSend -> _reverb -> e.buses.music (параллельно)
     this._sidechain = new Tone.Gain(1);
     this._fadeGain = new Tone.Gain(1);
     this._duckGain = new Tone.Gain(1);
     this._camGain = new Tone.Gain(1);
-    // Chebyshev, а не BitCrusher: BitCrusher реализован через AudioWorkletNode,
-    // а его встроенный воркл-процессор регистрируется через Tone.setContext()
-    // на ЧУЖОМ (нашем) AudioContext не так, как ожидает нативный конструктор
-    // AudioWorkletNode — addAudioWorkletModule() резолвится успешно, но
-    // следующий new AudioWorkletNode(...) кидает InvalidStateError (проверено
-    // изолированным тестом: тот же код на context, который создаёт сам Tone,
-    // не падает; падает только на context, переданном через setContext()).
-    // Chebyshev — тот же класс эффектов, но на WaveShaperNode, без воркла —
-    // даёт похожую жёсткую лоу-фай текстуру без этой несовместимости.
+
     this._crush = new Tone.Chebyshev(50); this._crush.wet.value = 0;
     this._chorus = new Tone.Chorus(3, 2.5, 0.4).start(); this._chorus.wet.value = 0;
     this._distDrone = new Tone.Distortion(0.25); this._distDrone.wet.value = 0;
     this._radioLP = new Tone.Filter(6500, 'lowpass');
+    this._eq = new Tone.EQ3({ low: -0.5, mid: 1.5, high: -1.5 });
+    this._comp = new Tone.Compressor({ threshold: -12, ratio: 3, attack: 0.005, release: 0.2 });
+
     this._reverbSend = new Tone.Gain(0.12);
     this._reverb = new Tone.Reverb({ decay: 3.2, preDelay: 0.02, wet: 1 });
     this._reverb.generate().catch(() => {});
@@ -265,8 +455,9 @@ export class RadioEngine {
     this._sidechain.connect(this._fadeGain);
     this._fadeGain.connect(this._duckGain);
     this._duckGain.connect(this._camGain);
-    this._camGain.chain(this._crush, this._chorus, this._distDrone, this._radioLP);
-    this._radioLP.connect(e.buses.music);
+    this._camGain.chain(this._crush, this._chorus, this._distDrone, this._radioLP, this._eq, this._comp);
+    this._comp.connect(e.buses.music);
+
     this._camGain.connect(this._reverbSend);
     this._reverbSend.connect(this._reverb);
     this._reverb.connect(e.buses.music);
@@ -274,10 +465,11 @@ export class RadioEngine {
     // Дилэй-сенд для соло (аналог старого echo-эффекта)
     this._leadDelay = new Tone.FeedbackDelay({ delayTime: '16n', feedback: 0.32, wet: 0.5 }).connect(this._sidechain);
 
-    // Инструменты
+    // Инструменты: бочка подключена напрямую в _fadeGain в обход _sidechain,
+    // чтобы duckSidechain() не глушил саму бочку при ударе (остальные инструменты качают под неё)
     this._kick = new Tone.MembraneSynth({
       pitchDecay: 0.05, octaves: 6, envelope: { attack: 0.001, decay: 0.28, sustain: 0 },
-    }).connect(this._sidechain);
+    }).connect(this._fadeGain);
     this._snare = new Tone.NoiseSynth({
       noise: { type: 'white' }, envelope: { attack: 0.001, decay: 0.11, sustain: 0 },
     }).connect(this._sidechain);
@@ -331,6 +523,16 @@ export class RadioEngine {
       369.99, 392.00, 440.00, 554.37, 587.33, 554.37, 440.00, 369.99,
     ];
 
+    const CHORDS_ROCK = [
+      [110.00, 164.81, 220.00, 246.94], [98.00, 146.83, 196.00, 233.08],
+      [87.31, 130.81, 174.61, 196.00], [130.81, 196.00, 261.63, 293.66],
+    ];
+    const BASS_ROCK = [55.00, 49.00, 43.65, 65.41];
+    const MELODY_ROCK = [
+      220.00, 261.63, 293.66, 329.63, 392.00, 329.63, 293.66, 261.63,
+      329.63, 392.00, 440.00, 392.00, 329.63, 293.66, 261.63, 220.00,
+    ];
+
     const CHORDS_CHANSON = [
       [220.00, 261.63, 329.63], [146.83, 174.61, 220.00],
       [164.81, 207.65, 246.94, 293.66], [220.00, 261.63, 329.63],
@@ -357,50 +559,100 @@ export class RadioEngine {
     const playClap = (t) => { this._clap.triggerAttackRelease(0.08, t, 0.4); this._clap.triggerAttackRelease(0.08, t + 0.015, 0.4); };
     const playHat = (t, open = false) => this._hat.triggerAttackRelease(open ? 0.14 : 0.035, t, open ? 0.35 : 0.2);
     const playBassNote = (t, freq, dur = 0.25) => this._bass.triggerAttackRelease(freq, dur, t, 0.85);
-    const playLeadNote = (t, freq, dur = 0.2) => this._lead.triggerAttackRelease(freq, dur, t, 0.55);
+    const playLeadNote = (t, freq, dur = 0.2, gain = 0.55) => this._lead.triggerAttackRelease(freq, dur, t, gain);
+    const playDistLead = (t, freq, dur = 0.22) => this._lead.triggerAttackRelease(freq, dur, t, 0.75);
     const playPadChord = (t, freqs, dur = 1.0) => this._pad.triggerAttackRelease(freqs, dur, t, 0.4);
 
     this._musicStep = (now, step, step32, chordIdx, st) => {
+      const chorus = step32 >= 16;
       if (st.id === 'pyatigorsk') {
-        if (step === 0 || step === 10) playKick(now);
-        if (step === 4 || step === 12) playSnare(now);
-        if (step === 14) playClap(now);
-        if (step % 2 === 0) playHat(now, step === 6 || step === 14);
-        if (step % 4 === 0 || step === 6 || step === 14) playBassNote(now, BASS_LOFI[chordIdx], 0.26);
+        if (step === 0 || (chorus && step === 10)) playKick(now);
+        if (step === 4 || (chorus && step === 12)) playSnare(now);
+        if (chorus && step === 14) playClap(now);
+        if (step % 2 === 0) playHat(now, chorus && (step === 6 || step === 14));
+        if (step % 4 === 0 || (chorus && (step === 6 || step === 14))) playBassNote(now, BASS_LOFI[chordIdx], 0.26);
         if (step % 4 === 0) playPadChord(now, CHORDS_LOFI[chordIdx], 0.9);
-        if (step === 2 || step === 7 || step === 11 || step === 15) {
-          playLeadNote(now, MELODY_LOFI[step32 % MELODY_LOFI.length], 0.22);
+        if (chorus) {
+          if (step === 2 || step === 7 || step === 11 || step === 15) {
+            playLeadNote(now, MELODY_LOFI[step32 % MELODY_LOFI.length], 0.22, 0.55);
+          }
+        } else {
+          if (step === 7 || step === 15) {
+            playLeadNote(now, MELODY_LOFI[step32 % MELODY_LOFI.length], 0.2, 0.38);
+          }
         }
       } else if (st.id === 'synth') {
         if (step % 4 === 0) playKick(now);
-        if (step === 4 || step === 12) playSnare(now);
-        if (step % 4 === 2) playHat(now, true);
+        if (step === 4 || (chorus && step === 12)) playSnare(now);
+        if (step % 4 === 2 && chorus) playHat(now, true);
         if (step % 2 === 0) playHat(now, false);
-        playBassNote(now, BASS_SYNTH[chordIdx], 0.12);
-        if (step === 0 || step === 8) playPadChord(now, CHORDS_SYNTH[chordIdx], 1.6);
+        if (chorus || step % 2 === 0) playBassNote(now, BASS_SYNTH[chordIdx], 0.12);
+        if (step === 0 || (chorus && step === 8)) playPadChord(now, CHORDS_SYNTH[chordIdx], 1.6);
         const arp = CHORDS_SYNTH[chordIdx];
-        playLeadNote(now, arp[step % arp.length] * 2, 0.14);
+        if (chorus || step % 2 === 0) {
+          playLeadNote(now, arp[step % arp.length] * 2, 0.14, chorus ? 0.55 : 0.38);
+        }
       } else if (st.id === 'kavkaz') {
-        if (step === 0 || step === 3 || step === 6 || step === 8 || step === 11 || step === 14) playKick(now);
-        if (step === 4 || step === 12) playSnare(now);
-        if (step === 7 || step === 15) playClap(now);
-        if (step % 2 === 1) playHat(now, step === 15);
-        if (step === 0 || step === 6 || step === 8 || step === 14) playBassNote(now, BASS_KAVKAZ[chordIdx], 0.2);
-        if (step % 2 === 0) playLeadNote(now, MELODY_KAVKAZ[step32 % MELODY_KAVKAZ.length], 0.18);
+        if (chorus) {
+          if (step === 0 || step === 3 || step === 6 || step === 8 || step === 11 || step === 14) playKick(now);
+          if (step === 4 || step === 12) playSnare(now);
+          if (step === 7 || step === 15) playClap(now);
+          if (step % 2 === 1) playHat(now, step === 15);
+          if (step === 0 || step === 6 || step === 8 || step === 14) playBassNote(now, BASS_KAVKAZ[chordIdx], 0.2);
+          if (step % 2 === 0) playLeadNote(now, MELODY_KAVKAZ[step32 % MELODY_KAVKAZ.length], 0.18, 0.6);
+        } else {
+          if (step === 0 || step === 6 || step === 8 || step === 14) playKick(now);
+          if (step === 4) playSnare(now);
+          if (step === 15) playClap(now);
+          if (step % 2 === 1) playHat(now, false);
+          if (step === 0 || step === 8) playBassNote(now, BASS_KAVKAZ[chordIdx], 0.22);
+          if (step % 4 === 0) playLeadNote(now, MELODY_KAVKAZ[step32 % MELODY_KAVKAZ.length], 0.18, 0.42);
+        }
+      } else if (st.id === 'rock') {
+        if (chorus) {
+          if (step === 0 || step === 3 || step === 6 || step === 8 || step === 10 || step === 14) playKick(now);
+          if (step === 4 || step === 12) playSnare(now);
+          if (step === 2 || step === 10) playHat(now, true);
+          if (step % 2 === 0) playHat(now, false);
+          if (step === 0 || step === 8 || step === 4 || step === 12) playBassNote(now, BASS_ROCK[chordIdx], 0.22);
+          if (step === 0 || step === 8) playPadChord(now, CHORDS_ROCK[chordIdx], 0.85);
+          if (step % 2 === 0) {
+            playDistLead(now, MELODY_ROCK[step32 % MELODY_ROCK.length], 0.18);
+          }
+        } else {
+          if (step === 0 || step === 6 || step === 8) playKick(now);
+          if (step === 4) playSnare(now);
+          if (step % 2 === 0) playHat(now, false);
+          if (step === 0 || step === 8) playBassNote(now, BASS_ROCK[chordIdx], 0.28);
+          if (step === 0) playPadChord(now, CHORDS_ROCK[chordIdx], 1.2);
+          if (step === 0 || step === 4 || step === 8 || step === 12) {
+            playLeadNote(now, MELODY_ROCK[step32 % MELODY_ROCK.length], 0.22, 0.45);
+          }
+        }
       } else if (st.id === 'chanson') {
         if (step === 0 || step === 8) playKick(now);
-        if (step === 4 || step === 12) playClap(now);
-        if (step % 2 === 0) playHat(now, false);
-        if (step === 0 || step === 8) playBassNote(now, BASS_CHANSON[chordIdx], 0.35);
+        if (step === 4 || (chorus && step === 12)) playClap(now);
+        if (step % 2 === 0) playHat(now, chorus && step === 14);
+        if (step === 0 || step === 8 || (chorus && (step === 6 || step === 14))) {
+          playBassNote(now, BASS_CHANSON[chordIdx], 0.35);
+        }
         if (step % 4 === 2) playPadChord(now, CHORDS_CHANSON[chordIdx], 0.18);
-        if (step % 2 === 0) playLeadNote(now, MELODY_CHANSON[step32 % MELODY_CHANSON.length], 0.22);
+        if (chorus) {
+          if (step % 2 === 0) playLeadNote(now, MELODY_CHANSON[step32 % MELODY_CHANSON.length], 0.22, 0.55);
+        } else {
+          if (step % 4 === 0) playLeadNote(now, MELODY_CHANSON[step32 % MELODY_CHANSON.length], 0.22, 0.38);
+        }
       } else if (st.id === 'chilled') {
-        const skipKick = this._night; // после 23:00/ночью — без бочки, только пэд и бас
-        if (step === 0 && !skipKick) playKick(now);
-        if (step === 8) playSnare(now);
-        if (step % 4 === 2) playHat(now, true);
-        if (step === 0 || step === 8) playBassNote(now, BASS_CHILL[chordIdx], 0.65);
+        const skipKick = this._night; // ночью без бочки, только пэд и бас
+        if (step === 0 && !skipKick && chorus) playKick(now);
+        if (chorus && step === 8) playSnare(now);
+        if (step % 4 === 2 && chorus) playHat(now, true);
+        if (step === 0 || (chorus && step === 8)) playBassNote(now, BASS_CHILL[chordIdx], 0.65);
         if (step === 0) playPadChord(now, CHORDS_CHILL[chordIdx], 3.6);
+        if (chorus && (step === 4 || step === 12)) {
+          const chillChords = CHORDS_CHILL[chordIdx];
+          playLeadNote(now, chillChords[2] * 2, 0.4, 0.3);
+        }
       }
     };
 

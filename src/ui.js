@@ -882,5 +882,34 @@ export class UIManager {
     this.toast(`📻 Радио: ${st.icon} ${st.name} (${st.genre})`, '#58a6ff');
     const sel = this.$('sel-radio-station');
     if (sel && sel.options.length) sel.value = st.id;
+
+    // HUD-индикатор станции с частотой
+    const hud = this.$('radio-hud');
+    if (!hud) return;
+    if (st.id === 'off') {
+      hud.classList.add('hidden');
+      if (this._radioHudTimer) { clearTimeout(this._radioHudTimer); this._radioHudTimer = null; }
+      return;
+    }
+    const hudIcon = this.$('radio-hud-icon');
+    const hudName = this.$('radio-hud-name');
+    const hudFreq = this.$('radio-hud-freq');
+    if (hudIcon) hudIcon.textContent = st.icon;
+    if (hudName) hudName.textContent = st.name;
+    if (hudFreq) {
+      if (st.freq !== undefined) {
+        hudFreq.textContent = st.freq;
+        hudFreq.style.display = '';
+      } else {
+        hudFreq.style.display = 'none';
+      }
+    }
+    hud.classList.remove('hidden');
+    // Авто-скрытие через 3 секунды
+    if (this._radioHudTimer) clearTimeout(this._radioHudTimer);
+    this._radioHudTimer = setTimeout(() => {
+      hud.classList.add('hidden');
+      this._radioHudTimer = null;
+    }, 3000);
   }
 }

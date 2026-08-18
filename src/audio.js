@@ -247,6 +247,8 @@ export class AudioManager {
     }
     if (v.camDist !== undefined) this.radio.setCamDist(v.camDist);
     if (v.hour !== undefined) this.radio.setHour(v.hour);
+    if (v.speed !== undefined && v.maxSpeed !== undefined) this.radio.setSpeed(v.speed, v.maxSpeed);
+    if (v.raining !== undefined) this.radio.setRain(!!v.raining);
     this._updateWorldAudio(v);
   }
 
@@ -302,6 +304,7 @@ export class AudioManager {
   setStationId(id) { this.radio.setStationId(id); }
   pauseRadio() { this.radio.stop(); }
   resumeRadio() { if (this.musicOn && this.engine.enabled) this.radio.start(); }
+  setWalkRadio(on) { this.radio.setWalkMode(on); }
 
   /* --- Громкости и мьют --- */
   setEnabled(on) { this.engine.setMasterEnabled(on); }

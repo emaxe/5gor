@@ -768,7 +768,7 @@ export class Game {
     this.chaseCam.setTargetMode('ped');
     this.chaseCam.reset(this.playerPed);
     this.setState('walking');
-    this.audio.pauseRadio();
+    this.audio.setWalkRadio(true);
   }
 
   enterCar() {
@@ -783,7 +783,7 @@ export class Game {
     this.chaseCam.setTargetMode('car');
     this.chaseCam.reset(this.player);
     this.setState('driving');
-    this.audio.resumeRadio();
+    this.audio.setWalkRadio(false);
   }
 
   _tryPunch() {
