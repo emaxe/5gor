@@ -442,18 +442,57 @@ export const DIALOGUES = {
 };
 
 /**
+ * Реплики пассажиров по текущим погодным условиям.
+ */
+export const WEATHER_DIALOGUES = {
+  clear: [
+    "Какая ясная погода! Машук и Бештау как на ладони видно!",
+    "Солнышко пригревает, настоящий курортный денёк!",
+    "Красота на улице, благодать! Окошко приоткроем с ветерком?",
+    "В такую ясную погоду грех пешком не гулять, но на такси быстрее!",
+    "Жара начинается! Кондиционер в норме, шеф?",
+    "Небо чистое, ни облачка над Пятигорском. Отличный день для поездки!",
+    "Солнце шпарит! Довези до тенечка у нарзанной галереи!"
+  ],
+  rain: [
+    "Хорошо, что вовремя такси поймал, а то ливень как из ведра!",
+    "Ох и зарядил дождь! Хорошо, что зонт взял!",
+    "Ну и погодка разгулялась! Вся обувь промокла, включай печку, шеф!",
+    "Асфальт мокрый, скользит небось? Аккуратнее на поворотах, дорогой!",
+    "С гор тучи надуло, сейчас весь Цветник затопит. Погнали скорее!",
+    "Дождик курортникам не помеха, но на машине всё ж суше!",
+    "Дворники успевают справляться? Ничего не видно в такую сырость!"
+  ],
+  fog: [
+    "Ого, какой туман с Машука спустился! Ничего не видно, аккуратнее!",
+    "Пятигорск как в молоке! Едем по приборам, шеф?",
+    "В пяти метрах ничего не видать... Фары включил, командир?",
+    "Вот это туманище наполз с гор! Главное в чей-то бампер не приехать.",
+    "Мистическая атмосфера сегодня в городе, прямо как в романах Лермонтова!",
+    "Осторожнее на серпантине, в таком тумане обочину легко потерять!",
+    "Густой туман какой... Ты дорогу наизусть знаешь, надеюсь?"
+  ]
+};
+
+/**
  * Получить случайную реплику пассажира по контексту заказа.
  * @param {'pickup'|'dropoff'|'detour'|'crash'|'fast'|'offroad'} event - Тип события
- * @param {import('./orders.js').Order} [order] - Объекта заказа
+ * @param {import('./orders.js').Order} [order] - Объект заказа
+ * @param {'clear'|'rain'|'fog'} [weather] - Текущая погода
  * @returns {{ text: string, name: string, avatar: string, color: string }}
  */
-export function getPassengerDialogue(event, order) {
+export function getPassengerDialogue(event, order, weather) {
   const type = order?.missionId || order?.type || 'normal';
   const group = DIALOGUES[type] || DIALOGUES.normal;
   let pool = group[event] || DIALOGUES.normal[event] || DIALOGUES[event];
   if (!pool || !pool.length) pool = DIALOGUES.normal.pickup;
 
-  const text = choice(pool);
+  let text;
+  if (event === 'pickup' && weather && WEATHER_DIALOGUES[weather] && Math.random() < 0.25) {
+    text = choice(WEATHER_DIALOGUES[weather]);
+  } else {
+    text = choice(pool);
+  }
   const name = order?.clientName || (type === 'grandma' ? 'Бабушка Зинаида' : type === 'doctor' ? 'Доктор Соколова' : choice(PASSENGER_NAMES));
   const avatar = order?.clientAvatar || CLIENT_AVATARS[type] || CLIENT_AVATARS.normal;
   const color = order?.color || '#f2c12e';

@@ -92,6 +92,7 @@ export class Game {
     this._garageT = 0;
     this.soundOn = true;
     this.musicOn = true;
+    this.comboStreak = 0;
 
     /** @type {boolean} debug-оверлей (FPS/CPU/draw calls), включается ?debug в URL */
     this._debugOverlay = new URLSearchParams(location.search).has('debug');
@@ -325,12 +326,14 @@ export class Game {
   _initEvents() {
     events.on('crash', (d) => {
       this.shiftStats.crashes++;
+      this.comboStreak = 0;
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
       this.orders.onCrash(d.impact);
     });
     events.on('hitPed', (d) => {
       if (d && d.byPlayer === false) return;
       this.shiftStats.peds++;
+      this.comboStreak = 0;
       this.setRating(this.rating - CFG.ratingFail.hitPed);
       this.addMoney(-300);
       this.shakeT = 0.3; this.shakeAmp = 0.4;
@@ -384,6 +387,7 @@ export class Game {
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
 
     events.on('police:fine', (v) => {
+      this.comboStreak = 0;
       this.addMoney(-v.fine);
       this.setRating(this.rating - v.ratingLoss);
     });
@@ -411,6 +415,7 @@ export class Game {
     });
 
     events.on('order:completed', (r) => {
+      this.comboStreak++;
       this.addMoney(r.total);
       this.shiftStats.earned += r.pay;
       this.shiftStats.tips += r.tips;
@@ -421,8 +426,15 @@ export class Game {
         this.shiftStats.missions++;
         if (!this.orders.completed.includes(r.missionId)) this.orders.completed.push(r.missionId);
       }
+      const comboMult = 1 + Math.min(this.comboStreak, 10) * 0.05;
+      const bonusPay = Math.round(r.pay * comboMult) - r.pay;
+      if (bonusPay > 0) {
+        this.addMoney(bonusPay);
+        this.shiftStats.earned += bonusPay;
+      }
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
-      this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay) + bonus, '#7ee787');
+      const streakText = this.comboStreak > 1 ? ' 🔥 серия ' + this.comboStreak + ' ×' + comboMult.toFixed(2) : '';
+      this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay + bonusPay) + bonus + streakText, '#7ee787');
       if (this.rating >= 100) this.ui.toast('Максимальный рейтинг! Пятигорск ваш! ⭐', '#ffd75e');
       // Ночной заказ — событие для достижений
       if (this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour) {
@@ -434,6 +446,9 @@ export class Game {
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
       this.setRating(this.rating - CFG.ratingFail.failOrder);
+    });
+    events.on('shift:started', () => {
+      this.comboStreak = 0;
     });
   }
 
@@ -1122,7 +1137,7 @@ export class Game {
     }
 
     // заказы
-    this.orders.update(dt, this.player, this.hour, this.rating, this.upgrades.stats().capacity, this.world);
+    this.orders.update(dt, this.player, this.hour, this.rating, this.upgrades.stats().capacity, this.world, this.weather);
 
     // взаимодействие
     this._updateInteract();

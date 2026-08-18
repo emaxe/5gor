@@ -10,33 +10,34 @@ import { Events } from './eventbus.js';
  * @property {string} id - Уникальный идентификатор
  * @property {string} name - Название (для отображения)
  * @property {string} desc - Описание
+ * @property {string} [toast] - Текст тоста-поздравления
  * @property {string} icon - Emoji-иконка
  * @property {function(Object): boolean} check - Функция проверки: true = достижение получено
  */
 
 const ACHIEVEMENTS = [
   // --- Заказы ---
-  { id: 'first_order',   name: 'Первый заработок',     desc: 'Выполните первый заказ',                icon: '🚕', check: s => s.totalOrders >= 1 },
-  { id: 'orders_50',     name: 'Опытный таксист',      desc: 'Выполните 50 заказов',                  icon: ' taxi',   check: s => s.totalOrders >= 50 },
-  { id: 'orders_100',    name: 'Ветеран дорог',        desc: 'Выполните 100 заказов',                 icon: '🏆', check: s => s.totalOrders >= 100 },
-  { id: 'orders_250',    name: 'Легенда Пятигорска',   desc: 'Выполните 250 заказов',                 icon: '👑', check: s => s.totalOrders >= 250 },
+  { id: 'first_order',   name: 'Первый заработок',     desc: 'Выполните первый заказ',                toast: 'Первая копейка — и та в кассу',        icon: '🚕', check: s => s.totalOrders >= 1 },
+  { id: 'orders_50',     name: 'Опытный таксист',      desc: 'Выполните 50 заказов',                  toast: 'Полсотни клиентов, ни одного провала',  icon: '🚖', check: s => s.totalOrders >= 50 },
+  { id: 'orders_100',    name: 'Ветеран дорог',        desc: 'Выполните 100 заказов',                 toast: 'Сотня за плечами — асфальт дрожит',     icon: '🏆', check: s => s.totalOrders >= 100 },
+  { id: 'orders_250',    name: 'Легенда Пятигорска',   desc: 'Выполните 250 заказов',                 toast: 'Живая легенда пятигорских дорог',       icon: '👑', check: s => s.totalOrders >= 250 },
   // --- Деньги ---
-  { id: 'earn_10k',      name: 'Первая тыща',          desc: 'Заработайте 10 000 ₽ за все время',     icon: '💰', check: s => s.totalEarned >= 10000 },
-  { id: 'earn_50k',      name: 'Состоятельный водитель', desc: 'Заработайте 50 000 ₽ за все время',   icon: '💎', check: s => s.totalEarned >= 50000 },
-  { id: 'earn_100k',     name: 'Магнат такси',         desc: 'Заработайте 100 000 ₽ за все время',    icon: '🏛️', check: s => s.totalEarned >= 100000 },
+  { id: 'earn_10k',      name: 'Первая тыща',          desc: 'Заработайте 10 000 ₽ за все время',     toast: 'Десятка в кармане — на шашлык хватит',  icon: '💰', check: s => s.totalEarned >= 10000 },
+  { id: 'earn_50k',      name: 'Состоятельный водитель', desc: 'Заработайте 50 000 ₽ за все время',   toast: 'Кошелёк трещит от курортных купюр',    icon: '💎', check: s => s.totalEarned >= 50000 },
+  { id: 'earn_100k',     name: 'Магнат такси',         desc: 'Заработайте 100 000 ₽ за все время',    toast: 'Настоящий магнат такси на КМВ',         icon: '🏛️', check: s => s.totalEarned >= 100000 },
   // --- Стиль ---
-  { id: 'clean_shift',   name: 'Идеальная смена',      desc: 'Смена без аварий и сбитых пешеходов',   icon: '✨', check: s => s.shiftOrders >= 5 && s.shiftCrashes === 0 && s.shiftPeds === 0 },
-  { id: 'max_speed',     name: 'Шумахер',              desc: 'Разгонитесь до 150 км/ч',               icon: '⚡', check: s => s.maxSpeedKmh >= 150 },
-  { id: 'max_rating',    name: 'Звезда Пятигорска',    desc: 'Достигните максимального рейтинга',     icon: '⭐', check: s => s.maxRating >= 100 },
+  { id: 'clean_shift',   name: 'Идеальная смена',      desc: 'Смена без аварий и сбитых пешеходов',   toast: 'Ни единой царапинки за всю смену',      icon: '✨', check: s => s.shiftOrders >= 5 && s.shiftCrashes === 0 && s.shiftPeds === 0 },
+  { id: 'max_speed',     name: 'Шумахер',              desc: 'Разгонитесь до 150 км/ч',               toast: 'Шумахер нервно курит на обочине',      icon: '⚡', check: s => s.maxSpeedKmh >= 150 },
+  { id: 'max_rating',    name: 'Звезда Пятигорска',    desc: 'Достигните максимального рейтинга',     toast: 'Пятигорск ваш! Что дальше — Машук',     icon: '⭐', check: s => s.maxRating >= 100 },
   // --- Особые ---
-  { id: 'missions_5',    name: 'Герой города',         desc: 'Выполните 5 уникальных миссий',         icon: '🎖️', check: s => s.totalMissions >= 5 },
-  { id: 'night_owl',     name: 'Ночная сова',          desc: 'Выполните 10 ночных заказов',           icon: '🦉', check: s => s.nightOrders >= 10 },
-  { id: 'km_500',        name: 'Путешественник',       desc: 'Проедьте 500 км за все время',          icon: '🛣️', check: s => s.totalKm >= 500 },
-  { id: 'police_fined',  name: 'Враг народа',          desc: 'Получите 5 штрафов от полиции',         icon: '🚨', check: s => s.policeFines >= 5 },
-  { id: 'tips_5k',       name: 'Любимец клиентов',     desc: 'Заработайте 5 000 ₽ чаевых',            icon: '🎁', check: s => s.totalTips >= 5000 },
+  { id: 'missions_5',    name: 'Герой города',         desc: 'Выполните 5 уникальных миссий',         toast: 'Пять особых поручений выполнены',       icon: '🎖️', check: s => s.totalMissions >= 5 },
+  { id: 'night_owl',     name: 'Ночная сова',          desc: 'Выполните 10 ночных заказов',           toast: 'Ночной хозяин спящего курорта',         icon: '🦉', check: s => s.nightOrders >= 10 },
+  { id: 'km_500',        name: 'Путешественник',       desc: 'Проедьте 500 км за все время',          toast: 'Пятьсот километров по серпантинам',     icon: '🛣️', check: s => s.totalKm >= 500 },
+  { id: 'police_fined',  name: 'Враг народа',          desc: 'Получите 5 штрафов от полиции',         toast: 'С ГИБДД лучше дружить, а не дружиться', icon: '🚨', check: s => s.policeFines >= 5 },
+  { id: 'tips_5k',       name: 'Любимец клиентов',     desc: 'Заработайте 5 000 ₽ чаевых',            toast: 'Курортники не скупятся на чай',         icon: '🎁', check: s => s.totalTips >= 5000 },
   // --- Бойцовские ---
-  { id: 'hot_head',      name: 'Горячая голова',       desc: 'Нападите на 10 прохожих за смену',      icon: '👊', check: s => s.shiftPunches >= 10 },
-  { id: 'brawler',       name: 'Дерущийся таксист',    desc: 'Нападите на 50 прохожих за все время',  icon: '🥊', check: s => s.totalPunches >= 50 },
+  { id: 'hot_head',      name: 'Горячая голова',       desc: 'Нападите на 10 прохожих за смену',      toast: 'Кулаки — вторая профессия таксиста',    icon: '👊', check: s => s.shiftPunches >= 10 },
+  { id: 'brawler',       name: 'Дерущийся таксист',    desc: 'Нападите на 50 прохожих за все время',  toast: 'Гроза пешеходов проспекта Кирова',      icon: '🥊', check: s => s.totalPunches >= 50 },
 ];
 
 const STORAGE_KEY = '5gor_achievements_v1';
@@ -134,7 +135,7 @@ export class AchievementManager {
         this.unlocked.push(ach.id);
         newly.push(ach.id);
         Events.emit('achievement:unlocked', ach);
-        Events.emit('toast', { text: `${ach.icon} Достижение: ${ach.name}!`, color: '#ffd75e' });
+        Events.emit('toast', { text: `${ach.icon} ` + (ach.toast || ('Достижение: ' + ach.name)) + '!', color: '#ffd75e' });
       }
     }
     if (newly.length) this._save();

@@ -846,12 +846,12 @@ const PALETTES = {
 
 /* Апгрейды. base — цена 1 уровня, mult — рост цены */
 const UPGRADES = {
-  engine:      { name: 'Двигатель',   max: 4, base: 600, mult: 1.7, icon: '⚙️', desc: 'Макс. скорость и разгон' },
-  suspension:  { name: 'Подвеска',    max: 4, base: 500, mult: 1.7, icon: '🛞', desc: 'Управляемость на серпантине' },
-  brakes:      { name: 'Тормоза',     max: 4, base: 400, mult: 1.7, icon: '🛑', desc: 'Тормозной путь' },
-  armor:       { name: 'Прочность',   max: 4, base: 700, mult: 1.7, icon: '🛡️', desc: 'Меньше урон от ударов' },
-  tank:        { name: 'Бак',         max: 4, base: 500, mult: 1.7, icon: '⛽', desc: 'Запас хода' },
-  capacity:    { name: 'Вместимость', max: 3, base: 900, mult: 1.8, icon: '👥', desc: 'Типы заказов: группы, экскурсии' },
+  engine:      { name: 'Двигатель',   max: 4, base: 600, mult: 1.7, icon: '⚙️', desc: 'Чип-тюнинг от мастеров с Бештаугорского — турбина свистит, Приоры плачут' },
+  suspension:  { name: 'Подвеска',    max: 4, base: 500, mult: 1.7, icon: '🛞', desc: 'Горная подвеска — шпильки серпантина Машука проходим без крена' },
+  brakes:      { name: 'Тормоза',     max: 4, base: 400, mult: 1.7, icon: '🛑', desc: 'Керамика Brembo — встаёт как вкопанная перед любой внезапной коровой' },
+  armor:       { name: 'Прочность',   max: 4, base: 700, mult: 1.7, icon: '🛡️', desc: 'Бронированный как сейф банка на Кирова — тарань смело' },
+  tank:        { name: 'Бак',         max: 4, base: 500, mult: 1.7, icon: '⛽', desc: 'Бак размером с нарзанную цистерну — до Минвод без остановки' },
+  capacity:    { name: 'Вместимость', max: 3, base: 900, mult: 1.8, icon: '👥', desc: 'Весь двор помещается — бабушки, коляски и горы курортных чемоданов' },
 };
 
 /* Автомобили */
@@ -5734,44 +5734,85 @@ class World {
 
   /* Памятник Орлу на Горячей горе — главный символ Пятигорска и КМВ */
   _eagleMonument() {
-    const cx = -38, cz = 20;
+    const cx = -40, cz = -340;
+    const baseY = this.heightAt(cx, cz);
     const g = new THREE.Group();
     const stoneMat = new THREE.MeshLambertMaterial({ color: 0x8a8a80 });
     const eagleMat = new THREE.MeshLambertMaterial({ color: 0x6a5a4a });
     const goldMat = new THREE.MeshLambertMaterial({ color: 0xd8a030 });
     const snakeMat = new THREE.MeshLambertMaterial({ color: 0x2e4a30 });
+    const darkMat = new THREE.MeshLambertMaterial({ color: 0x4a3a2a });
 
-    // Каменный постамент (имитация скалы)
-    const base1 = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 3.0, 1.2, 8), stoneMat);
-    base1.position.y = 0.6; g.add(base1);
-    const base2 = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.3, 1.4, 8), stoneMat);
-    base2.position.y = 1.9; g.add(base2);
+    // Каменный постамент (имитация скалы) — 3 ступени
+    const base1 = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 3.2, 1.0, 8), stoneMat);
+    base1.position.y = 0.5; g.add(base1);
+    const base2 = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.5, 1.2, 8), stoneMat);
+    base2.position.y = 1.6; g.add(base2);
+    const base3 = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.8, 0.8, 8), stoneMat);
+    base3.position.y = 2.6; g.add(base3);
 
-    // Змея вокруг скалы
-    const snake = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.22, 6, 16), snakeMat);
-    snake.rotation.x = Math.PI / 2.3;
-    snake.position.y = 2.1; g.add(snake);
+    // Змея — 2 сегмента Torus, обвивающих постамент
+    const snake1 = new THREE.Mesh(new THREE.TorusGeometry(1.8, 0.2, 6, 20, Math.PI * 1.3), snakeMat);
+    snake1.rotation.x = Math.PI / 2.2; snake1.rotation.z = 0.3;
+    snake1.position.set(0.3, 1.8, 0); g.add(snake1);
+    const snake2 = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.18, 6, 16, Math.PI * 1.1), snakeMat);
+    snake2.rotation.x = Math.PI / 1.8; snake2.rotation.z = -0.5;
+    snake2.position.set(-0.2, 2.3, 0.4); g.add(snake2);
+    // Голова змеи
+    const snakeHead = new THREE.Mesh(new THREE.SphereGeometry(0.15, 5, 5), snakeMat);
+    snakeHead.position.set(1.6, 2.8, 0.6); g.add(snakeHead);
 
-    // Орел (туловище, голова, клюв, крылья)
-    const body = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.6, 6), eagleMat);
-    body.position.y = 3.2; body.rotation.x = -0.3; g.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 6, 6), eagleMat);
-    head.position.set(0, 4.0, 0.3); g.add(head);
-    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.4, 4), goldMat);
-    beak.position.set(0, 3.95, 0.65); beak.rotation.x = Math.PI / 2; g.add(beak);
+    // Орел — туловище (конус, чуть крупнее)
+    const body = new THREE.Mesh(new THREE.ConeGeometry(0.85, 1.8, 6), eagleMat);
+    body.position.y = 3.6; body.rotation.x = -0.3; g.add(body);
 
-    // Расправленные крылья
-    for (const s of [-1, 1]) {
-      const wing = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.15, 0.8), eagleMat);
-      wing.position.set(s * 1.1, 3.6, -0.1);
-      wing.rotation.z = s * 0.3;
-      wing.rotation.y = s * 0.2;
-      g.add(wing);
+    // Голова орла
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 8, 6), eagleMat);
+    head.position.set(0, 4.6, 0.35); g.add(head);
+    // Хохолок на голове
+    const crest = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.35, 4), eagleMat);
+    crest.position.set(0, 4.95, 0.2); crest.rotation.x = -0.4; g.add(crest);
+    // Клюв — золотой конус
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.5, 5), goldMat);
+    beak.position.set(0, 4.5, 0.75); beak.rotation.x = Math.PI / 2; g.add(beak);
+    // Глаза
+    for (const sx of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06, 5, 5), darkMat);
+      eye.position.set(sx * 0.22, 4.65, 0.55); g.add(eye);
     }
 
-    g.position.set(cx, 0, cz);
+    // Расправленные крылья — по 3 пластины-пера на каждое крыло
+    for (const s of [-1, 1]) {
+      // Верхняя часть крыла (ближе к телу)
+      const wing1 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.12, 0.9), eagleMat);
+      wing1.position.set(s * 0.9, 4.1, -0.1);
+      wing1.rotation.z = s * 0.25; wing1.rotation.y = s * 0.15;
+      g.add(wing1);
+      // Средняя часть крыла
+      const wing2 = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.1, 0.7), eagleMat);
+      wing2.position.set(s * 2.0, 3.85, -0.15);
+      wing2.rotation.z = s * 0.4; wing2.rotation.y = s * 0.25;
+      g.add(wing2);
+      // Кончик крыла (перья)
+      const wing3 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.5), eagleMat);
+      wing3.position.set(s * 3.0, 3.55, -0.2);
+      wing3.rotation.z = s * 0.55; wing3.rotation.y = s * 0.35;
+      g.add(wing3);
+    }
+
+    // Когти на змее — маленькие конусы
+    for (const sx of [-0.4, 0, 0.4]) {
+      const claw = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.25, 4), goldMat);
+      claw.position.set(sx, 2.9, 0.3); claw.rotation.x = 0.5; g.add(claw);
+    }
+
+    // Хвост орла
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.08, 0.9), eagleMat);
+    tail.position.set(0, 3.3, -0.8); tail.rotation.x = 0.3; g.add(tail);
+
+    g.position.set(cx, baseY, cz);
     this.scene.add(g);
-    this.addPropAABB({ x0: cx - 3.2, z0: cz - 3.2, x1: cx + 3.2, z1: cz + 3.2 });
+    this.addPropAABB({ x0: cx - 3.5, z0: cz - 3.5, x1: cx + 3.5, z1: cz + 3.5 });
   }
 
   /* Пятигорский узкоколейный Трамвай (реалистичные рельсы со шпалами, вагон КТМ-1) */
@@ -5869,9 +5910,10 @@ class World {
     const routeSign = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.28, 1.1), new THREE.MeshBasicMaterial({ color: 0xffdf66 }));
     routeSign.position.set(-5.1, 2.55, 0); tram.add(routeSign);
 
-    tram.position.set(-32, 0, 0);
+    tram.position.set(-200, 0, 0);
     this.scene.add(tram);
-    this.addPropAABB({ x0: -38, z0: -1.5, x1: -26, z1: 1.5 });
+    this.tram = tram;
+    this.tramAnim = { pos: -200, dir: 1, speed: 8 };
 
     // Остановки трамвая («Парк Цветник», «Вокзал», «Лира»)
     this._tramStop(-36, -7.5);
@@ -7704,6 +7746,15 @@ class World {
           car.group.rotation.y = Math.atan2(lookDir.x, lookDir.z);
         }
       }
+    }
+
+    // Анимация трамвая по рельсам (ось X, z=0)
+    if (this.tram && this.tramAnim) {
+      const ta = this.tramAnim;
+      ta.pos += ta.dir * ta.speed * dt;
+      if (ta.pos > 220) { ta.pos = 220; ta.dir = -1; }
+      if (ta.pos < -220) { ta.pos = -220; ta.dir = 1; }
+      this.tram.position.x = ta.pos;
     }
   }
 
@@ -9950,6 +10001,83 @@ const NURSE_QUOTES = [
   "Надо бы на процедуры успеть..."
 ];
 
+// Гопник (gopnik)
+const GOPNIK_QUOTES = [
+  "Слышь, че встал-то?",
+  "Закурить не найдётся?",
+  "Пятёрочку на бутер...",
+  "Чё, братан, по-быстрому?",
+  "На районе всё спокойно.",
+  "Слышь, мелочи не звякнет?",
+  "С пацанами на лавочке сидим..."
+];
+
+// Бабушка (grandma)
+const GRANDMA_QUOTES = [
+  "Ох, спина моя...",
+  "Молодёжь нынче гоняет...",
+  "Дай дорогу бабушке!",
+  "В поликлинику бы без очереди попасть...",
+  "Опять цены на рынке подняли...",
+  "Травки от давления надо купить...",
+  "Эх, внучатам бы пирожков напечь..."
+];
+
+// Бегун (runner)
+const RUNNER_QUOTES = [
+  "Ноги — моё всё!",
+  "Опоздаю на электричку!",
+  "Ещё круг и домой...",
+  "Главное — темп держать!",
+  "Утренняя пробежка — заряд на день!",
+  "Дыхание ровное, пульс в норме...",
+  "Вокруг Машука бы пробежаться..."
+];
+
+// Студент (student)
+const STUDENT_QUOTES = [
+  "Сессия скоро...",
+  "На пары бегу, препод злой...",
+  "Курить и учиться — оба вредно...",
+  "Где бы конспект по матану достать?",
+  "Стипуху бы поскорее выплатили...",
+  "Опять в общаге до утра сидели...",
+  "Только бы зачёт автоматом поставили..."
+];
+
+// Бизнесмен (businessman)
+const BUSINESSMAN_QUOTES = [
+  "У меня переговоры!",
+  "Время — деньги!",
+  "Созвон через пять минут...",
+  "Акции проверяю, секунду...",
+  "Надо сделку закрыть до вечера...",
+  "Вай, пробки срывают все встречи!",
+  "Контракт горит, надо поторопиться..."
+];
+
+// Турист (tourist)
+const TOURIST_QUOTES = [
+  "А где тут нарзан?",
+  "Как пройти к Провалу?",
+  "Красивый у вас Пятигорск!",
+  "Надо сфотографироваться у орла!",
+  "Воздух здесь невероятный!",
+  "А где тут дача Эльзы?",
+  "Вай, какой вид на Бештау открывается!"
+];
+
+// Ребёнок (child)
+const CHILD_QUOTES = [
+  "Мама, смотри машинка!",
+  "Хочу мороженое!",
+  "А это что за птица?",
+  "Смотри, какой голубь смешной!",
+  "А мы на карусели пойдём?",
+  "Мам, купи шарик!",
+  "Ура, мы гуляем в парке!"
+];
+
 const ANIMAL_DOG_QUOTES = [
   "Гав-гав!",
   "Тяв!",
@@ -10057,6 +10185,76 @@ const CURSE_NURSE_QUOTES = [
   "Куда прёшь, я спешу в больницу!",
   "Ой, напугал, бессовестный!",
   "Тут же люди, куда ты гонишь!"
+];
+
+const CURSE_GOPNIK_QUOTES = [
+  "Куда прёшь, олень?!",
+  "Ты чё, рамсы попутал?!",
+  "Слышь, ты кого подрезал?!",
+  "Ща фары разобью, джигит!",
+  "Ты чё, страх потерял?!",
+  "Эй, вылезай из ведра, поговорим!",
+  "Слышь, колымага, ща без бампера останешься!"
+];
+
+const CURSE_GRANDMA_QUOTES = [
+  "Ироды! Чуть бабку не сбили!",
+  "Куда летишь, окаянный?!",
+  "Тьфу на тебя, душегуб окаянный!",
+  "В полицию на тебя заявлю, бандит!",
+  "Чтоб тебе пусто было, лихач!",
+  "Совсем стариков не уважают, ирод!",
+  "Ослеп, что ли, старую не видишь?!"
+];
+
+const CURSE_RUNNER_QUOTES = [
+  "Мешаешь пробежке!",
+  "Куда несёшься, тут беговая дорожка?!",
+  "Сбил мне весь темп!",
+  "Смотри под колёса, бегунов не видишь?!",
+  "Чуть кроссовки не отдавил!",
+  "Эй, притормози, я на рекорд иду!",
+  "Глаза разуй, тут люди тренируются!"
+];
+
+const CURSE_STUDENT_QUOTES = [
+  "Осторожнее, я конспект нёс!",
+  "Ты что творишь, у меня зачёт сегодня?!",
+  "Чуть зачётку не растоптал!",
+  "Куда летишь, я на пару опаздываю?!",
+  "Водить научись, двоечник!",
+  "Смотри куда едешь, права купил?!",
+  "Эй, шумахер, стипендию мою оплатишь?!"
+];
+
+const CURSE_BUSINESSMAN_QUOTES = [
+  "Вы что, по пешеходам ездите?!",
+  "У меня костюм дороже твоей машины!",
+  "Я в суд на тебя подам!",
+  "Ты мне встречу чуть не сорвал!",
+  "Куда прёшь, баран на колёсах?!",
+  "Мой адвокат с тобой свяжется!",
+  "Ты хоть знаешь, сколько стоит моё время?!"
+];
+
+const CURSE_TOURIST_QUOTES = [
+  "Осторожно, турист!",
+  "Это что за курортный сервис такой?!",
+  "Чуть фотоаппарат не разбил!",
+  "Беспредел на курорте!",
+  "Вы куда гоните, тут отдыхающие!",
+  "Полиция, меня чуть не сбили!",
+  "Я жалобу в министерство туризма напишу!"
+];
+
+const CURSE_CHILD_QUOTES = [
+  "Ой, дядя плохой!",
+  "Мама, меня чуть не задавили!",
+  "Дядя, ты почему такой злой?!",
+  "Ой, машинка на меня едет!",
+  "Мама, спаси, он не умеет рулить!",
+  "Дядя на бибике, не дави меня!",
+  "Ай, я маме всё расскажу!"
 ];
 
 const KICK_QUOTES = [
@@ -10250,10 +10448,17 @@ class PedestrianManager {
   _idlePool(arch) {
     switch (arch) {
       case 'elder': return ELDER_QUOTES;
+      case 'grandma': return GRANDMA_QUOTES;
       case 'mom': return MOM_QUOTES;
       case 'worker': return WORKER_QUOTES;
       case 'musician': return MUSICIAN_QUOTES;
       case 'nurse': return NURSE_QUOTES;
+      case 'gopnik': return GOPNIK_QUOTES;
+      case 'runner': return RUNNER_QUOTES;
+      case 'student': return STUDENT_QUOTES;
+      case 'businessman': return BUSINESSMAN_QUOTES;
+      case 'tourist': return TOURIST_QUOTES;
+      case 'child': return CHILD_QUOTES;
       default: return IDLE_QUOTES;
     }
   }
@@ -10262,10 +10467,17 @@ class PedestrianManager {
   _cursePool(arch) {
     switch (arch) {
       case 'elder': return CURSE_ELDER_QUOTES;
+      case 'grandma': return CURSE_GRANDMA_QUOTES;
       case 'mom': return CURSE_MOM_QUOTES;
       case 'worker': return CURSE_WORKER_QUOTES;
       case 'musician': return CURSE_MUSICIAN_QUOTES;
       case 'nurse': return CURSE_NURSE_QUOTES;
+      case 'gopnik': return CURSE_GOPNIK_QUOTES;
+      case 'runner': return CURSE_RUNNER_QUOTES;
+      case 'student': return CURSE_STUDENT_QUOTES;
+      case 'businessman': return CURSE_BUSINESSMAN_QUOTES;
+      case 'tourist': return CURSE_TOURIST_QUOTES;
+      case 'child': return CURSE_CHILD_QUOTES;
       default: return CURSE_QUOTES;
     }
   }
@@ -12285,18 +12497,57 @@ const DIALOGUES = {
 };
 
 /**
+ * Реплики пассажиров по текущим погодным условиям.
+ */
+const WEATHER_DIALOGUES = {
+  clear: [
+    "Какая ясная погода! Машук и Бештау как на ладони видно!",
+    "Солнышко пригревает, настоящий курортный денёк!",
+    "Красота на улице, благодать! Окошко приоткроем с ветерком?",
+    "В такую ясную погоду грех пешком не гулять, но на такси быстрее!",
+    "Жара начинается! Кондиционер в норме, шеф?",
+    "Небо чистое, ни облачка над Пятигорском. Отличный день для поездки!",
+    "Солнце шпарит! Довези до тенечка у нарзанной галереи!"
+  ],
+  rain: [
+    "Хорошо, что вовремя такси поймал, а то ливень как из ведра!",
+    "Ох и зарядил дождь! Хорошо, что зонт взял!",
+    "Ну и погодка разгулялась! Вся обувь промокла, включай печку, шеф!",
+    "Асфальт мокрый, скользит небось? Аккуратнее на поворотах, дорогой!",
+    "С гор тучи надуло, сейчас весь Цветник затопит. Погнали скорее!",
+    "Дождик курортникам не помеха, но на машине всё ж суше!",
+    "Дворники успевают справляться? Ничего не видно в такую сырость!"
+  ],
+  fog: [
+    "Ого, какой туман с Машука спустился! Ничего не видно, аккуратнее!",
+    "Пятигорск как в молоке! Едем по приборам, шеф?",
+    "В пяти метрах ничего не видать... Фары включил, командир?",
+    "Вот это туманище наполз с гор! Главное в чей-то бампер не приехать.",
+    "Мистическая атмосфера сегодня в городе, прямо как в романах Лермонтова!",
+    "Осторожнее на серпантине, в таком тумане обочину легко потерять!",
+    "Густой туман какой... Ты дорогу наизусть знаешь, надеюсь?"
+  ]
+};
+
+/**
  * Получить случайную реплику пассажира по контексту заказа.
  * @param {'pickup'|'dropoff'|'detour'|'crash'|'fast'|'offroad'} event - Тип события
- * @param {import('./orders.js').Order} [order] - Объекта заказа
+ * @param {import('./orders.js').Order} [order] - Объект заказа
+ * @param {'clear'|'rain'|'fog'} [weather] - Текущая погода
  * @returns {{ text: string, name: string, avatar: string, color: string }}
  */
-function getPassengerDialogue(event, order) {
+function getPassengerDialogue(event, order, weather) {
   const type = order?.missionId || order?.type || 'normal';
   const group = DIALOGUES[type] || DIALOGUES.normal;
   let pool = group[event] || DIALOGUES.normal[event] || DIALOGUES[event];
   if (!pool || !pool.length) pool = DIALOGUES.normal.pickup;
 
-  const text = choice(pool);
+  let text;
+  if (event === 'pickup' && weather && WEATHER_DIALOGUES[weather] && Math.random() < 0.25) {
+    text = choice(WEATHER_DIALOGUES[weather]);
+  } else {
+    text = choice(pool);
+  }
   const name = order?.clientName || (type === 'grandma' ? 'Бабушка Зинаида' : type === 'doctor' ? 'Доктор Соколова' : choice(PASSENGER_NAMES));
   const avatar = order?.clientAvatar || CLIENT_AVATARS[type] || CLIENT_AVATARS.normal;
   const color = order?.color || '#f2c12e';
@@ -12363,6 +12614,34 @@ const MISSION_TEMPLATES = [
     },
   },
 ];
+
+const REVIEWS = {
+  5: [
+    'Долетели как на крыльях!',
+    'Идеально, лучший водитель Пятигорска!',
+    'Чистая машина, вежливый водитель — 5 звёзд!',
+    'Такое впечатление, что летели!',
+  ],
+  4: [
+    'Норм поездка, но газку сбрасывай на поворотах',
+    'Хорошо, только помыл бы машину',
+    'Почти идеально, мелочи',
+  ],
+  3: [
+    'Бывало и лучше...',
+    'Резковато едешь, брат',
+    'Машина как из-под трактора',
+  ],
+  2: [
+    'Укачало всего, на горках подлетали',
+    'Грязюка в салоне, чаевых не дам',
+  ],
+  1: [
+    'Это не такси, а экстрим!',
+    'Ужас, чуть не разбились!',
+    'Пешком быстрее и безопаснее!',
+  ],
+};
 
 /**
  * @typedef {Object} OrderPickup
@@ -12736,7 +13015,7 @@ class PassengerManager {
       order.recipient = { mesh: rMesh, state: 'wait', x: drop.x, z: drop.z, t: rand(0, 6) };
     }
     Events.emit('order:accepted', { order, player });
-    const dlg = getPassengerDialogue('pickup', order);
+    const dlg = getPassengerDialogue('pickup', order, this.weather);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: dlg.color });
     return true;
   }
@@ -12752,7 +13031,8 @@ class PassengerManager {
   }
 
   /* --- Обновление --- */
-  update(dt, player, hour, rating, capacity, world) {
+  update(dt, player, hour, rating, capacity, world, weather) {
+    if (weather !== undefined) this.weather = weather;
     // спавн новых заказов — ночью реже
     const isNight = hour >= CFG.nightStartHour || hour < CFG.nightEndHour;
     this._spawnT -= dt;
@@ -12812,7 +13092,7 @@ class PassengerManager {
           a.drops[a.dropIdx] = { x: nd.x, z: nd.z, name: '…передумал, едем: ' + this._districtName(nd.district) };
           a.estPay = Math.round(a.estPay * 1.3);
           Events.emit('toast', { text: 'Пассажир передумал! Новый адрес: ' + a.drops[a.dropIdx].name, color: '#c070e0' });
-          const dlg = getPassengerDialogue('detour', a);
+          const dlg = getPassengerDialogue('detour', a, this.weather);
           Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#c070e0' });
         }
       }
@@ -12888,6 +13168,17 @@ class PassengerManager {
     if (a.type === 'package' && a.fragileBroken) pay = Math.round(pay * 0.5);
     const total = pay + tips;
 
+    // оценка пассажира (1-5 звёзд)
+    let stars = 5;
+    stars -= Math.round((1 - player.style) * 3);
+    if (player.dirt > 0.4) stars -= 1;
+    if (a.fragileBroken) stars -= 2;
+    stars = Math.max(1, Math.min(5, Math.round(stars)));
+    if (a.type === 'vip' && stars < 4) stars -= 1;
+    stars = Math.max(1, Math.min(5, Math.round(stars)));
+    const pool = REVIEWS[stars] || REVIEWS[3];
+    const review = choice(pool);
+
     this.active = null;
     this._hideDropMarker();
     this._cabOut();
@@ -12945,10 +13236,11 @@ class PassengerManager {
     player.passengerCount = 0;
     const res = {
       title: a.title, pay: pay, tips, total, type: a.type, missionId: a.missionId,
-      est: a.estPay, dist: a.dist, partial: false,
+      est: a.estPay, dist: a.dist, partial: false, stars, review,
     };
-    const dlg = getPassengerDialogue('dropoff', a);
+    const dlg = getPassengerDialogue('dropoff', a, this.weather);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#7ee787' });
+    Events.emit('order:rated', { stars, review, type: a.type, total });
     Events.emit('order:completed', res);
     return res;
   }
@@ -12985,7 +13277,7 @@ class PassengerManager {
     if (!a) return;
     if (a.type === 'package') a.fragileBroken = true;
     if (impact > 8) {
-      const dlg = getPassengerDialogue('crash', a);
+      const dlg = getPassengerDialogue('crash', a, this.weather);
       Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: '😱', color: '#ff6b6b' });
     }
     if (a.type === 'vip' && impact > 12) {
@@ -13345,33 +13637,34 @@ class PoliceManager {
  * @property {string} id - Уникальный идентификатор
  * @property {string} name - Название (для отображения)
  * @property {string} desc - Описание
+ * @property {string} [toast] - Текст тоста-поздравления
  * @property {string} icon - Emoji-иконка
  * @property {function(Object): boolean} check - Функция проверки: true = достижение получено
  */
 
 const ACHIEVEMENTS = [
   // --- Заказы ---
-  { id: 'first_order',   name: 'Первый заработок',     desc: 'Выполните первый заказ',                icon: '🚕', check: s => s.totalOrders >= 1 },
-  { id: 'orders_50',     name: 'Опытный таксист',      desc: 'Выполните 50 заказов',                  icon: ' taxi',   check: s => s.totalOrders >= 50 },
-  { id: 'orders_100',    name: 'Ветеран дорог',        desc: 'Выполните 100 заказов',                 icon: '🏆', check: s => s.totalOrders >= 100 },
-  { id: 'orders_250',    name: 'Легенда Пятигорска',   desc: 'Выполните 250 заказов',                 icon: '👑', check: s => s.totalOrders >= 250 },
+  { id: 'first_order',   name: 'Первый заработок',     desc: 'Выполните первый заказ',                toast: 'Первая копейка — и та в кассу',        icon: '🚕', check: s => s.totalOrders >= 1 },
+  { id: 'orders_50',     name: 'Опытный таксист',      desc: 'Выполните 50 заказов',                  toast: 'Полсотни клиентов, ни одного провала',  icon: '🚖', check: s => s.totalOrders >= 50 },
+  { id: 'orders_100',    name: 'Ветеран дорог',        desc: 'Выполните 100 заказов',                 toast: 'Сотня за плечами — асфальт дрожит',     icon: '🏆', check: s => s.totalOrders >= 100 },
+  { id: 'orders_250',    name: 'Легенда Пятигорска',   desc: 'Выполните 250 заказов',                 toast: 'Живая легенда пятигорских дорог',       icon: '👑', check: s => s.totalOrders >= 250 },
   // --- Деньги ---
-  { id: 'earn_10k',      name: 'Первая тыща',          desc: 'Заработайте 10 000 ₽ за все время',     icon: '💰', check: s => s.totalEarned >= 10000 },
-  { id: 'earn_50k',      name: 'Состоятельный водитель', desc: 'Заработайте 50 000 ₽ за все время',   icon: '💎', check: s => s.totalEarned >= 50000 },
-  { id: 'earn_100k',     name: 'Магнат такси',         desc: 'Заработайте 100 000 ₽ за все время',    icon: '🏛️', check: s => s.totalEarned >= 100000 },
+  { id: 'earn_10k',      name: 'Первая тыща',          desc: 'Заработайте 10 000 ₽ за все время',     toast: 'Десятка в кармане — на шашлык хватит',  icon: '💰', check: s => s.totalEarned >= 10000 },
+  { id: 'earn_50k',      name: 'Состоятельный водитель', desc: 'Заработайте 50 000 ₽ за все время',   toast: 'Кошелёк трещит от курортных купюр',    icon: '💎', check: s => s.totalEarned >= 50000 },
+  { id: 'earn_100k',     name: 'Магнат такси',         desc: 'Заработайте 100 000 ₽ за все время',    toast: 'Настоящий магнат такси на КМВ',         icon: '🏛️', check: s => s.totalEarned >= 100000 },
   // --- Стиль ---
-  { id: 'clean_shift',   name: 'Идеальная смена',      desc: 'Смена без аварий и сбитых пешеходов',   icon: '✨', check: s => s.shiftOrders >= 5 && s.shiftCrashes === 0 && s.shiftPeds === 0 },
-  { id: 'max_speed',     name: 'Шумахер',              desc: 'Разгонитесь до 150 км/ч',               icon: '⚡', check: s => s.maxSpeedKmh >= 150 },
-  { id: 'max_rating',    name: 'Звезда Пятигорска',    desc: 'Достигните максимального рейтинга',     icon: '⭐', check: s => s.maxRating >= 100 },
+  { id: 'clean_shift',   name: 'Идеальная смена',      desc: 'Смена без аварий и сбитых пешеходов',   toast: 'Ни единой царапинки за всю смену',      icon: '✨', check: s => s.shiftOrders >= 5 && s.shiftCrashes === 0 && s.shiftPeds === 0 },
+  { id: 'max_speed',     name: 'Шумахер',              desc: 'Разгонитесь до 150 км/ч',               toast: 'Шумахер нервно курит на обочине',      icon: '⚡', check: s => s.maxSpeedKmh >= 150 },
+  { id: 'max_rating',    name: 'Звезда Пятигорска',    desc: 'Достигните максимального рейтинга',     toast: 'Пятигорск ваш! Что дальше — Машук',     icon: '⭐', check: s => s.maxRating >= 100 },
   // --- Особые ---
-  { id: 'missions_5',    name: 'Герой города',         desc: 'Выполните 5 уникальных миссий',         icon: '🎖️', check: s => s.totalMissions >= 5 },
-  { id: 'night_owl',     name: 'Ночная сова',          desc: 'Выполните 10 ночных заказов',           icon: '🦉', check: s => s.nightOrders >= 10 },
-  { id: 'km_500',        name: 'Путешественник',       desc: 'Проедьте 500 км за все время',          icon: '🛣️', check: s => s.totalKm >= 500 },
-  { id: 'police_fined',  name: 'Враг народа',          desc: 'Получите 5 штрафов от полиции',         icon: '🚨', check: s => s.policeFines >= 5 },
-  { id: 'tips_5k',       name: 'Любимец клиентов',     desc: 'Заработайте 5 000 ₽ чаевых',            icon: '🎁', check: s => s.totalTips >= 5000 },
+  { id: 'missions_5',    name: 'Герой города',         desc: 'Выполните 5 уникальных миссий',         toast: 'Пять особых поручений выполнены',       icon: '🎖️', check: s => s.totalMissions >= 5 },
+  { id: 'night_owl',     name: 'Ночная сова',          desc: 'Выполните 10 ночных заказов',           toast: 'Ночной хозяин спящего курорта',         icon: '🦉', check: s => s.nightOrders >= 10 },
+  { id: 'km_500',        name: 'Путешественник',       desc: 'Проедьте 500 км за все время',          toast: 'Пятьсот километров по серпантинам',     icon: '🛣️', check: s => s.totalKm >= 500 },
+  { id: 'police_fined',  name: 'Враг народа',          desc: 'Получите 5 штрафов от полиции',         toast: 'С ГИБДД лучше дружить, а не дружиться', icon: '🚨', check: s => s.policeFines >= 5 },
+  { id: 'tips_5k',       name: 'Любимец клиентов',     desc: 'Заработайте 5 000 ₽ чаевых',            toast: 'Курортники не скупятся на чай',         icon: '🎁', check: s => s.totalTips >= 5000 },
   // --- Бойцовские ---
-  { id: 'hot_head',      name: 'Горячая голова',       desc: 'Нападите на 10 прохожих за смену',      icon: '👊', check: s => s.shiftPunches >= 10 },
-  { id: 'brawler',       name: 'Дерущийся таксист',    desc: 'Нападите на 50 прохожих за все время',  icon: '🥊', check: s => s.totalPunches >= 50 },
+  { id: 'hot_head',      name: 'Горячая голова',       desc: 'Нападите на 10 прохожих за смену',      toast: 'Кулаки — вторая профессия таксиста',    icon: '👊', check: s => s.shiftPunches >= 10 },
+  { id: 'brawler',       name: 'Дерущийся таксист',    desc: 'Нападите на 50 прохожих за все время',  toast: 'Гроза пешеходов проспекта Кирова',      icon: '🥊', check: s => s.totalPunches >= 50 },
 ];
 
 const STORAGE_KEY = '5gor_achievements_v1';
@@ -13469,7 +13762,7 @@ class AchievementManager {
         this.unlocked.push(ach.id);
         newly.push(ach.id);
         Events.emit('achievement:unlocked', ach);
-        Events.emit('toast', { text: `${ach.icon} Достижение: ${ach.name}!`, color: '#ffd75e' });
+        Events.emit('toast', { text: `${ach.icon} ` + (ach.toast || ('Достижение: ' + ach.name)) + '!', color: '#ffd75e' });
       }
     }
     if (newly.length) this._save();
@@ -13797,6 +14090,21 @@ class UIManager {
     this._setText(els.money, fmtMoney(gameState.money));
     const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
     this._setText(els.rating, stars + ' ' + Math.round(gameState.rating));
+
+    // индикатор комбо-серии
+    const streak = gameState.comboStreak || 0;
+    if (streak >= 3) {
+      if (!this._streakEl) {
+        this._streakEl = document.createElement('span');
+        this._streakEl.style.cssText = 'color:#ff9e3a;font-size:13px;font-weight:700;margin-left:6px;white-space:nowrap;';
+        const moneyEl = els.money;
+        if (moneyEl && moneyEl.parentNode) moneyEl.parentNode.insertBefore(this._streakEl, moneyEl.nextSibling);
+      }
+      this._streakEl.textContent = '🔥 x' + streak;
+      this._streakEl.style.display = '';
+    } else if (this._streakEl) {
+      this._streakEl.style.display = 'none';
+    }
     this._setText(els.clock, fmtClock(hour));
     this._setText(els.day, 'День ' + gameState.day);
     const kmh = Math.round(Math.abs(player.speed) * 3.6);
@@ -14520,6 +14828,7 @@ class Game {
     this._garageT = 0;
     this.soundOn = true;
     this.musicOn = true;
+    this.comboStreak = 0;
 
     /** @type {boolean} debug-оверлей (FPS/CPU/draw calls), включается ?debug в URL */
     this._debugOverlay = new URLSearchParams(location.search).has('debug');
@@ -14753,12 +15062,14 @@ class Game {
   _initEvents() {
     events.on('crash', (d) => {
       this.shiftStats.crashes++;
+      this.comboStreak = 0;
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
       this.orders.onCrash(d.impact);
     });
     events.on('hitPed', (d) => {
       if (d && d.byPlayer === false) return;
       this.shiftStats.peds++;
+      this.comboStreak = 0;
       this.setRating(this.rating - CFG.ratingFail.hitPed);
       this.addMoney(-300);
       this.shakeT = 0.3; this.shakeAmp = 0.4;
@@ -14812,6 +15123,7 @@ class Game {
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
 
     events.on('police:fine', (v) => {
+      this.comboStreak = 0;
       this.addMoney(-v.fine);
       this.setRating(this.rating - v.ratingLoss);
     });
@@ -14839,6 +15151,7 @@ class Game {
     });
 
     events.on('order:completed', (r) => {
+      this.comboStreak++;
       this.addMoney(r.total);
       this.shiftStats.earned += r.pay;
       this.shiftStats.tips += r.tips;
@@ -14849,8 +15162,15 @@ class Game {
         this.shiftStats.missions++;
         if (!this.orders.completed.includes(r.missionId)) this.orders.completed.push(r.missionId);
       }
+      const comboMult = 1 + Math.min(this.comboStreak, 10) * 0.05;
+      const bonusPay = Math.round(r.pay * comboMult) - r.pay;
+      if (bonusPay > 0) {
+        this.addMoney(bonusPay);
+        this.shiftStats.earned += bonusPay;
+      }
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
-      this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay) + bonus, '#7ee787');
+      const streakText = this.comboStreak > 1 ? ' 🔥 серия ' + this.comboStreak + ' ×' + comboMult.toFixed(2) : '';
+      this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay + bonusPay) + bonus + streakText, '#7ee787');
       if (this.rating >= 100) this.ui.toast('Максимальный рейтинг! Пятигорск ваш! ⭐', '#ffd75e');
       // Ночной заказ — событие для достижений
       if (this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour) {
@@ -14862,6 +15182,9 @@ class Game {
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
       this.setRating(this.rating - CFG.ratingFail.failOrder);
+    });
+    events.on('shift:started', () => {
+      this.comboStreak = 0;
     });
   }
 
@@ -15550,7 +15873,7 @@ class Game {
     }
 
     // заказы
-    this.orders.update(dt, this.player, this.hour, this.rating, this.upgrades.stats().capacity, this.world);
+    this.orders.update(dt, this.player, this.hour, this.rating, this.upgrades.stats().capacity, this.world, this.weather);
 
     // взаимодействие
     this._updateInteract();

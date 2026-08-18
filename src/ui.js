@@ -241,6 +241,21 @@ export class UIManager {
     this._setText(els.money, fmtMoney(gameState.money));
     const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
     this._setText(els.rating, stars + ' ' + Math.round(gameState.rating));
+
+    // индикатор комбо-серии
+    const streak = gameState.comboStreak || 0;
+    if (streak >= 3) {
+      if (!this._streakEl) {
+        this._streakEl = document.createElement('span');
+        this._streakEl.style.cssText = 'color:#ff9e3a;font-size:13px;font-weight:700;margin-left:6px;white-space:nowrap;';
+        const moneyEl = els.money;
+        if (moneyEl && moneyEl.parentNode) moneyEl.parentNode.insertBefore(this._streakEl, moneyEl.nextSibling);
+      }
+      this._streakEl.textContent = '🔥 x' + streak;
+      this._streakEl.style.display = '';
+    } else if (this._streakEl) {
+      this._streakEl.style.display = 'none';
+    }
     this._setText(els.clock, fmtClock(hour));
     this._setText(els.day, 'День ' + gameState.day);
     const kmh = Math.round(Math.abs(player.speed) * 3.6);

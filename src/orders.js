@@ -63,6 +63,34 @@ const MISSION_TEMPLATES = [
   },
 ];
 
+const REVIEWS = {
+  5: [
+    'Долетели как на крыльях!',
+    'Идеально, лучший водитель Пятигорска!',
+    'Чистая машина, вежливый водитель — 5 звёзд!',
+    'Такое впечатление, что летели!',
+  ],
+  4: [
+    'Норм поездка, но газку сбрасывай на поворотах',
+    'Хорошо, только помыл бы машину',
+    'Почти идеально, мелочи',
+  ],
+  3: [
+    'Бывало и лучше...',
+    'Резковато едешь, брат',
+    'Машина как из-под трактора',
+  ],
+  2: [
+    'Укачало всего, на горках подлетали',
+    'Грязюка в салоне, чаевых не дам',
+  ],
+  1: [
+    'Это не такси, а экстрим!',
+    'Ужас, чуть не разбились!',
+    'Пешком быстрее и безопаснее!',
+  ],
+};
+
 /**
  * @typedef {Object} OrderPickup
  * @property {number} x - Координата X подачи
@@ -435,7 +463,7 @@ class PassengerManager {
       order.recipient = { mesh: rMesh, state: 'wait', x: drop.x, z: drop.z, t: rand(0, 6) };
     }
     Events.emit('order:accepted', { order, player });
-    const dlg = getPassengerDialogue('pickup', order);
+    const dlg = getPassengerDialogue('pickup', order, this.weather);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: dlg.color });
     return true;
   }
@@ -451,7 +479,8 @@ class PassengerManager {
   }
 
   /* --- Обновление --- */
-  update(dt, player, hour, rating, capacity, world) {
+  update(dt, player, hour, rating, capacity, world, weather) {
+    if (weather !== undefined) this.weather = weather;
     // спавн новых заказов — ночью реже
     const isNight = hour >= CFG.nightStartHour || hour < CFG.nightEndHour;
     this._spawnT -= dt;
@@ -511,7 +540,7 @@ class PassengerManager {
           a.drops[a.dropIdx] = { x: nd.x, z: nd.z, name: '…передумал, едем: ' + this._districtName(nd.district) };
           a.estPay = Math.round(a.estPay * 1.3);
           Events.emit('toast', { text: 'Пассажир передумал! Новый адрес: ' + a.drops[a.dropIdx].name, color: '#c070e0' });
-          const dlg = getPassengerDialogue('detour', a);
+          const dlg = getPassengerDialogue('detour', a, this.weather);
           Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#c070e0' });
         }
       }
@@ -587,6 +616,17 @@ class PassengerManager {
     if (a.type === 'package' && a.fragileBroken) pay = Math.round(pay * 0.5);
     const total = pay + tips;
 
+    // оценка пассажира (1-5 звёзд)
+    let stars = 5;
+    stars -= Math.round((1 - player.style) * 3);
+    if (player.dirt > 0.4) stars -= 1;
+    if (a.fragileBroken) stars -= 2;
+    stars = Math.max(1, Math.min(5, Math.round(stars)));
+    if (a.type === 'vip' && stars < 4) stars -= 1;
+    stars = Math.max(1, Math.min(5, Math.round(stars)));
+    const pool = REVIEWS[stars] || REVIEWS[3];
+    const review = choice(pool);
+
     this.active = null;
     this._hideDropMarker();
     this._cabOut();
@@ -644,10 +684,11 @@ class PassengerManager {
     player.passengerCount = 0;
     const res = {
       title: a.title, pay: pay, tips, total, type: a.type, missionId: a.missionId,
-      est: a.estPay, dist: a.dist, partial: false,
+      est: a.estPay, dist: a.dist, partial: false, stars, review,
     };
-    const dlg = getPassengerDialogue('dropoff', a);
+    const dlg = getPassengerDialogue('dropoff', a, this.weather);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#7ee787' });
+    Events.emit('order:rated', { stars, review, type: a.type, total });
     Events.emit('order:completed', res);
     return res;
   }
@@ -684,7 +725,7 @@ class PassengerManager {
     if (!a) return;
     if (a.type === 'package') a.fragileBroken = true;
     if (impact > 8) {
-      const dlg = getPassengerDialogue('crash', a);
+      const dlg = getPassengerDialogue('crash', a, this.weather);
       Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: '😱', color: '#ff6b6b' });
     }
     if (a.type === 'vip' && impact > 12) {

@@ -982,44 +982,85 @@ export class World {
 
   /* Памятник Орлу на Горячей горе — главный символ Пятигорска и КМВ */
   _eagleMonument() {
-    const cx = -38, cz = 20;
+    const cx = -40, cz = -340;
+    const baseY = this.heightAt(cx, cz);
     const g = new THREE.Group();
     const stoneMat = new THREE.MeshLambertMaterial({ color: 0x8a8a80 });
     const eagleMat = new THREE.MeshLambertMaterial({ color: 0x6a5a4a });
     const goldMat = new THREE.MeshLambertMaterial({ color: 0xd8a030 });
     const snakeMat = new THREE.MeshLambertMaterial({ color: 0x2e4a30 });
+    const darkMat = new THREE.MeshLambertMaterial({ color: 0x4a3a2a });
 
-    // Каменный постамент (имитация скалы)
-    const base1 = new THREE.Mesh(new THREE.CylinderGeometry(2.4, 3.0, 1.2, 8), stoneMat);
-    base1.position.y = 0.6; g.add(base1);
-    const base2 = new THREE.Mesh(new THREE.CylinderGeometry(1.8, 2.3, 1.4, 8), stoneMat);
-    base2.position.y = 1.9; g.add(base2);
+    // Каменный постамент (имитация скалы) — 3 ступени
+    const base1 = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 3.2, 1.0, 8), stoneMat);
+    base1.position.y = 0.5; g.add(base1);
+    const base2 = new THREE.Mesh(new THREE.CylinderGeometry(2.0, 2.5, 1.2, 8), stoneMat);
+    base2.position.y = 1.6; g.add(base2);
+    const base3 = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.8, 0.8, 8), stoneMat);
+    base3.position.y = 2.6; g.add(base3);
 
-    // Змея вокруг скалы
-    const snake = new THREE.Mesh(new THREE.TorusGeometry(1.6, 0.22, 6, 16), snakeMat);
-    snake.rotation.x = Math.PI / 2.3;
-    snake.position.y = 2.1; g.add(snake);
+    // Змея — 2 сегмента Torus, обвивающих постамент
+    const snake1 = new THREE.Mesh(new THREE.TorusGeometry(1.8, 0.2, 6, 20, Math.PI * 1.3), snakeMat);
+    snake1.rotation.x = Math.PI / 2.2; snake1.rotation.z = 0.3;
+    snake1.position.set(0.3, 1.8, 0); g.add(snake1);
+    const snake2 = new THREE.Mesh(new THREE.TorusGeometry(1.5, 0.18, 6, 16, Math.PI * 1.1), snakeMat);
+    snake2.rotation.x = Math.PI / 1.8; snake2.rotation.z = -0.5;
+    snake2.position.set(-0.2, 2.3, 0.4); g.add(snake2);
+    // Голова змеи
+    const snakeHead = new THREE.Mesh(new THREE.SphereGeometry(0.15, 5, 5), snakeMat);
+    snakeHead.position.set(1.6, 2.8, 0.6); g.add(snakeHead);
 
-    // Орел (туловище, голова, клюв, крылья)
-    const body = new THREE.Mesh(new THREE.ConeGeometry(0.8, 1.6, 6), eagleMat);
-    body.position.y = 3.2; body.rotation.x = -0.3; g.add(body);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.35, 6, 6), eagleMat);
-    head.position.set(0, 4.0, 0.3); g.add(head);
-    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.4, 4), goldMat);
-    beak.position.set(0, 3.95, 0.65); beak.rotation.x = Math.PI / 2; g.add(beak);
+    // Орел — туловище (конус, чуть крупнее)
+    const body = new THREE.Mesh(new THREE.ConeGeometry(0.85, 1.8, 6), eagleMat);
+    body.position.y = 3.6; body.rotation.x = -0.3; g.add(body);
 
-    // Расправленные крылья
-    for (const s of [-1, 1]) {
-      const wing = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.15, 0.8), eagleMat);
-      wing.position.set(s * 1.1, 3.6, -0.1);
-      wing.rotation.z = s * 0.3;
-      wing.rotation.y = s * 0.2;
-      g.add(wing);
+    // Голова орла
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.38, 8, 6), eagleMat);
+    head.position.set(0, 4.6, 0.35); g.add(head);
+    // Хохолок на голове
+    const crest = new THREE.Mesh(new THREE.ConeGeometry(0.12, 0.35, 4), eagleMat);
+    crest.position.set(0, 4.95, 0.2); crest.rotation.x = -0.4; g.add(crest);
+    // Клюв — золотой конус
+    const beak = new THREE.Mesh(new THREE.ConeGeometry(0.1, 0.5, 5), goldMat);
+    beak.position.set(0, 4.5, 0.75); beak.rotation.x = Math.PI / 2; g.add(beak);
+    // Глаза
+    for (const sx of [-1, 1]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06, 5, 5), darkMat);
+      eye.position.set(sx * 0.22, 4.65, 0.55); g.add(eye);
     }
 
-    g.position.set(cx, 0, cz);
+    // Расправленные крылья — по 3 пластины-пера на каждое крыло
+    for (const s of [-1, 1]) {
+      // Верхняя часть крыла (ближе к телу)
+      const wing1 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.12, 0.9), eagleMat);
+      wing1.position.set(s * 0.9, 4.1, -0.1);
+      wing1.rotation.z = s * 0.25; wing1.rotation.y = s * 0.15;
+      g.add(wing1);
+      // Средняя часть крыла
+      const wing2 = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.1, 0.7), eagleMat);
+      wing2.position.set(s * 2.0, 3.85, -0.15);
+      wing2.rotation.z = s * 0.4; wing2.rotation.y = s * 0.25;
+      g.add(wing2);
+      // Кончик крыла (перья)
+      const wing3 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.5), eagleMat);
+      wing3.position.set(s * 3.0, 3.55, -0.2);
+      wing3.rotation.z = s * 0.55; wing3.rotation.y = s * 0.35;
+      g.add(wing3);
+    }
+
+    // Когти на змее — маленькие конусы
+    for (const sx of [-0.4, 0, 0.4]) {
+      const claw = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.25, 4), goldMat);
+      claw.position.set(sx, 2.9, 0.3); claw.rotation.x = 0.5; g.add(claw);
+    }
+
+    // Хвост орла
+    const tail = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.08, 0.9), eagleMat);
+    tail.position.set(0, 3.3, -0.8); tail.rotation.x = 0.3; g.add(tail);
+
+    g.position.set(cx, baseY, cz);
     this.scene.add(g);
-    this.addPropAABB({ x0: cx - 3.2, z0: cz - 3.2, x1: cx + 3.2, z1: cz + 3.2 });
+    this.addPropAABB({ x0: cx - 3.5, z0: cz - 3.5, x1: cx + 3.5, z1: cz + 3.5 });
   }
 
   /* Пятигорский узкоколейный Трамвай (реалистичные рельсы со шпалами, вагон КТМ-1) */
@@ -1117,9 +1158,10 @@ export class World {
     const routeSign = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.28, 1.1), new THREE.MeshBasicMaterial({ color: 0xffdf66 }));
     routeSign.position.set(-5.1, 2.55, 0); tram.add(routeSign);
 
-    tram.position.set(-32, 0, 0);
+    tram.position.set(-200, 0, 0);
     this.scene.add(tram);
-    this.addPropAABB({ x0: -38, z0: -1.5, x1: -26, z1: 1.5 });
+    this.tram = tram;
+    this.tramAnim = { pos: -200, dir: 1, speed: 8 };
 
     // Остановки трамвая («Парк Цветник», «Вокзал», «Лира»)
     this._tramStop(-36, -7.5);
@@ -2952,6 +2994,15 @@ export class World {
           car.group.rotation.y = Math.atan2(lookDir.x, lookDir.z);
         }
       }
+    }
+
+    // Анимация трамвая по рельсам (ось X, z=0)
+    if (this.tram && this.tramAnim) {
+      const ta = this.tramAnim;
+      ta.pos += ta.dir * ta.speed * dt;
+      if (ta.pos > 220) { ta.pos = 220; ta.dir = -1; }
+      if (ta.pos < -220) { ta.pos = -220; ta.dir = 1; }
+      this.tram.position.x = ta.pos;
     }
   }
 
