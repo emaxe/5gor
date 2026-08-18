@@ -353,6 +353,65 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
 
+/* ---------- Баннер достижения ---------- */
+#ach-banner {
+  position: fixed; top: 18%; left: 50%; transform: translateX(-50%);
+  z-index: 40; pointer-events: none;
+  background: rgba(20,16,8,0.92);
+  border: 2px solid #ffd75e; border-radius: 16px;
+  box-shadow: 0 0 30px rgba(255,215,94,0.4);
+  padding: 14px 24px;
+  animation: achBannerIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.ach-banner-inner {
+  display: flex; align-items: center; gap: 14px;
+}
+#ach-banner-icon { font-size: 36px; line-height: 1; }
+#ach-banner-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #8b949e; }
+#ach-banner-name { font-size: 17px; font-weight: 700; color: #ffd75e; }
+@keyframes achBannerIn {
+  0% { opacity: 0; transform: translateX(-50%) scale(0.6); }
+  70% { opacity: 1; transform: translateX(-50%) scale(1.05); }
+  100% { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+/* ---------- Кэшбайн +₽ ---------- */
+@keyframes cashPop {
+  0% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-40px); }
+}
+.cash-pop {
+  position: fixed; color: #ffd75e; font-weight: 700; font-size: 18px;
+  pointer-events: none; z-index: 35;
+  animation: cashPop 1.2s ease-out forwards;
+  text-shadow: 0 1px 6px rgba(255,215,94,0.5);
+}
+
+/* ---------- Рейтинг glow ---------- */
+@keyframes starGlow {
+  0% { text-shadow: 0 0 12px #ffd75e; }
+  100% { text-shadow: none; }
+}
+.rating-glow {
+  animation: starGlow 0.4s ease-out;
+}
+
+/* ---------- Крэш-виньетка ---------- */
+#crash-vignette {
+  position: fixed; inset: 0; pointer-events: none; z-index: 20;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(255,40,40,0.5) 100%);
+  opacity: 0; transition: opacity 0.3s;
+}
+#crash-vignette.show { opacity: 1; }
+
+/* ---------- Fade-оверлей смены ---------- */
+#shift-fade {
+  position: fixed; inset: 0; background: #000;
+  opacity: 0; transition: opacity 0.8s;
+  z-index: 50; pointer-events: none;
+}
+#shift-fade.show { opacity: 1; }
+
 /* ---------- Ошибки ---------- */
 #error-overlay {
   position: fixed; inset: 0; z-index: 100; background: #1a0a0a;
@@ -636,6 +695,17 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
   <span id="radio-hud-freq">98.4</span>
 </div>
 <div id="toasts"></div>
+<div id="ach-banner" class="hidden">
+  <div class="ach-banner-inner">
+    <span id="ach-banner-icon"></span>
+    <div>
+      <div id="ach-banner-title">Достижение!</div>
+      <div id="ach-banner-name"></div>
+    </div>
+  </div>
+</div>
+<div id="crash-vignette" class="hidden"></div>
+<div id="shift-fade" class="hidden"></div>
 <div id="error-overlay" class="hidden">
   <pre id="err-text"></pre>
   <button id="btn-copy-err">Копировать ошибку</button>
@@ -3567,6 +3637,18 @@ class SfxLibrary {
       o.connect(g); g.connect(destNode);
       o.start(t); o.stop(t + dur + 0.05);
     }
+  }
+
+  /* Фанфар достижения — восходящий мажорный арпеджио (C-E-G-C) */
+  achievementFanfare() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    const notes = [261.63, 329.63, 392.0, 523.25];
+    for (let i = 0; i < notes.length; i++) {
+      e.tone(notes[i], 0.18, 'sine', 0.13, i * 0.12);
+      e.tone(notes[i] * 0.5, 0.18, 'triangle', 0.07, i * 0.12);
+    }
+    e.tone(523.25, 0.4, 'sine', 0.1, notes.length * 0.12);
   }
 
   /* Шаг ближайшего пешехода — короткий приглушённый шумовой тук */
@@ -12830,6 +12912,108 @@ function getPassengerDialogue(event, order, weather) {
   return { text, name, avatar, color };
 }
 
+/**
+ * Реплики диспетчера Аиды на старте смены.
+ */
+const DISPATCHER_BRIEFS = {
+  general: [
+    'Салам, шеф! Машина чистая, бензин есть. Начни с центра, курортники не любят ждать!',
+    'Зинаида с рынка опять просила проверенного водителя. Будь наготове!',
+    'Утро доброе! На Кирова уже людно, заказы сыплются. Удачной смены!',
+    'Шеф, сегодня большой наплыв в санатории. Держи руку на пульсе!',
+    'Салам алейкум! Работы много, город проснулся. Погнали!',
+    'Шеф, курортный сезон в разгаре! Води аккуратно, чаевые будут щедрыми.',
+    'Рация на связи. Помни: довольный клиент — залог высокого рейтинга!'
+  ],
+  rain: [
+    'Шеф, на Машуке ливень! Держи дистанцию, тормоза на серпантине скользкие!',
+    'Дождь по всему Пятигорску зарядил. Курортники зонты забыли — заказов будет море!',
+    'Осторожнее на мокром асфальте, шеф! На серпантине не лихачь!'
+  ],
+  fog: [
+    'Шеф, на Машуке туман и ливень. Держи дистанцию, тормоза на серпантине скользкие!',
+    'С гор туман спустился, Пятигорск как в молоке. Включи фары и не гони!',
+    'Внимательнее на серпантине к Провалу, из-за тумана ничего не видать!'
+  ],
+  night: [
+    'Ночная смена — тарифы ×2. Включи фары и не зевай!',
+    'Ночной Пятигорск оживает! Следи за дорогой и полуночниками.'
+  ]
+};
+
+/**
+ * Итоговые реплики таксиста («Дневник таксиста») в конце смены.
+ */
+const DRIVER_DAY_NOTES = {
+  good: [
+    'День удался! Пятигорск знает своего водителя!',
+    'Отличная смена! И карман полон, и машина цела.',
+    'Вот это продуктивный день! Весь город объездил, клиенты довольны.',
+    'Шикарная смена! Нарзанная галерея, Провал, вокзал — везде успел!',
+    'Заработал от души. Машина не подвела, город благодарит!'
+  ],
+  crashes: [
+    'Ох, стойку пробило... Завтра надо водить аккуратнее.',
+    'Бампер помят, подвеска гремит... Завтра на СТО первым делом.',
+    'Ну и денёк, сплошные ямы да столбы... Машину жалко.',
+    'Слишком много аварий за смену... Надо успокоиться и беречь Ладу.'
+  ],
+  lowEarned: [
+    'Копейка к копейке... Завтра наверстаю.',
+    'Слабая смена вышла... Ничего, завтра с утра на вокзале встану.',
+    'Заказов маловато... Зато бензин сэкономил.',
+    'Не густо сегодня. Завтра пораньше выеду на линию.'
+  ],
+  general: [
+    'Смена закончена. Пора на отдых, завтра снова в путь.',
+    'Неплохой рабочий день. Пятигорск никогда не спит.',
+    'Город затихает. Пора и мне заглушить мотор.'
+  ]
+};
+
+/**
+ * Получить реплику диспетчера Аиды на старте смены.
+ * @param {'clear'|'rain'|'fog'} [weather] - Текущая погода
+ * @param {number} [hour] - Текущий час суток
+ * @returns {string}
+ */
+function getDispatcherBrief(weather, hour) {
+  if (weather === 'rain' && DISPATCHER_BRIEFS.rain && DISPATCHER_BRIEFS.rain.length) {
+    return choice(DISPATCHER_BRIEFS.rain);
+  }
+  if (weather === 'fog' && DISPATCHER_BRIEFS.fog && DISPATCHER_BRIEFS.fog.length) {
+    return choice(DISPATCHER_BRIEFS.fog);
+  }
+  if (hour !== undefined && (hour >= 22 || hour < 6) && DISPATCHER_BRIEFS.night && DISPATCHER_BRIEFS.night.length) {
+    return choice(DISPATCHER_BRIEFS.night);
+  }
+  return choice(DISPATCHER_BRIEFS.general);
+}
+
+/**
+ * Получить итоговую реплику водителя по завершению смены.
+ * @param {import('./config.js').ShiftStats} [stats] - Статистика смены
+ * @returns {string}
+ */
+function getDriverDayNote(stats) {
+  const crashes = stats?.crashes || 0;
+  const peds = stats?.peds || 0;
+  const orders = stats?.orders || 0;
+  const earned = stats?.earned || 0;
+
+  if (crashes >= 3 || peds >= 1) {
+    return choice(DRIVER_DAY_NOTES.crashes);
+  }
+  if (orders >= 4 && crashes <= 1) {
+    return choice(DRIVER_DAY_NOTES.good);
+  }
+  if (orders <= 2 || earned < 1500) {
+    return choice(DRIVER_DAY_NOTES.lowEarned);
+  }
+  return choice(DRIVER_DAY_NOTES.general);
+}
+
+
 /* ===== orders.js ===== */
 const ORDER_META = {
   normal:  { name: 'Обычная поездка',  icon: 'P', color: '#3e8ede', mult: 1.0,  time: 0,   desc: 'Обычная поездка по городу' },
@@ -14161,9 +14345,14 @@ class UIManager {
     this._garageTab = 'upgrades';
     this.toastCount = 0;
     this._dialogueTimer = null;
+    this._lastRating = null;
+    this._achBannerTimer = null;
 
     Events.on('passenger:speak', (d) => this.showDialogue(d.speaker, d.text, d.avatar, d.color));
     Events.on('radio:changed', (st) => this.updateRadioDisplay(st));
+    Events.on('achievement:unlocked', (ach) => this.showAchievementBanner(ach));
+    Events.on('order:completed', (r) => { if (r && r.total != null) this.cashPop(r.total); });
+    Events.on('crash', () => this.flashCrashVignette());
   }
 
   /* ---------- Кнопки ---------- */
@@ -14365,6 +14554,15 @@ class UIManager {
     this._setText(els.money, fmtMoney(gameState.money));
     const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
     this._setText(els.rating, stars + ' ' + Math.round(gameState.rating));
+
+    // рейтинг glow при повышении
+    if (this._lastRating !== null && gameState.rating > this._lastRating) {
+      els.rating.classList.remove('rating-glow');
+      void els.rating.offsetWidth;
+      els.rating.classList.add('rating-glow');
+      setTimeout(() => els.rating.classList.remove('rating-glow'), 400);
+    }
+    this._lastRating = gameState.rating;
 
     // индикатор комбо-серии
     const streak = gameState.comboStreak || 0;
@@ -15036,9 +15234,91 @@ class UIManager {
       this._radioHudTimer = null;
     }, 3000);
   }
+
+  /* ---------- Баннер достижения ---------- */
+  showAchievementBanner(ach) {
+    const banner = this.$('ach-banner');
+    if (!banner) return;
+    const iconEl = this.$('ach-banner-icon');
+    const nameEl = this.$('ach-banner-name');
+    if (iconEl) iconEl.textContent = ach.icon || '🏆';
+    if (nameEl) nameEl.textContent = (ach.name || 'Достижение') + (ach.toast ? ' — ' + ach.toast : '');
+
+    banner.classList.remove('hidden');
+    banner.style.animation = 'none';
+    void banner.offsetWidth;
+    banner.style.animation = 'achBannerIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+
+    if (this._achBannerTimer) clearTimeout(this._achBannerTimer);
+    this._achBannerTimer = setTimeout(() => {
+      banner.classList.add('hidden');
+      this._achBannerTimer = null;
+    }, 2800);
+
+    try { this.game.audio.sfx.achievementFanfare(); } catch (_) {}
+  }
+
+  /* ---------- Кэшбайн +₽ ---------- */
+  cashPop(amount) {
+    const moneyEl = this._els.money || this.$('money');
+    if (!moneyEl) return;
+    const rect = moneyEl.getBoundingClientRect();
+    const span = document.createElement('span');
+    span.className = 'cash-pop';
+    span.textContent = '+' + fmtMoney(amount);
+    span.style.left = (rect.left + rect.width / 2) + 'px';
+    span.style.top = (rect.bottom + 4) + 'px';
+    document.body.appendChild(span);
+    setTimeout(() => span.remove(), 1200);
+  }
+
+  /* ---------- Крэш-виньетка ---------- */
+  flashCrashVignette() {
+    const v = this.$('crash-vignette');
+    if (!v) return;
+    v.classList.remove('hidden');
+    v.classList.add('show');
+    setTimeout(() => v.classList.remove('show'), 300);
+    setTimeout(() => v.classList.add('hidden'), 600);
+  }
+
+  /* ---------- Fade-оверлеи смены ---------- */
+  fadeIn() {
+    const el = this.$('shift-fade');
+    if (!el) return;
+    el.classList.remove('hidden');
+    void el.offsetWidth;
+    el.classList.add('show');
+  }
+
+  fadeOut() {
+    const el = this.$('shift-fade');
+    if (!el) return;
+    el.classList.remove('show');
+    setTimeout(() => el.classList.add('hidden'), 800);
+  }
+
+  showShiftTitle(day, hour, weather) {
+    this.fadeIn();
+    const el = this.$('shift-fade');
+    if (!el) return;
+    const time = hour != null ? fmtClock(hour) : '';
+    const wIcon = weather === 'rain' ? '🌧' : weather === 'night' ? '🌙' : '☀️';
+    const title = document.createElement('div');
+    title.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;';
+    title.innerHTML = '<div style="font-size:38px;font-weight:800;color:#ffd75e;letter-spacing:3px;">ДЕНЬ ' + (day || 1) + '</div>' +
+      '<div style="font-size:16px;color:#c9d1d9;letter-spacing:2px;">ПЯТИГОРСК · ' + time + ' ' + wIcon + '</div>';
+    el.appendChild(title);
+    setTimeout(() => {
+      title.style.opacity = '0';
+      title.style.transition = 'opacity 0.6s';
+      setTimeout(() => { title.remove(); this.fadeOut(); }, 600);
+    }, 2000);
+  }
 }
 
 /* ===== game.js ===== */
+
 
 
 
@@ -15133,6 +15413,12 @@ class Game {
     this.soundOn = true;
     this.musicOn = true;
     this.comboStreak = 0;
+
+    // Обучение и подсказки (S1)
+    this._tutorialStep = 0;
+    this._tutorialShown = new Set();
+    this._walkTipShown = false;
+    this._refuelTipShown = false;
 
     /** @type {boolean} debug-оверлей (FPS/CPU/draw calls), включается ?debug в URL */
     this._debugOverlay = new URLSearchParams(location.search).has('debug');
@@ -15423,6 +15709,13 @@ class Game {
     });
     events.on('order:accepted', () => {
       this.ui.toast('Пассажир сел. Поехали!', '#7ee787');
+      if (this.day === 1 && !this._tutorialShown.has('order_accepted_0')) {
+        const total = (this.stats?.orders || 0) + (this.shiftStats?.orders || 0);
+        if (total === 0) {
+          this._tutorialShown.add('order_accepted_0');
+          this.ui.toast('💡 Подъедьте к жёлтому маркеру и нажмите E. Для посадки полностью остановите машину!', '#ffd75e');
+        }
+      }
     });
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
 
@@ -15482,6 +15775,18 @@ class Game {
       }
       // Проверка достижений
       this.achievements.checkAll();
+
+      // Обучение первых заказов (день 1)
+      if (this.day === 1) {
+        const total = (this.stats?.orders || 0) + this.shiftStats.orders;
+        if (total === 1 && !this._tutorialShown.has('order_completed_1')) {
+          this._tutorialShown.add('order_completed_1');
+          this.ui.toast('💡 Синяя стрелка вверху указывает направление. Ночью включайте фары (L)!', '#ffd75e');
+        } else if (total === 2 && !this._tutorialShown.has('order_completed_2')) {
+          this._tutorialShown.add('order_completed_2');
+          this.ui.toast('💡 Мало бензина? Заправки отмечены 🟢 на карте (M).', '#ffd75e');
+        }
+      }
     });
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
@@ -15489,6 +15794,7 @@ class Game {
     });
     events.on('shift:started', () => {
       this.comboStreak = 0;
+      this._refuelTipShown = false;
     });
   }
 
@@ -15529,6 +15835,10 @@ class Game {
     const s = newGameState();
     this.money = s.money; this.rating = s.rating; this.day = 1;
     this.stats = { orders: 0, earned: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+    this._tutorialStep = 0;
+    this._tutorialShown = new Set();
+    this._walkTipShown = false;
+    this._refuelTipShown = false;
     this.achievements._initStats();
     this.ui.$('btn-continue').classList.add('hidden');
     this._startShift(1);
@@ -15564,10 +15874,28 @@ class Game {
     this.chaseCam.reset(this.player);
     this.setState('driving');
     Events.emit('shift:started');
+
+    // Кинематографичный титр старта смены (кат-сцена)
+    if (this.ui.showShiftTitle) {
+      this.ui.showShiftTitle(this.day, this.hour, this.weather);
+    }
+
+    // Брифинг диспетчера Аиды
+    const briefText = getDispatcherBrief(this.weather, this.hour);
+    if (briefText) {
+      this.ui.showDialogue('Диспетчер Аида', briefText, '📻', '#58a6ff');
+    }
   }
 
   endShift() {
     this.achievements.checkAll();
+
+    // Дневник таксиста — реплика при завершении смены
+    const noteText = getDriverDayNote(this.shiftStats);
+    if (noteText) {
+      this.ui.showDialogue('Ты', noteText, '🚕', '#7ee787');
+    }
+
     this.setState('shiftend');
     this.save();
     Events.emit('shift:ended');
@@ -15809,6 +16137,10 @@ class Game {
     this.chaseCam.reset(this.playerPed);
     this.setState('walking');
     this.audio.setWalkRadio(true);
+    if (!this._walkTipShown) {
+      this._walkTipShown = true;
+      this.ui.toast('🚶 Пеший режим: WASD — ходьба, Shift — спринт, Space — прыжок, E — сесть в авто', '#ffd75e');
+    }
   }
 
   enterCar() {
@@ -16407,6 +16739,18 @@ class Game {
 
   _updateInteract() {
     this.interact = null;
+
+    // Подсказка заправки при низком уровне топлива (< 30%)
+    if (!this._refuelTipShown && this.player && (this.player.fuel / this.player.stats.tank) < 0.3 && this.world && this.world.fuelStations) {
+      for (const s of this.world.fuelStations) {
+        if (dist2D(this.player.x, this.player.z, s.x, s.z) < CFG.refuelDist * 1.5) {
+          this._refuelTipShown = true;
+          this.ui.toast('💡 Подъедьте к колонке и нажмите E — заправка.', '#ffd75e');
+          break;
+        }
+      }
+    }
+
     const a = this.orders.active;
     if (a) {
       const drop = a.drops[a.dropIdx];

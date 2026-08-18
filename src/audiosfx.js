@@ -397,6 +397,18 @@ export class SfxLibrary {
     }
   }
 
+  /* Фанфар достижения — восходящий мажорный арпеджио (C-E-G-C) */
+  achievementFanfare() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    const notes = [261.63, 329.63, 392.0, 523.25];
+    for (let i = 0; i < notes.length; i++) {
+      e.tone(notes[i], 0.18, 'sine', 0.13, i * 0.12);
+      e.tone(notes[i] * 0.5, 0.18, 'triangle', 0.07, i * 0.12);
+    }
+    e.tone(523.25, 0.4, 'sine', 0.1, notes.length * 0.12);
+  }
+
   /* Шаг ближайшего пешехода — короткий приглушённый шумовой тук */
   footstep(pan = 0, vol = 1) {
     const e = this.engine;

@@ -345,6 +345,65 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-12px); } to { opacity: 1; transform: none; } }
 
+/* ---------- Баннер достижения ---------- */
+#ach-banner {
+  position: fixed; top: 18%; left: 50%; transform: translateX(-50%);
+  z-index: 40; pointer-events: none;
+  background: rgba(20,16,8,0.92);
+  border: 2px solid #ffd75e; border-radius: 16px;
+  box-shadow: 0 0 30px rgba(255,215,94,0.4);
+  padding: 14px 24px;
+  animation: achBannerIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+.ach-banner-inner {
+  display: flex; align-items: center; gap: 14px;
+}
+#ach-banner-icon { font-size: 36px; line-height: 1; }
+#ach-banner-title { font-size: 11px; text-transform: uppercase; letter-spacing: 1.5px; color: #8b949e; }
+#ach-banner-name { font-size: 17px; font-weight: 700; color: #ffd75e; }
+@keyframes achBannerIn {
+  0% { opacity: 0; transform: translateX(-50%) scale(0.6); }
+  70% { opacity: 1; transform: translateX(-50%) scale(1.05); }
+  100% { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+/* ---------- Кэшбайн +₽ ---------- */
+@keyframes cashPop {
+  0% { opacity: 1; transform: translateY(0); }
+  100% { opacity: 0; transform: translateY(-40px); }
+}
+.cash-pop {
+  position: fixed; color: #ffd75e; font-weight: 700; font-size: 18px;
+  pointer-events: none; z-index: 35;
+  animation: cashPop 1.2s ease-out forwards;
+  text-shadow: 0 1px 6px rgba(255,215,94,0.5);
+}
+
+/* ---------- Рейтинг glow ---------- */
+@keyframes starGlow {
+  0% { text-shadow: 0 0 12px #ffd75e; }
+  100% { text-shadow: none; }
+}
+.rating-glow {
+  animation: starGlow 0.4s ease-out;
+}
+
+/* ---------- Крэш-виньетка ---------- */
+#crash-vignette {
+  position: fixed; inset: 0; pointer-events: none; z-index: 20;
+  background: radial-gradient(ellipse at center, transparent 55%, rgba(255,40,40,0.5) 100%);
+  opacity: 0; transition: opacity 0.3s;
+}
+#crash-vignette.show { opacity: 1; }
+
+/* ---------- Fade-оверлей смены ---------- */
+#shift-fade {
+  position: fixed; inset: 0; background: #000;
+  opacity: 0; transition: opacity 0.8s;
+  z-index: 50; pointer-events: none;
+}
+#shift-fade.show { opacity: 1; }
+
 /* ---------- Ошибки ---------- */
 #error-overlay {
   position: fixed; inset: 0; z-index: 100; background: #1a0a0a;

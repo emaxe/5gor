@@ -37,9 +37,14 @@ export class UIManager {
     this._garageTab = 'upgrades';
     this.toastCount = 0;
     this._dialogueTimer = null;
+    this._lastRating = null;
+    this._achBannerTimer = null;
 
     Events.on('passenger:speak', (d) => this.showDialogue(d.speaker, d.text, d.avatar, d.color));
     Events.on('radio:changed', (st) => this.updateRadioDisplay(st));
+    Events.on('achievement:unlocked', (ach) => this.showAchievementBanner(ach));
+    Events.on('order:completed', (r) => { if (r && r.total != null) this.cashPop(r.total); });
+    Events.on('crash', () => this.flashCrashVignette());
   }
 
   /* ---------- Кнопки ---------- */
@@ -241,6 +246,15 @@ export class UIManager {
     this._setText(els.money, fmtMoney(gameState.money));
     const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
     this._setText(els.rating, stars + ' ' + Math.round(gameState.rating));
+
+    // рейтинг glow при повышении
+    if (this._lastRating !== null && gameState.rating > this._lastRating) {
+      els.rating.classList.remove('rating-glow');
+      void els.rating.offsetWidth;
+      els.rating.classList.add('rating-glow');
+      setTimeout(() => els.rating.classList.remove('rating-glow'), 400);
+    }
+    this._lastRating = gameState.rating;
 
     // индикатор комбо-серии
     const streak = gameState.comboStreak || 0;
@@ -911,5 +925,86 @@ export class UIManager {
       hud.classList.add('hidden');
       this._radioHudTimer = null;
     }, 3000);
+  }
+
+  /* ---------- Баннер достижения ---------- */
+  showAchievementBanner(ach) {
+    const banner = this.$('ach-banner');
+    if (!banner) return;
+    const iconEl = this.$('ach-banner-icon');
+    const nameEl = this.$('ach-banner-name');
+    if (iconEl) iconEl.textContent = ach.icon || '🏆';
+    if (nameEl) nameEl.textContent = (ach.name || 'Достижение') + (ach.toast ? ' — ' + ach.toast : '');
+
+    banner.classList.remove('hidden');
+    banner.style.animation = 'none';
+    void banner.offsetWidth;
+    banner.style.animation = 'achBannerIn 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275)';
+
+    if (this._achBannerTimer) clearTimeout(this._achBannerTimer);
+    this._achBannerTimer = setTimeout(() => {
+      banner.classList.add('hidden');
+      this._achBannerTimer = null;
+    }, 2800);
+
+    try { this.game.audio.sfx.achievementFanfare(); } catch (_) {}
+  }
+
+  /* ---------- Кэшбайн +₽ ---------- */
+  cashPop(amount) {
+    const moneyEl = this._els.money || this.$('money');
+    if (!moneyEl) return;
+    const rect = moneyEl.getBoundingClientRect();
+    const span = document.createElement('span');
+    span.className = 'cash-pop';
+    span.textContent = '+' + fmtMoney(amount);
+    span.style.left = (rect.left + rect.width / 2) + 'px';
+    span.style.top = (rect.bottom + 4) + 'px';
+    document.body.appendChild(span);
+    setTimeout(() => span.remove(), 1200);
+  }
+
+  /* ---------- Крэш-виньетка ---------- */
+  flashCrashVignette() {
+    const v = this.$('crash-vignette');
+    if (!v) return;
+    v.classList.remove('hidden');
+    v.classList.add('show');
+    setTimeout(() => v.classList.remove('show'), 300);
+    setTimeout(() => v.classList.add('hidden'), 600);
+  }
+
+  /* ---------- Fade-оверлеи смены ---------- */
+  fadeIn() {
+    const el = this.$('shift-fade');
+    if (!el) return;
+    el.classList.remove('hidden');
+    void el.offsetWidth;
+    el.classList.add('show');
+  }
+
+  fadeOut() {
+    const el = this.$('shift-fade');
+    if (!el) return;
+    el.classList.remove('show');
+    setTimeout(() => el.classList.add('hidden'), 800);
+  }
+
+  showShiftTitle(day, hour, weather) {
+    this.fadeIn();
+    const el = this.$('shift-fade');
+    if (!el) return;
+    const time = hour != null ? fmtClock(hour) : '';
+    const wIcon = weather === 'rain' ? '🌧' : weather === 'night' ? '🌙' : '☀️';
+    const title = document.createElement('div');
+    title.style.cssText = 'position:absolute;inset:0;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:8px;';
+    title.innerHTML = '<div style="font-size:38px;font-weight:800;color:#ffd75e;letter-spacing:3px;">ДЕНЬ ' + (day || 1) + '</div>' +
+      '<div style="font-size:16px;color:#c9d1d9;letter-spacing:2px;">ПЯТИГОРСК · ' + time + ' ' + wIcon + '</div>';
+    el.appendChild(title);
+    setTimeout(() => {
+      title.style.opacity = '0';
+      title.style.transition = 'opacity 0.6s';
+      setTimeout(() => { title.remove(); this.fadeOut(); }, 600);
+    }, 2000);
   }
 }

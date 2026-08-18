@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG, CFG_GFX_PRESETS, WEATHER_DEFS } from './config.js';
-import { clamp, lerp, pickWeighted, showError, dist2D, fmtMoney, circleAABB } from './utils.js';
+import { clamp, lerp, pickWeighted, showError, dist2D, fmtMoney, circleAABB, choice } from './utils.js';
 import { Events } from './eventbus.js';
 import { World } from './citygen.js';
 import { PlayerCar } from './player.js';
@@ -15,6 +15,7 @@ import { AudioManager } from './audio.js';
 import { InputManager } from './input.js';
 import { PoliceManager } from './police.js';
 import { AchievementManager } from './achievements.js';
+import { DISPATCHER_BRIEFS, DRIVER_DAY_NOTES, getDispatcherBrief, getDriverDayNote } from './dialogues.js';
 
 // Таблица цвета неба по часу суток + переиспользуемые Color-объекты для
 // _updateTime (каждый кадр) — вместо new THREE.Color(...) на каждый вызов (OPT-18)
@@ -93,6 +94,12 @@ export class Game {
     this.soundOn = true;
     this.musicOn = true;
     this.comboStreak = 0;
+
+    // Обучение и подсказки (S1)
+    this._tutorialStep = 0;
+    this._tutorialShown = new Set();
+    this._walkTipShown = false;
+    this._refuelTipShown = false;
 
     /** @type {boolean} debug-оверлей (FPS/CPU/draw calls), включается ?debug в URL */
     this._debugOverlay = new URLSearchParams(location.search).has('debug');
@@ -383,6 +390,13 @@ export class Game {
     });
     events.on('order:accepted', () => {
       this.ui.toast('Пассажир сел. Поехали!', '#7ee787');
+      if (this.day === 1 && !this._tutorialShown.has('order_accepted_0')) {
+        const total = (this.stats?.orders || 0) + (this.shiftStats?.orders || 0);
+        if (total === 0) {
+          this._tutorialShown.add('order_accepted_0');
+          this.ui.toast('💡 Подъедьте к жёлтому маркеру и нажмите E. Для посадки полностью остановите машину!', '#ffd75e');
+        }
+      }
     });
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
 
@@ -442,6 +456,18 @@ export class Game {
       }
       // Проверка достижений
       this.achievements.checkAll();
+
+      // Обучение первых заказов (день 1)
+      if (this.day === 1) {
+        const total = (this.stats?.orders || 0) + this.shiftStats.orders;
+        if (total === 1 && !this._tutorialShown.has('order_completed_1')) {
+          this._tutorialShown.add('order_completed_1');
+          this.ui.toast('💡 Синяя стрелка вверху указывает направление. Ночью включайте фары (L)!', '#ffd75e');
+        } else if (total === 2 && !this._tutorialShown.has('order_completed_2')) {
+          this._tutorialShown.add('order_completed_2');
+          this.ui.toast('💡 Мало бензина? Заправки отмечены 🟢 на карте (M).', '#ffd75e');
+        }
+      }
     });
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
@@ -449,6 +475,7 @@ export class Game {
     });
     events.on('shift:started', () => {
       this.comboStreak = 0;
+      this._refuelTipShown = false;
     });
   }
 
@@ -489,6 +516,10 @@ export class Game {
     const s = newGameState();
     this.money = s.money; this.rating = s.rating; this.day = 1;
     this.stats = { orders: 0, earned: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+    this._tutorialStep = 0;
+    this._tutorialShown = new Set();
+    this._walkTipShown = false;
+    this._refuelTipShown = false;
     this.achievements._initStats();
     this.ui.$('btn-continue').classList.add('hidden');
     this._startShift(1);
@@ -524,10 +555,28 @@ export class Game {
     this.chaseCam.reset(this.player);
     this.setState('driving');
     Events.emit('shift:started');
+
+    // Кинематографичный титр старта смены (кат-сцена)
+    if (this.ui.showShiftTitle) {
+      this.ui.showShiftTitle(this.day, this.hour, this.weather);
+    }
+
+    // Брифинг диспетчера Аиды
+    const briefText = getDispatcherBrief(this.weather, this.hour);
+    if (briefText) {
+      this.ui.showDialogue('Диспетчер Аида', briefText, '📻', '#58a6ff');
+    }
   }
 
   endShift() {
     this.achievements.checkAll();
+
+    // Дневник таксиста — реплика при завершении смены
+    const noteText = getDriverDayNote(this.shiftStats);
+    if (noteText) {
+      this.ui.showDialogue('Ты', noteText, '🚕', '#7ee787');
+    }
+
     this.setState('shiftend');
     this.save();
     Events.emit('shift:ended');
@@ -769,6 +818,10 @@ export class Game {
     this.chaseCam.reset(this.playerPed);
     this.setState('walking');
     this.audio.setWalkRadio(true);
+    if (!this._walkTipShown) {
+      this._walkTipShown = true;
+      this.ui.toast('🚶 Пеший режим: WASD — ходьба, Shift — спринт, Space — прыжок, E — сесть в авто', '#ffd75e');
+    }
   }
 
   enterCar() {
@@ -1367,6 +1420,18 @@ export class Game {
 
   _updateInteract() {
     this.interact = null;
+
+    // Подсказка заправки при низком уровне топлива (< 30%)
+    if (!this._refuelTipShown && this.player && (this.player.fuel / this.player.stats.tank) < 0.3 && this.world && this.world.fuelStations) {
+      for (const s of this.world.fuelStations) {
+        if (dist2D(this.player.x, this.player.z, s.x, s.z) < CFG.refuelDist * 1.5) {
+          this._refuelTipShown = true;
+          this.ui.toast('💡 Подъедьте к колонке и нажмите E — заправка.', '#ffd75e');
+          break;
+        }
+      }
+    }
+
     const a = this.orders.active;
     if (a) {
       const drop = a.drops[a.dropIdx];
