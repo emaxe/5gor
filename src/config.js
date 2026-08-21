@@ -127,6 +127,7 @@ export const CFG = {
   towRepair: 35,         // % урона чинит эвакуатор
   towFuel: 15,           // +топлива
   refuelDist: 8,
+  lowFuelRatio: 0.25,   // ниже этой доли бака GPS ведёт к ближайшей заправке
 
   // Рейтинг и прокачка
   ratingPerOrder: { normal: 4, urgent: 6, vip: 7, group: 9, tourist: 10, package: 5, drunk: 6, race: 12 },

@@ -845,6 +845,7 @@ const CFG = {
   towRepair: 35,         // % урона чинит эвакуатор
   towFuel: 15,           // +топлива
   refuelDist: 8,
+  lowFuelRatio: 0.25,   // ниже этой доли бака GPS ведёт к ближайшей заправке
 
   // Рейтинг и прокачка
   ratingPerOrder: { normal: 4, urgent: 6, vip: 7, group: 9, tourist: 10, package: 5, drunk: 6, race: 12 },
@@ -15025,7 +15026,7 @@ class UIManager {
     if (el.textContent !== text) el.textContent = text; // сравнение строк дешевле лишней DOM-записи
   }
 
-  updateHud(player, gameState, orders, hour, camera, world, gpsRoute) {
+  updateHud(player, gameState, orders, hour, camera, world, gpsRoute, fuelRoute, gpsTargetType) {
     const els = this._els;
     this._setText(els.money, fmtMoney(gameState.money));
     const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
@@ -15077,13 +15078,16 @@ class UIManager {
       oc.classList.add('hidden');
     }
 
-    // стрелка-навигатор: появляется только при активном принятом задании
+    // стрелка-навигатор: появляется только при активном принятом задании или при маршруте к заправке
     const nw = els['nav-arrow-wrap'];
-    const target = orders.activeDrop;
+    const orderTarget = orders && orders.activeDrop;
+    const isFuelNav = !orderTarget && gpsTargetType === 'fuel' && fuelRoute && fuelRoute.length > 1;
+    const target = orderTarget || (isFuelNav ? fuelRoute[fuelRoute.length - 1] : null);
     if (target) {
       nw.classList.remove('hidden');
-      const hasRoute = gpsRoute && gpsRoute.length > 1;
-      const navTarget = hasRoute ? gpsRoute[1] : target;
+      const route = orderTarget ? gpsRoute : fuelRoute;
+      const hasRoute = route && route.length > 1;
+      const navTarget = hasRoute ? route[1] : target;
       const dx = navTarget.x - player.x, dz = navTarget.z - player.z;
       // ➤ указывает вправо при rotate(0) — «вперёд» = -90°.
       // Раскладываем вектор к цели по осям машины: forward=(sin h,cos h),
@@ -15096,8 +15100,10 @@ class UIManager {
       let ang = -Math.atan2(fwdC, rgtC);
       ang = Math.atan2(Math.sin(ang), Math.cos(ang)); // кратчайший доворот в [-π,π]
       els['nav-arrow'].style.transform = 'rotate(' + Math.round(ang * 180 / Math.PI * 10) / 10 + 'deg)';
-      const remainingDist = hasRoute ? routeLength(gpsRoute) : dist2D(player.x, player.z, target.x, target.z);
-      els['nav-dist'].textContent = Math.round(remainingDist) + ' м';
+      // цвет стрелки: зелёный для заправки
+      els['nav-arrow'].style.color = isFuelNav ? '#2ecc40' : '#58a6ff';
+      const remainingDist = hasRoute ? routeLength(route) : dist2D(player.x, player.z, target.x, target.z);
+      els['nav-dist'].textContent = Math.round(remainingDist) + ' м' + (isFuelNav ? ' ⛽' : '');
     } else {
       nw.classList.add('hidden');
     }
@@ -15156,7 +15162,7 @@ class UIManager {
   }
 
   /* ---------- Мини-карта (heading-up: карта вращается, стрелка всегда вверх) ---------- */
-  renderMinimap(player, orders, world, traffic, car, gpsRoute) {
+  renderMinimap(player, orders, world, traffic, car, gpsRoute, fuelRoute, gpsTargetType) {
     const c = this.$('minimap');
     const g = c.getContext('2d');
     const W = c.width;
@@ -15176,27 +15182,31 @@ class UIManager {
       const srcX = (vx0 + 320) * bsc, srcY = (vz0 + 320) * bsc;
       g.drawImage(this._baseMap, srcX, srcY, view * bsc, view * bsc, vx0 * scale, vz0 * scale, view * scale, view * scale);
     }
-    // маршрут до точки высадки, если взят заказ (по дорожной сетке: полилиния GPS-маршрута,
+    // маршрут до точки высадки или заправки (по дорожной сетке: полилиния GPS-маршрута,
     // либо фолбэк на L-путь; мир-координаты уже в повёрнутом контексте)
     const activeDrop = orders && orders.activeDrop;
-    if (orders && orders.active && activeDrop) {
+    const hasOrderRoute = orders && orders.active && activeDrop;
+    const useFuel = !hasOrderRoute && gpsTargetType === 'fuel' && fuelRoute && fuelRoute.length > 1;
+    if (hasOrderRoute || useFuel) {
+      const route = useFuel ? fuelRoute : gpsRoute;
+      const target = useFuel ? fuelRoute[fuelRoute.length - 1] : activeDrop;
       const rx = (x) => x * scale, rz = (z) => z * scale;
-      g.strokeStyle = 'rgba(255, 214, 80, 0.9)';
+      g.strokeStyle = useFuel ? 'rgba(46, 204, 64, 0.95)' : 'rgba(255, 214, 80, 0.9)';
       g.lineWidth = 2.5;
       g.lineJoin = 'round';
       g.beginPath();
-      if (gpsRoute && gpsRoute.length > 1) {
-        g.moveTo(rx(gpsRoute[0].x), rz(gpsRoute[0].z));
-        for (let i = 1; i < gpsRoute.length; i++) {
-          g.lineTo(rx(gpsRoute[i].x), rz(gpsRoute[i].z));
+      if (route && route.length > 1) {
+        g.moveTo(rx(route[0].x), rz(route[0].z));
+        for (let i = 1; i < route.length; i++) {
+          g.lineTo(rx(route[i].x), rz(route[i].z));
         }
-      } else {
+      } else if (target) {
         const CELL = 64;
         const vx = Math.round(player.x / CELL) * CELL;
         g.moveTo(rx(player.x), rz(player.z));
         g.lineTo(rx(vx), rz(player.z));
-        g.lineTo(rx(vx), rz(activeDrop.z));
-        g.lineTo(rx(activeDrop.x), rz(activeDrop.z));
+        g.lineTo(rx(vx), rz(target.z));
+        g.lineTo(rx(target.x), rz(target.z));
       }
       g.stroke();
     }
@@ -15299,7 +15309,7 @@ class UIManager {
   }
 
   /* ---------- Большая карта ---------- */
-  renderBigMap(player, orders, world, car, gpsRoute) {
+  renderBigMap(player, orders, world, car, gpsRoute, fuelRoute, gpsTargetType) {
     const c = this.$('bigmap');
     const availW = window.innerWidth * 0.96, availH = window.innerHeight * 0.86;
     const size = Math.min(availW, availH);
@@ -15307,16 +15317,19 @@ class UIManager {
     const g = c.getContext('2d');
     this._ensureBaseMap(world);
     g.drawImage(this._baseMap, 0, 0, size, size);
-    // маршрут GPS
-    if (orders && orders.active && orders.activeDrop) {
-      if (gpsRoute && gpsRoute.length > 1) {
-        g.strokeStyle = 'rgba(255, 214, 80, 0.9)';
+    // маршрут GPS (заказ или заправка)
+    const hasOrderRoute = orders && orders.active && orders.activeDrop;
+    const useFuel = !hasOrderRoute && gpsTargetType === 'fuel' && fuelRoute && fuelRoute.length > 1;
+    if (hasOrderRoute || useFuel) {
+      const route = useFuel ? fuelRoute : gpsRoute;
+      if (route && route.length > 1) {
+        g.strokeStyle = useFuel ? 'rgba(46, 204, 64, 0.95)' : 'rgba(255, 214, 80, 0.9)';
         g.lineWidth = 3;
         g.lineJoin = 'round';
         g.beginPath();
-        g.moveTo((gpsRoute[0].x + 320) / 640 * size, (gpsRoute[0].z + 320) / 640 * size);
-        for (let i = 1; i < gpsRoute.length; i++) {
-          g.lineTo((gpsRoute[i].x + 320) / 640 * size, (gpsRoute[i].z + 320) / 640 * size);
+        g.moveTo((route[0].x + 320) / 640 * size, (route[0].z + 320) / 640 * size);
+        for (let i = 1; i < route.length; i++) {
+          g.lineTo((route[i].x + 320) / 640 * size, (route[i].z + 320) / 640 * size);
         }
         g.stroke();
       }
@@ -15930,6 +15943,9 @@ class Game {
     this._gpsAccum = 0;
     this._gpsFromX = 0;
     this._gpsFromZ = 0;
+    this._gpsTargetType = null;   // 'order' | 'fuel' | null
+    this._gpsFuelRoute = null;    // маршрут к заправке (отдельный от _gpsRoute заказа)
+    this._gpsFuelTarget = null;   // объект заправки {x,z}
 
     // Обучение и подсказки (S1)
     this._tutorialStep = 0;
@@ -16225,6 +16241,8 @@ class Game {
       this.ui.toast('Край карты — дальше не проехать!', '#ffb030');
     });
     events.on('order:accepted', () => {
+      this._gpsFuelRoute = null; this._gpsFuelTarget = null; this._gpsTargetType = null;
+      this._gpsRoute = null; this._gpsLastDrop = null;
       this.ui.toast('Пассажир сел. Поехали!', '#7ee787');
       if (this.day === 1 && !this._tutorialShown.has('order_accepted_0')) {
         const total = (this.stats?.orders || 0) + (this.shiftStats?.orders || 0);
@@ -16339,7 +16357,7 @@ class Game {
       this.ui.showScreen('settings', true);
     } else if (name === 'map') {
       this.ui.showScreen('map', true);
-      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null, this._gpsRoute);
+      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null, this._gpsRoute, this._gpsFuelRoute, this._gpsTargetType);
     } else if (name === 'shiftend') {
       this.ui.showScreen('shiftend', true);
       this.ui.renderShiftEnd({ money: this.money, rating: this.rating, day: this.day }, this.shiftStats);
@@ -16382,6 +16400,11 @@ class Game {
     Events.emit('weather:changed', { weather: this.weather });
     this._applyDensity();
     this.orders.reset();
+    this._gpsRoute = null;
+    this._gpsLastDrop = null;
+    this._gpsFuelRoute = null;
+    this._gpsFuelTarget = null;
+    this._gpsTargetType = null;
     this.player.applyUpgrades(this.upgrades.stats());
     this.player.setTuning(this.upgrades.tuningForCar());
     this.player.setPos(0, 20, 0);
@@ -16614,6 +16637,8 @@ class Game {
     this.chaseCam.reset(this.player);
     this.ui.toast('Эвакуатор доставил машину на перекрёсток', '#7ee787');
     this.audio.chime();
+    this._gpsFuelRoute = null; this._gpsFuelTarget = null; this._gpsTargetType = null;
+    this._gpsRoute = null; this._gpsLastDrop = null;
     this.setState('driving');
   }
 
@@ -16727,6 +16752,19 @@ class Game {
     return best;
   }
 
+  _nearestFuelStation(x, z) {
+    const stations = this.world && this.world.fuelStations;
+    if (!stations || stations.length === 0) return null;
+    let best = stations[0], minD2 = Infinity;
+    for (let i = 0; i < stations.length; i++) {
+      const s = stations[i];
+      const dx = s.x - x, dz = s.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < minD2) { minD2 = d2; best = s; }
+    }
+    return best;
+  }
+
   refuel() {
     const cost = Math.round((this.player.stats.tank - this.player.fuel) * CFG.fuelPrice);
     if (this.money < cost) { this.ui.toast('Не хватает денег на бензин', '#ff6b6b'); return; }
@@ -16734,6 +16772,8 @@ class Game {
     this.player.refuel();
     this.audio.chime();
     this.ui.toast('Заправлено за ' + fmtMoney(cost), '#7ee787');
+    this._gpsFuelRoute = null; this._gpsFuelTarget = null; this._gpsTargetType = null;
+    this._gpsRoute = null; this._gpsLastDrop = null;
   }
 
   completeOrder() {
@@ -17096,7 +17136,13 @@ class Game {
     if (this._gpsAccum >= 0.5) {
       this._gpsAccum = 0;
       const activeDrop = this.orders && this.orders.active && this.orders.activeDrop;
-      if (activeDrop && this.world && this.world.intersections) {
+      const fuelFrac = this.player.fuel / this.player.stats.tank;
+      const isLowFuel = fuelFrac < CFG.lowFuelRatio;
+      // гистерезис: уже в режиме заправки — держим до fuelFrac > lowFuelRatio + 0.05
+      const keepFuel = this._gpsTargetType === 'fuel' && fuelFrac < CFG.lowFuelRatio + 0.05;
+
+      // Приоритет: заказ > заправка
+      if (activeDrop) {
         const dx = this.player.x - (this._gpsFromX || 0);
         const dz = this.player.z - (this._gpsFromZ || 0);
         const movedFar = (dx * dx + dz * dz) > (32 * 32);
@@ -17107,9 +17153,37 @@ class Game {
           this._gpsFromX = this.player.x;
           this._gpsFromZ = this.player.z;
         }
+        this._gpsTargetType = 'order';
+        this._gpsFuelRoute = null;
+        this._gpsFuelTarget = null;
+      } else if ((isLowFuel || keepFuel) && this.world && this.world.intersections) {
+        // маршрут к заправке (только когда нет заказа)
+        const st = this._nearestFuelStation(this.player.x, this.player.z);
+        if (st) {
+          const dx = this.player.x - (this._gpsFromX || 0);
+          const dz = this.player.z - (this._gpsFromZ || 0);
+          const movedFar = (dx * dx + dz * dz) > (32 * 32);
+          if (st !== this._gpsFuelTarget || movedFar || !this._gpsFuelRoute) {
+            const graph = buildCarRoadGraph(this.world.intersections);
+            this._gpsFuelRoute = findCarRoute(this.world.intersections, graph, this.player.x, this.player.z, st.x, st.z);
+            this._gpsFuelTarget = st;
+            this._gpsFromX = this.player.x;
+            this._gpsFromZ = this.player.z;
+          }
+          this._gpsTargetType = 'fuel';
+        } else {
+          this._gpsRoute = null;
+          this._gpsLastDrop = null;
+          this._gpsTargetType = null;
+          this._gpsFuelRoute = null;
+          this._gpsFuelTarget = null;
+        }
       } else {
         this._gpsRoute = null;
         this._gpsLastDrop = null;
+        this._gpsTargetType = null;
+        this._gpsFuelRoute = null;
+        this._gpsFuelTarget = null;
       }
     }
 
@@ -17117,14 +17191,14 @@ class Game {
     this._hudAccum = (this._hudAccum || 0) + dt;
     if (this._hudAccum >= 1 / 15) {
       this._hudAccum = 0;
-      this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world, this._gpsRoute);
+      this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world, this._gpsRoute, this._gpsFuelRoute, this._gpsTargetType);
     }
 
     // миникарта (троттлинг до ~20 Гц)
     this._minimapAccum = (this._minimapAccum || 0) + dt;
     if (this._minimapAccum >= 1 / 20) {
       this._minimapAccum = 0;
-      this.ui.renderMinimap(this.player, this.orders, this.world, this.traffic, null, this._gpsRoute);
+      this.ui.renderMinimap(this.player, this.orders, this.world, this.traffic, null, this._gpsRoute, this._gpsFuelRoute, this._gpsTargetType);
     }
 
     // автосохранение
@@ -17241,7 +17315,7 @@ class Game {
     if (this._minimapAccum >= 1 / 20) {
       this._minimapAccum = 0;
       if (this.playerPed) {
-        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player, this._gpsRoute);
+        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player, this._gpsRoute, null, this._gpsTargetType);
       }
     }
 

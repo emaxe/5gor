@@ -246,7 +246,7 @@ export class UIManager {
     if (el.textContent !== text) el.textContent = text; // сравнение строк дешевле лишней DOM-записи
   }
 
-  updateHud(player, gameState, orders, hour, camera, world, gpsRoute) {
+  updateHud(player, gameState, orders, hour, camera, world, gpsRoute, fuelRoute, gpsTargetType) {
     const els = this._els;
     this._setText(els.money, fmtMoney(gameState.money));
     const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
@@ -298,13 +298,16 @@ export class UIManager {
       oc.classList.add('hidden');
     }
 
-    // стрелка-навигатор: появляется только при активном принятом задании
+    // стрелка-навигатор: появляется только при активном принятом задании или при маршруте к заправке
     const nw = els['nav-arrow-wrap'];
-    const target = orders.activeDrop;
+    const orderTarget = orders && orders.activeDrop;
+    const isFuelNav = !orderTarget && gpsTargetType === 'fuel' && fuelRoute && fuelRoute.length > 1;
+    const target = orderTarget || (isFuelNav ? fuelRoute[fuelRoute.length - 1] : null);
     if (target) {
       nw.classList.remove('hidden');
-      const hasRoute = gpsRoute && gpsRoute.length > 1;
-      const navTarget = hasRoute ? gpsRoute[1] : target;
+      const route = orderTarget ? gpsRoute : fuelRoute;
+      const hasRoute = route && route.length > 1;
+      const navTarget = hasRoute ? route[1] : target;
       const dx = navTarget.x - player.x, dz = navTarget.z - player.z;
       // ➤ указывает вправо при rotate(0) — «вперёд» = -90°.
       // Раскладываем вектор к цели по осям машины: forward=(sin h,cos h),
@@ -317,8 +320,10 @@ export class UIManager {
       let ang = -Math.atan2(fwdC, rgtC);
       ang = Math.atan2(Math.sin(ang), Math.cos(ang)); // кратчайший доворот в [-π,π]
       els['nav-arrow'].style.transform = 'rotate(' + Math.round(ang * 180 / Math.PI * 10) / 10 + 'deg)';
-      const remainingDist = hasRoute ? routeLength(gpsRoute) : dist2D(player.x, player.z, target.x, target.z);
-      els['nav-dist'].textContent = Math.round(remainingDist) + ' м';
+      // цвет стрелки: зелёный для заправки
+      els['nav-arrow'].style.color = isFuelNav ? '#2ecc40' : '#58a6ff';
+      const remainingDist = hasRoute ? routeLength(route) : dist2D(player.x, player.z, target.x, target.z);
+      els['nav-dist'].textContent = Math.round(remainingDist) + ' м' + (isFuelNav ? ' ⛽' : '');
     } else {
       nw.classList.add('hidden');
     }
@@ -377,7 +382,7 @@ export class UIManager {
   }
 
   /* ---------- Мини-карта (heading-up: карта вращается, стрелка всегда вверх) ---------- */
-  renderMinimap(player, orders, world, traffic, car, gpsRoute) {
+  renderMinimap(player, orders, world, traffic, car, gpsRoute, fuelRoute, gpsTargetType) {
     const c = this.$('minimap');
     const g = c.getContext('2d');
     const W = c.width;
@@ -397,27 +402,31 @@ export class UIManager {
       const srcX = (vx0 + 320) * bsc, srcY = (vz0 + 320) * bsc;
       g.drawImage(this._baseMap, srcX, srcY, view * bsc, view * bsc, vx0 * scale, vz0 * scale, view * scale, view * scale);
     }
-    // маршрут до точки высадки, если взят заказ (по дорожной сетке: полилиния GPS-маршрута,
+    // маршрут до точки высадки или заправки (по дорожной сетке: полилиния GPS-маршрута,
     // либо фолбэк на L-путь; мир-координаты уже в повёрнутом контексте)
     const activeDrop = orders && orders.activeDrop;
-    if (orders && orders.active && activeDrop) {
+    const hasOrderRoute = orders && orders.active && activeDrop;
+    const useFuel = !hasOrderRoute && gpsTargetType === 'fuel' && fuelRoute && fuelRoute.length > 1;
+    if (hasOrderRoute || useFuel) {
+      const route = useFuel ? fuelRoute : gpsRoute;
+      const target = useFuel ? fuelRoute[fuelRoute.length - 1] : activeDrop;
       const rx = (x) => x * scale, rz = (z) => z * scale;
-      g.strokeStyle = 'rgba(255, 214, 80, 0.9)';
+      g.strokeStyle = useFuel ? 'rgba(46, 204, 64, 0.95)' : 'rgba(255, 214, 80, 0.9)';
       g.lineWidth = 2.5;
       g.lineJoin = 'round';
       g.beginPath();
-      if (gpsRoute && gpsRoute.length > 1) {
-        g.moveTo(rx(gpsRoute[0].x), rz(gpsRoute[0].z));
-        for (let i = 1; i < gpsRoute.length; i++) {
-          g.lineTo(rx(gpsRoute[i].x), rz(gpsRoute[i].z));
+      if (route && route.length > 1) {
+        g.moveTo(rx(route[0].x), rz(route[0].z));
+        for (let i = 1; i < route.length; i++) {
+          g.lineTo(rx(route[i].x), rz(route[i].z));
         }
-      } else {
+      } else if (target) {
         const CELL = 64;
         const vx = Math.round(player.x / CELL) * CELL;
         g.moveTo(rx(player.x), rz(player.z));
         g.lineTo(rx(vx), rz(player.z));
-        g.lineTo(rx(vx), rz(activeDrop.z));
-        g.lineTo(rx(activeDrop.x), rz(activeDrop.z));
+        g.lineTo(rx(vx), rz(target.z));
+        g.lineTo(rx(target.x), rz(target.z));
       }
       g.stroke();
     }
@@ -520,7 +529,7 @@ export class UIManager {
   }
 
   /* ---------- Большая карта ---------- */
-  renderBigMap(player, orders, world, car, gpsRoute) {
+  renderBigMap(player, orders, world, car, gpsRoute, fuelRoute, gpsTargetType) {
     const c = this.$('bigmap');
     const availW = window.innerWidth * 0.96, availH = window.innerHeight * 0.86;
     const size = Math.min(availW, availH);
@@ -528,16 +537,19 @@ export class UIManager {
     const g = c.getContext('2d');
     this._ensureBaseMap(world);
     g.drawImage(this._baseMap, 0, 0, size, size);
-    // маршрут GPS
-    if (orders && orders.active && orders.activeDrop) {
-      if (gpsRoute && gpsRoute.length > 1) {
-        g.strokeStyle = 'rgba(255, 214, 80, 0.9)';
+    // маршрут GPS (заказ или заправка)
+    const hasOrderRoute = orders && orders.active && orders.activeDrop;
+    const useFuel = !hasOrderRoute && gpsTargetType === 'fuel' && fuelRoute && fuelRoute.length > 1;
+    if (hasOrderRoute || useFuel) {
+      const route = useFuel ? fuelRoute : gpsRoute;
+      if (route && route.length > 1) {
+        g.strokeStyle = useFuel ? 'rgba(46, 204, 64, 0.95)' : 'rgba(255, 214, 80, 0.9)';
         g.lineWidth = 3;
         g.lineJoin = 'round';
         g.beginPath();
-        g.moveTo((gpsRoute[0].x + 320) / 640 * size, (gpsRoute[0].z + 320) / 640 * size);
-        for (let i = 1; i < gpsRoute.length; i++) {
-          g.lineTo((gpsRoute[i].x + 320) / 640 * size, (gpsRoute[i].z + 320) / 640 * size);
+        g.moveTo((route[0].x + 320) / 640 * size, (route[0].z + 320) / 640 * size);
+        for (let i = 1; i < route.length; i++) {
+          g.lineTo((route[i].x + 320) / 640 * size, (route[i].z + 320) / 640 * size);
         }
         g.stroke();
       }

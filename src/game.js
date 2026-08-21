@@ -104,6 +104,9 @@ export class Game {
     this._gpsAccum = 0;
     this._gpsFromX = 0;
     this._gpsFromZ = 0;
+    this._gpsTargetType = null;   // 'order' | 'fuel' | null
+    this._gpsFuelRoute = null;    // маршрут к заправке (отдельный от _gpsRoute заказа)
+    this._gpsFuelTarget = null;   // объект заправки {x,z}
 
     // Обучение и подсказки (S1)
     this._tutorialStep = 0;
@@ -399,6 +402,8 @@ export class Game {
       this.ui.toast('Край карты — дальше не проехать!', '#ffb030');
     });
     events.on('order:accepted', () => {
+      this._gpsFuelRoute = null; this._gpsFuelTarget = null; this._gpsTargetType = null;
+      this._gpsRoute = null; this._gpsLastDrop = null;
       this.ui.toast('Пассажир сел. Поехали!', '#7ee787');
       if (this.day === 1 && !this._tutorialShown.has('order_accepted_0')) {
         const total = (this.stats?.orders || 0) + (this.shiftStats?.orders || 0);
@@ -513,7 +518,7 @@ export class Game {
       this.ui.showScreen('settings', true);
     } else if (name === 'map') {
       this.ui.showScreen('map', true);
-      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null, this._gpsRoute);
+      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null, this._gpsRoute, this._gpsFuelRoute, this._gpsTargetType);
     } else if (name === 'shiftend') {
       this.ui.showScreen('shiftend', true);
       this.ui.renderShiftEnd({ money: this.money, rating: this.rating, day: this.day }, this.shiftStats);
@@ -556,6 +561,11 @@ export class Game {
     Events.emit('weather:changed', { weather: this.weather });
     this._applyDensity();
     this.orders.reset();
+    this._gpsRoute = null;
+    this._gpsLastDrop = null;
+    this._gpsFuelRoute = null;
+    this._gpsFuelTarget = null;
+    this._gpsTargetType = null;
     this.player.applyUpgrades(this.upgrades.stats());
     this.player.setTuning(this.upgrades.tuningForCar());
     this.player.setPos(0, 20, 0);
@@ -788,6 +798,8 @@ export class Game {
     this.chaseCam.reset(this.player);
     this.ui.toast('Эвакуатор доставил машину на перекрёсток', '#7ee787');
     this.audio.chime();
+    this._gpsFuelRoute = null; this._gpsFuelTarget = null; this._gpsTargetType = null;
+    this._gpsRoute = null; this._gpsLastDrop = null;
     this.setState('driving');
   }
 
@@ -901,6 +913,19 @@ export class Game {
     return best;
   }
 
+  _nearestFuelStation(x, z) {
+    const stations = this.world && this.world.fuelStations;
+    if (!stations || stations.length === 0) return null;
+    let best = stations[0], minD2 = Infinity;
+    for (let i = 0; i < stations.length; i++) {
+      const s = stations[i];
+      const dx = s.x - x, dz = s.z - z;
+      const d2 = dx * dx + dz * dz;
+      if (d2 < minD2) { minD2 = d2; best = s; }
+    }
+    return best;
+  }
+
   refuel() {
     const cost = Math.round((this.player.stats.tank - this.player.fuel) * CFG.fuelPrice);
     if (this.money < cost) { this.ui.toast('Не хватает денег на бензин', '#ff6b6b'); return; }
@@ -908,6 +933,8 @@ export class Game {
     this.player.refuel();
     this.audio.chime();
     this.ui.toast('Заправлено за ' + fmtMoney(cost), '#7ee787');
+    this._gpsFuelRoute = null; this._gpsFuelTarget = null; this._gpsTargetType = null;
+    this._gpsRoute = null; this._gpsLastDrop = null;
   }
 
   completeOrder() {
@@ -1270,7 +1297,13 @@ export class Game {
     if (this._gpsAccum >= 0.5) {
       this._gpsAccum = 0;
       const activeDrop = this.orders && this.orders.active && this.orders.activeDrop;
-      if (activeDrop && this.world && this.world.intersections) {
+      const fuelFrac = this.player.fuel / this.player.stats.tank;
+      const isLowFuel = fuelFrac < CFG.lowFuelRatio;
+      // гистерезис: уже в режиме заправки — держим до fuelFrac > lowFuelRatio + 0.05
+      const keepFuel = this._gpsTargetType === 'fuel' && fuelFrac < CFG.lowFuelRatio + 0.05;
+
+      // Приоритет: заказ > заправка
+      if (activeDrop) {
         const dx = this.player.x - (this._gpsFromX || 0);
         const dz = this.player.z - (this._gpsFromZ || 0);
         const movedFar = (dx * dx + dz * dz) > (32 * 32);
@@ -1281,9 +1314,37 @@ export class Game {
           this._gpsFromX = this.player.x;
           this._gpsFromZ = this.player.z;
         }
+        this._gpsTargetType = 'order';
+        this._gpsFuelRoute = null;
+        this._gpsFuelTarget = null;
+      } else if ((isLowFuel || keepFuel) && this.world && this.world.intersections) {
+        // маршрут к заправке (только когда нет заказа)
+        const st = this._nearestFuelStation(this.player.x, this.player.z);
+        if (st) {
+          const dx = this.player.x - (this._gpsFromX || 0);
+          const dz = this.player.z - (this._gpsFromZ || 0);
+          const movedFar = (dx * dx + dz * dz) > (32 * 32);
+          if (st !== this._gpsFuelTarget || movedFar || !this._gpsFuelRoute) {
+            const graph = buildCarRoadGraph(this.world.intersections);
+            this._gpsFuelRoute = findCarRoute(this.world.intersections, graph, this.player.x, this.player.z, st.x, st.z);
+            this._gpsFuelTarget = st;
+            this._gpsFromX = this.player.x;
+            this._gpsFromZ = this.player.z;
+          }
+          this._gpsTargetType = 'fuel';
+        } else {
+          this._gpsRoute = null;
+          this._gpsLastDrop = null;
+          this._gpsTargetType = null;
+          this._gpsFuelRoute = null;
+          this._gpsFuelTarget = null;
+        }
       } else {
         this._gpsRoute = null;
         this._gpsLastDrop = null;
+        this._gpsTargetType = null;
+        this._gpsFuelRoute = null;
+        this._gpsFuelTarget = null;
       }
     }
 
@@ -1291,14 +1352,14 @@ export class Game {
     this._hudAccum = (this._hudAccum || 0) + dt;
     if (this._hudAccum >= 1 / 15) {
       this._hudAccum = 0;
-      this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world, this._gpsRoute);
+      this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world, this._gpsRoute, this._gpsFuelRoute, this._gpsTargetType);
     }
 
     // миникарта (троттлинг до ~20 Гц)
     this._minimapAccum = (this._minimapAccum || 0) + dt;
     if (this._minimapAccum >= 1 / 20) {
       this._minimapAccum = 0;
-      this.ui.renderMinimap(this.player, this.orders, this.world, this.traffic, null, this._gpsRoute);
+      this.ui.renderMinimap(this.player, this.orders, this.world, this.traffic, null, this._gpsRoute, this._gpsFuelRoute, this._gpsTargetType);
     }
 
     // автосохранение
@@ -1415,7 +1476,7 @@ export class Game {
     if (this._minimapAccum >= 1 / 20) {
       this._minimapAccum = 0;
       if (this.playerPed) {
-        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player, this._gpsRoute);
+        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player, this._gpsRoute, null, this._gpsTargetType);
       }
     }
 
