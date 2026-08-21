@@ -699,6 +699,7 @@ export class PedestrianManager {
       u.arms[0].rotation.x = -1.2 + sw * 0.3;
       u.arms[1].rotation.x = -1.2 - sw * 0.3;
       u.legs[0].rotation.x = 0; u.legs[1].rotation.x = 0;
+      if (u.head) u.head.rotation.y = Math.sin(Date.now() * 0.02) * 0.25;
     } else if (moving) {
       const sw = Math.sin(ph);
       u.legs[0].rotation.x = sw * amp;
@@ -708,6 +709,28 @@ export class PedestrianManager {
     } else {
       u.legs[0].rotation.x = 0; u.legs[1].rotation.x = 0;
       u.arms[0].rotation.x = 0; u.arms[1].rotation.x = 0;
+    }
+
+    const t = Date.now() * 0.001 + (u.idleSeed || 0);
+    if (u.head && (p.angerT <= 0 || moving)) {
+      if (moving) {
+        u.head.rotation.x = Math.sin(ph * 2) * 0.05;      // кивок в такт шагам
+        u.head.rotation.y = Math.sin(ph * 0.5 + (u.idleSeed || 0)) * 0.12;
+        u.head.rotation.z = 0;
+      } else {
+        u.head.rotation.x = Math.sin(t * 0.7) * 0.04;      // idle: осмотр
+        u.head.rotation.y = Math.sin(t * 0.55 + (u.idleSeed || 0)) * 0.35;
+        u.head.rotation.z = Math.sin(t * 0.4 + (u.idleSeed || 0)) * 0.05;
+      }
+    }
+    if (u.upper) {
+      if (moving) {
+        u.upper.position.y = Math.abs(Math.sin(ph)) * 0.035; // шаговый боббинг
+        u.upper.rotation.z = Math.sin(ph) * 0.045;          // крен корпуса
+      } else {
+        u.upper.position.y = Math.sin(t * 1.6) * 0.008;     // дыхание
+        u.upper.rotation.z *= 0.9;
+      }
     }
   }
 

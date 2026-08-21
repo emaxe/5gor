@@ -547,6 +547,9 @@ export function buildCatMesh() {
   return g;
 }
 
+/* Высота шеи пешехода для вращения головы (пивот) */
+const HEAD_PIVOT_Y = 1.42;
+
 /* Гуманоид-пешеход из примитивов с повышенной детализацией и разнообразием */
 export function buildPedMesh(archetype) {
   if (archetype === 'dog') return buildDogMesh();
@@ -556,11 +559,12 @@ export function buildPedMesh(archetype) {
     'elder', 'mom', 'worker', 'musician', 'nurse'];
   const arch = archetype || choice(types);
 
-  let skin = choice([0xf5d0b0, 0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30, 0xffdbac]);
-  let cloth = choice([0x4060a0, 0xa04040, 0x409060, 0xa08040, 0x604080, 0x888888, 0xc07830, 0x3090a0, 0xe05566, 0x22aa88]);
-  let pants = choice([0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x5a5a5a, 0x1a2430, 0xd0c0aa]);
-  let hairC = choice([0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0xd8c8a8, 0x8a2a2a, 0x2a2a4a, 0x995522]);
-  
+  let skin = choice([0xf5d0b0, 0xd8a878, 0x8a5a3a, 0xc89060, 0xa87850, 0xb08058, 0x6a4a30, 0xffdbac, 0xecd0b8, 0x9c6b45, 0x523320]);
+  let cloth = choice([0x4060a0, 0xa04040, 0x409060, 0xa08040, 0x604080, 0x888888, 0xc07830, 0x3090a0, 0xe05566, 0x22aa88, 0x2b4c7e, 0x5b6d5b, 0x6e263c, 0xc2a649, 0x4d5d36, 0xd2b48c]);
+  let pants = choice([0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x5a5a5a, 0x1a2430, 0xd0c0aa, 0x1e3799, 0x2c2c54, 0x384030, 0x484848]);
+  let hairC = choice([0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0xd8c8a8, 0x8a2a2a, 0x2a2a4a, 0x995522, 0xdcdde1, 0x718093, 0xb0885a, 0x4a4a4a]);
+  let shoeC = choice([0x202020, 0x111111, 0xeeeeee, 0x5a3a20, 0x3a3a3a, 0x8a4a2a]);
+
   let scaleY = rand(0.92, 1.08);
   let scaleXZ = rand(0.92, 1.08);
 
@@ -628,9 +632,10 @@ export function buildPedMesh(archetype) {
   const mat = (c) => getPedMat(c);
   const g = new THREE.Group();
 
-  // Статичные части (торс, голова, аксессуары) копятся здесь и сливаются одним
-  // vertexColors-мешем в конце (OPT-14) — вместо ~6-10 отдельных мешей на пешехода.
+  // Статичные части торса и аксессуаров
   const parts = [];
+  // Детали головы (собираются в абсолютных координатах и переносятся в отдельную Group userData.head)
+  const headParts = [];
 
   // Торс
   parts.push({ g: new THREE.BoxGeometry(0.56, 0.68, 0.34).translate(0, 1.05, 0), c: cloth });
@@ -640,96 +645,148 @@ export function buildPedMesh(archetype) {
     parts.push({ g: new THREE.BoxGeometry(0.06, 0.66, 0.02).translate(0, 1.05, 0.175), c: 0xdddddd });
   }
 
-  // Голова + лицо
-  parts.push({ g: new THREE.SphereGeometry(0.26, 10, 8).translate(0, 1.62, 0), c: skin });
+  // Голова + нос
+  headParts.push({ g: new THREE.SphereGeometry(0.26, 10, 8).translate(0, 1.62, 0), c: skin });
+  headParts.push({ g: new THREE.BoxGeometry(0.04, 0.04, 0.04).translate(0, 1.62, 0.26), c: skin });
 
   // Очки / солнцезащитные очки
   if (Math.random() < 0.35 || arch === 'businessman' || arch === 'tourist') {
     const glassColor = arch === 'businessman' || Math.random() < 0.6 ? 0x111115 : 0x88ccff;
-    parts.push({ g: new THREE.BoxGeometry(0.36, 0.08, 0.06).translate(0, 1.64, 0.23), c: glassColor });
+    headParts.push({ g: new THREE.BoxGeometry(0.36, 0.08, 0.06).translate(0, 1.64, 0.23), c: glassColor });
   }
 
-  // Волосы / Шляпы
+  // Волосы / Шляпы / Аксессуары
   if (arch === 'gopnik') {
-    // Кепка-восьмиклинка: сидит на МАКУШКЕ (верх головы 1.88), не на лбу —
-    // иначе цилиндр на уровне глаз выглядит «ободком», макушка торчит сверху.
-    parts.push({ g: new THREE.CylinderGeometry(0.28, 0.28, 0.10, 8).translate(0, 1.84, 0.02), c: 0x1a1a1c });
-    parts.push({ g: new THREE.BoxGeometry(0.24, 0.02, 0.16).translate(0, 1.79, 0.24), c: 0x1a1a1c });
+    // Кепка-восьмиклинка: сидит на МАКУШКЕ
+    headParts.push({ g: new THREE.CylinderGeometry(0.28, 0.28, 0.10, 8).translate(0, 1.84, 0.02), c: 0x1a1a1c });
+    headParts.push({ g: new THREE.BoxGeometry(0.24, 0.02, 0.16).translate(0, 1.79, 0.24), c: 0x1a1a1c });
+    // Ремень через плечо + поясная сумка-барсетка
+    parts.push({ g: new THREE.BoxGeometry(0.04, 0.58, 0.02).rotateZ(0.6).translate(0, 1.05, 0.175), c: 0x111111 });
+    parts.push({ g: new THREE.BoxGeometry(0.04, 0.58, 0.02).rotateZ(-0.6).translate(0, 1.05, -0.175), c: 0x111111 });
+    parts.push({ g: new THREE.BoxGeometry(0.18, 0.12, 0.06).translate(0.06, 1.1, 0.19), c: 0x111111 });
+    // Белые лампасы на куртке
+    parts.push({ g: new THREE.BoxGeometry(0.02, 0.66, 0.35).translate(0.285, 1.05, 0), c: 0xffffff });
+    parts.push({ g: new THREE.BoxGeometry(0.02, 0.66, 0.35).translate(-0.285, 1.05, 0), c: 0xffffff });
   } else if (arch === 'grandma') {
     // Платок на голову
-    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.7).translate(0, 1.63, 0), c: 0xd8a8a8 });
-    // Сумка в руке
-    parts.push({ g: new THREE.BoxGeometry(0.22, 0.28, 0.14).translate(0.36, 0.88, 0.1), c: 0x4a3a2a });
+    headParts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.7).translate(0, 1.63, 0), c: 0xd8a8a8 });
+    // Сумка/авоська или палочка
+    if (Math.random() < 0.5) {
+      parts.push({ g: new THREE.BoxGeometry(0.22, 0.28, 0.14).translate(0.36, 0.88, 0.1), c: choice([0x4a3a2a, 0xd0c8a0, 0x6a4a3a]) });
+    } else {
+      parts.push({ g: new THREE.CylinderGeometry(0.025, 0.025, 0.95, 6).translate(0.38, 0.65, 0.1), c: 0x5a3a1a });
+    }
   } else if (arch === 'runner') {
-    // Повязка на лоб
-    parts.push({ g: new THREE.CylinderGeometry(0.27, 0.27, 0.06, 8).translate(0, 1.68, 0), c: 0xffffff });
+    // Повязка на лоб и причёска
+    headParts.push({ g: new THREE.CylinderGeometry(0.27, 0.27, 0.06, 8).translate(0, 1.68, 0), c: 0xffffff });
+    headParts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 1.63, 0), c: hairC });
   } else if (arch === 'student') {
-    // Наушники на ушах
-    parts.push({ g: new THREE.TorusGeometry(0.27, 0.04, 4, 12, Math.PI).rotateX(Math.PI / 2).translate(0, 1.65, 0), c: 0x222222 });
-    // Рюкзак на спине
-    parts.push({ g: new THREE.BoxGeometry(0.38, 0.45, 0.22).translate(0, 1.1, -0.25), c: 0x205080 });
+    // Наушники на ушах и причёска
+    headParts.push({ g: new THREE.TorusGeometry(0.27, 0.04, 4, 12, Math.PI).rotateX(Math.PI / 2).translate(0, 1.65, 0), c: 0x222222 });
+    headParts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 1.63, 0), c: hairC });
+    // Рюкзак на спине с карманом
+    const bagColor = choice([0x205080, 0x803020, 0x306030, 0x222222]);
+    parts.push({ g: new THREE.BoxGeometry(0.38, 0.45, 0.20).translate(0, 1.1, -0.24), c: bagColor });
+    parts.push({ g: new THREE.BoxGeometry(0.26, 0.20, 0.08).translate(0, 1.0, -0.35), c: bagColor });
+    parts.push({ g: new THREE.BoxGeometry(0.22, 0.02, 0.09).translate(0, 1.11, -0.35), c: 0xcccccc });
   } else if (arch === 'businessman') {
     // Портфель в руке
     parts.push({ g: new THREE.BoxGeometry(0.1, 0.28, 0.36).translate(0.38, 0.85, 0.05), c: 0x1a1410 });
+    // Галстук на груди
+    parts.push({ g: new THREE.BoxGeometry(0.06, 0.35, 0.02).translate(0, 1.12, 0.175), c: choice([0x8a2020, 0x204080, 0x8a7020]) });
     // Причёска бизнесмена
-    parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.64, 0), c: 0x221a14 });
+    headParts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.64, 0), c: 0x221a14 });
   } else if (arch === 'tourist') {
     // Панамка / кепка туриста
-    parts.push({ g: new THREE.CylinderGeometry(0.42, 0.42, 0.02, 10).translate(0, 1.74, 0), c: 0xddccaa });
-    parts.push({ g: new THREE.CylinderGeometry(0.26, 0.27, 0.16, 10).translate(0, 1.83, 0), c: 0xddccaa });
-    // Фотоаппарат на груди
+    headParts.push({ g: new THREE.CylinderGeometry(0.42, 0.42, 0.02, 10).translate(0, 1.74, 0), c: 0xddccaa });
+    headParts.push({ g: new THREE.CylinderGeometry(0.26, 0.27, 0.16, 10).translate(0, 1.83, 0), c: 0xddccaa });
+    // Фотоаппарат на груди с объективом
     parts.push({ g: new THREE.BoxGeometry(0.18, 0.14, 0.12).translate(0, 1.15, 0.22), c: 0x222222 });
+    parts.push({ g: new THREE.CylinderGeometry(0.05, 0.05, 0.05, 8).rotateX(Math.PI / 2).translate(0.03, 1.15, 0.29), c: 0x444444 });
   } else if (arch === 'elder') {
     // Бородатый старик: седая борода + лысина/седые волосы
-    parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.64, 0), c: 0xd8d8d8 });
+    headParts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.64, 0), c: 0xd8d8d8 });
     // Борода (полусфера под лицом)
-    parts.push({ g: new THREE.SphereGeometry(0.2, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.5, 0.1), c: 0xd8d8d8 });
+    headParts.push({ g: new THREE.SphereGeometry(0.2, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.5, 0.1), c: 0xd8d8d8 });
     // Трость в руке
     parts.push({ g: new THREE.CylinderGeometry(0.03, 0.03, 1.1, 6).translate(0.4, 0.75, 0.1), c: 0x5a3a1a });
   } else if (arch === 'mom') {
     // Мама с коляской: волосы в пучок + коляска перед собой
-    parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.64, 0), c: 0x4a2a1a });
-    parts.push({ g: new THREE.SphereGeometry(0.1, 6, 6).translate(0, 1.84, -0.14), c: 0x4a2a1a });
+    headParts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.64, 0), c: 0x4a2a1a });
+    headParts.push({ g: new THREE.SphereGeometry(0.1, 6, 6).translate(0, 1.84, -0.14), c: 0x4a2a1a });
     // Коляска (корпус + колёса) перед мамой
     parts.push({ g: new THREE.BoxGeometry(0.5, 0.4, 0.7).translate(0, 0.7, 0.5), c: 0x3a5a8a });
     parts.push({ g: new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8).rotateX(Math.PI / 2).translate(0, 0.35, 0.5), c: 0x222222 });
     parts.push({ g: new THREE.CylinderGeometry(0.12, 0.12, 0.1, 8).rotateX(Math.PI / 2).translate(0, 0.35, 0.9), c: 0x222222 });
   } else if (arch === 'worker') {
-    // Рабочий: каска + инструмент в руке
-    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0xe8c020 });
-    parts.push({ g: new THREE.CylinderGeometry(0.3, 0.3, 0.05, 8).translate(0, 1.78, 0), c: 0xe8c020 });
+    // Рабочий: каска + светоотражающие полоски + инструмент в руке
+    headParts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0xe8c020 });
+    headParts.push({ g: new THREE.CylinderGeometry(0.3, 0.3, 0.05, 8).translate(0, 1.78, 0), c: 0xe8c020 });
+    // Светоотражающие полоски на спецовке
+    parts.push({ g: new THREE.BoxGeometry(0.54, 0.04, 0.02).translate(0, 1.18, 0.175), c: 0xd4e157 });
+    parts.push({ g: new THREE.BoxGeometry(0.54, 0.04, 0.02).translate(0, 0.92, 0.175), c: 0xd4e157 });
+    parts.push({ g: new THREE.BoxGeometry(0.54, 0.04, 0.02).translate(0, 1.18, -0.175), c: 0xd4e157 });
     // Гаечный ключ в руке
     parts.push({ g: new THREE.BoxGeometry(0.05, 0.5, 0.05).translate(0.42, 0.9, 0.1), c: 0x888888 });
   } else if (arch === 'musician') {
-    // Уличный музыкант: берет + аккордеон на груди
-    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0x2a2a2a });
-    parts.push({ g: new THREE.CylinderGeometry(0.3, 0.3, 0.06, 8).translate(0, 1.78, 0), c: 0x8a3a3a });
-    // Аккордеон (корпус + меха)
-    parts.push({ g: new THREE.BoxGeometry(0.4, 0.3, 0.2).translate(0, 1.1, 0.25), c: 0x8a3a3a });
-    parts.push({ g: new THREE.BoxGeometry(0.42, 0.2, 0.1).translate(0, 1.1, 0.18), c: 0xdddddd });
+    // Уличный музыкант: берет + аккордеон или чехол гитары
+    headParts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0x2a2a2a });
+    headParts.push({ g: new THREE.CylinderGeometry(0.3, 0.3, 0.06, 8).translate(0, 1.78, 0), c: 0x8a3a3a });
+    if (Math.random() < 0.5) {
+      // Аккордеон (корпус + меха)
+      parts.push({ g: new THREE.BoxGeometry(0.4, 0.3, 0.2).translate(0, 1.1, 0.25), c: 0x8a3a3a });
+      parts.push({ g: new THREE.BoxGeometry(0.42, 0.2, 0.1).translate(0, 1.1, 0.18), c: 0xdddddd });
+    } else {
+      // Чехол гитары за спиной и ремень
+      parts.push({ g: new THREE.BoxGeometry(0.30, 0.48, 0.14).rotateZ(0.25).translate(0.05, 1.15, -0.24), c: 0x1f1f1f });
+      parts.push({ g: new THREE.BoxGeometry(0.09, 0.40, 0.09).rotateZ(0.25).translate(-0.06, 1.50, -0.24), c: 0x1f1f1f });
+      parts.push({ g: new THREE.BoxGeometry(0.04, 0.58, 0.02).rotateZ(-0.5).translate(0, 1.08, 0.175), c: 0x1f1f1f });
+    }
   } else if (arch === 'nurse') {
     // Медсестра: белая шапочка с крестом + фонендоскоп
-    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0xffffff });
-    parts.push({ g: new THREE.BoxGeometry(0.3, 0.05, 0.3).translate(0, 1.78, 0), c: 0xffffff });
+    headParts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.66, 0), c: 0xffffff });
+    headParts.push({ g: new THREE.BoxGeometry(0.3, 0.05, 0.3).translate(0, 1.78, 0), c: 0xffffff });
     // Красный крест на шапочке
-    parts.push({ g: new THREE.BoxGeometry(0.12, 0.04, 0.04).translate(0, 1.78, 0.1), c: 0xcc2222 });
-    parts.push({ g: new THREE.BoxGeometry(0.04, 0.04, 0.12).translate(0, 1.78, 0.1), c: 0xcc2222 });
+    headParts.push({ g: new THREE.BoxGeometry(0.12, 0.04, 0.04).translate(0, 1.78, 0.1), c: 0xcc2222 });
+    headParts.push({ g: new THREE.BoxGeometry(0.04, 0.04, 0.12).translate(0, 1.78, 0.1), c: 0xcc2222 });
     // Фонендоскоп на шее
     parts.push({ g: new THREE.TorusGeometry(0.1, 0.02, 4, 8).rotateX(Math.PI / 2).translate(0, 1.35, 0.15), c: 0x222222 });
+  } else if (arch === 'child') {
+    headParts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 1.63, 0), c: hairC });
   } else {
     // Разнообразные причёски для обычных пешеходов
     const hairStyle = Math.floor(Math.random() * 3);
     if (hairStyle === 0) {
-      parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 1.63, 0), c: hairC });
+      headParts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 1.63, 0), c: hairC });
     } else if (hairStyle === 1) {
       // Пышная причёска / пучок
-      parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.64, 0), c: hairC });
-      parts.push({ g: new THREE.SphereGeometry(0.12, 6, 6).translate(0, 1.82, -0.16), c: hairC });
+      headParts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.64, 0), c: hairC });
+      headParts.push({ g: new THREE.SphereGeometry(0.12, 6, 6).translate(0, 1.82, -0.16), c: hairC });
+    } else {
+      headParts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.5).translate(0, 1.64, 0), c: hairC });
+    }
+    // Шарф на шее (шанс ~30%)
+    if (Math.random() < 0.3) {
+      const scarfC = choice([0xbb3333, 0x336699, 0xddaa33, 0x338866, 0x664488]);
+      parts.push({ g: new THREE.TorusGeometry(0.16, 0.06, 5, 10).rotateX(Math.PI / 2).translate(0, 1.37, 0), c: scarfC });
+      parts.push({ g: new THREE.BoxGeometry(0.1, 0.24, 0.04).translate(0.06, 1.22, 0.18), c: scarfC });
     }
   }
 
+  // Мердж статичных частей корпуса
   const staticMesh = new THREE.Mesh(mergeColored(parts), getPedColoredMat());
-  g.add(staticMesh);
+
+  // Голова: мердж в абсолютных координатах → сдвиг вниз к пивоту → Group с position.y = HEAD_PIVOT_Y
+  const headGeo = mergeColored(headParts);
+  headGeo.translate(0, -HEAD_PIVOT_Y, 0);
+  const headGroup = new THREE.Group();
+  headGroup.add(new THREE.Mesh(headGeo, getPedColoredMat()));
+  headGroup.position.y = HEAD_PIVOT_Y;
+
+  // Группа верхнего корпуса для боббинга/дыхания
+  const upper = new THREE.Group();
+  upper.add(staticMesh);
+  upper.add(headGroup);
 
   // Ноги — legGeo+shoeGeo сливаются в один vertexColors-меш на ногу (OPT-14),
   // группа-обёртка сохраняется как есть (нужна для rotation.x при ходьбе).
@@ -737,7 +794,7 @@ export function buildPedMesh(archetype) {
   legGeo.translate(0, -0.375, 0);
   const shoeGeo = new THREE.BoxGeometry(0.2, 0.12, 0.32);
   shoeGeo.translate(0, -0.77, 0.04);
-  const legGeoMerged = mergeColored([{ g: legGeo, c: pants }, { g: shoeGeo, c: 0x202020 }]);
+  const legGeoMerged = mergeColored([{ g: legGeo, c: pants }, { g: shoeGeo, c: shoeC }]);
   const legs = [];
   for (const s of [-1, 1]) {
     const leg = new THREE.Group();
@@ -747,7 +804,7 @@ export function buildPedMesh(archetype) {
     legs.push(leg);
   }
 
-  // Руки
+  // Руки (добавляются в upper)
   const armGeo = new THREE.BoxGeometry(0.15, 0.62, 0.15);
   armGeo.translate(0, -0.31, 0);
   const arms = [];
@@ -755,23 +812,33 @@ export function buildPedMesh(archetype) {
     const arm = new THREE.Group();
     arm.add(new THREE.Mesh(armGeo, mat(cloth)));
     arm.position.set(0.39 * s, 1.32, 0);
-    g.add(arm);
+    upper.add(arm);
     arms.push(arm);
   }
 
+  g.add(upper);
+
   g.scale.set(scaleXZ, scaleY, scaleXZ);
-  g.userData = { legs, arms, archetype: arch, isAnimal: false };
+  g.userData = { legs, arms, head: headGroup, upper, idleSeed: Math.random() * 100, archetype: arch, isAnimal: false };
   return g;
 }
 
 /* Детализированная модель водителя такси с кастомизацией */
 export function buildDriverMesh(options = {}) {
   const belly = options.belly !== undefined ? !!options.belly : (Math.random() < 0.45);
-  const cap = options.cap !== undefined ? !!options.cap : true;
-  const skin = options.skinColor || choice([0xf5d0b0, 0xd8a878, 0xc89060, 0xa87850, 0xffdbac]);
-  const shirt = options.shirtColor || choice([0x283848, 0x503525, 0x304030, 0x222226, 0x485868, 0x5c4033, 0x334455]);
-  const pants = options.pantsColor || choice([0x1a2430, 0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x222222]);
-  const hairC = options.hairColor || choice([0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0x8a7a6a]);
+  const skin = options.skinColor || choice([0xf5d0b0, 0xd8a878, 0xc89060, 0xa87850, 0xffdbac, 0xecd0b8, 0x9c6b45]);
+  const shirt = options.shirtColor || choice([0x283848, 0x503525, 0x304030, 0x222226, 0x485868, 0x5c4033, 0x334455, 0x3b4a3f, 0x4a3b32]);
+  const pants = options.pantsColor || choice([0x1a2430, 0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x222222, 0x1e3799, 0x2c2c54]);
+  const hairC = options.hairColor || choice([0x1a1a1a, 0x3a2a1a, 0x6a4a2a, 0x8a7a6a, 0xdcdde1, 0x718093, 0x4a4a4a]);
+
+  const capStyle = options.capStyle || (options.cap === false ? 'none' : 'taxi');     // 'taxi' | 'flat' | 'beanie' | 'none'
+  const facial  = options.facialHair || (options.facialHair === undefined ? 'mustache' : 'none'); // 'mustache' | 'beard' | 'goatee' | 'none'
+  let glasses = options.glasses || 'auto';        // 'auto' | 'aviators' | 'round' | 'none'
+  if (glasses === 'auto') {
+    glasses = Math.random() < 0.7 ? 'aviators' : 'none';
+  }
+  const bulk = options.bulk || rand(0.95, 1.06);    // обхват плеч
+  const height = options.height || rand(0.96, 1.05); // рост
 
   const g = new THREE.Group();
   const parts = [];
@@ -831,21 +898,33 @@ export function buildDriverMesh(options = {}) {
   parts.push({ g: new THREE.SphereGeometry(0.26, 10, 8).translate(0, 1.62, 0), c: skin });
   parts.push({ g: new THREE.BoxGeometry(0.06, 0.06, 0.06).translate(0, 1.62, 0.26), c: skin });
 
-  // Очки-авиаторы
-  parts.push({ g: new THREE.BoxGeometry(0.36, 0.08, 0.05).translate(0, 1.64, 0.24), c: 0x15181c });
-  parts.push({ g: new THREE.BoxGeometry(0.06, 0.02, 0.055).translate(0, 1.66, 0.245), c: 0xd4af37 });
+  // Очки
+  if (glasses === 'aviators') {
+    parts.push({ g: new THREE.BoxGeometry(0.36, 0.08, 0.05).translate(0, 1.64, 0.24), c: 0x15181c });
+    parts.push({ g: new THREE.BoxGeometry(0.06, 0.02, 0.055).translate(0, 1.66, 0.245), c: 0xd4af37 });
+  } else if (glasses === 'round') {
+    parts.push({ g: new THREE.CylinderGeometry(0.07, 0.07, 0.04, 8).rotateX(Math.PI / 2).translate(-0.09, 1.64, 0.24), c: 0x111111 });
+    parts.push({ g: new THREE.CylinderGeometry(0.07, 0.07, 0.04, 8).rotateX(Math.PI / 2).translate(0.09, 1.64, 0.24), c: 0x111111 });
+    parts.push({ g: new THREE.BoxGeometry(0.06, 0.015, 0.04).translate(0, 1.64, 0.245), c: 0xd4af37 });
+  }
 
-  // Усы
-  parts.push({ g: new THREE.BoxGeometry(0.14, 0.04, 0.04).translate(0, 1.55, 0.26), c: hairC });
+  // Растительность на лице
+  if (facial === 'mustache') {
+    parts.push({ g: new THREE.BoxGeometry(0.14, 0.04, 0.04).translate(0, 1.55, 0.26), c: hairC });
+  } else if (facial === 'beard') {
+    parts.push({ g: new THREE.SphereGeometry(0.2, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.5, 0.1), c: hairC });
+    parts.push({ g: new THREE.BoxGeometry(0.14, 0.04, 0.04).translate(0, 1.55, 0.26), c: hairC });
+  } else if (facial === 'goatee') {
+    parts.push({ g: new THREE.BoxGeometry(0.08, 0.08, 0.04).translate(0, 1.48, 0.25), c: hairC });
+    parts.push({ g: new THREE.BoxGeometry(0.12, 0.03, 0.03).translate(0, 1.55, 0.26), c: hairC });
+  }
 
   // Волосы (база)
   parts.push({ g: new THREE.SphereGeometry(0.27, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 1.63, 0), c: hairC });
 
-  // Кепка таксиста с козырьком и шашечками
-  if (cap) {
+  // Головной убор
+  if (capStyle === 'taxi') {
     // Тулья кепки: сидит на МАКУШКЕ (верх головы 1.88), а не на уровне лба.
-    // Раньше на y=1.76 цилиндр (r=0.29) обхватывал узкое сечение сферы на лбу
-    // → выглядел как «ободок вокруг головы», а макушка с волосами торчала сверху.
     parts.push({ g: new THREE.CylinderGeometry(0.29, 0.28, 0.10, 10).translate(0, 1.85, 0.02), c: 0x1f2328 });
     // Козырёк — на нижней кромке тульи
     parts.push({ g: new THREE.BoxGeometry(0.26, 0.025, 0.16).translate(0, 1.80, 0.24), c: 0x111111 });
@@ -860,6 +939,14 @@ export function buildDriverMesh(options = {}) {
         c: (i % 2 === 0 ? 0xf5b020 : 0x111111)
       });
     }
+  } else if (capStyle === 'flat') {
+    parts.push({ g: new THREE.CylinderGeometry(0.29, 0.29, 0.10, 8).translate(0, 1.84, 0.02), c: 0x25282e });
+    parts.push({ g: new THREE.BoxGeometry(0.25, 0.02, 0.16).translate(0, 1.79, 0.24), c: 0x25282e });
+    parts.push({ g: new THREE.CylinderGeometry(0.03, 0.03, 0.02, 6).translate(0, 1.90, 0.02), c: 0x25282e });
+  } else if (capStyle === 'beanie') {
+    const beanieC = choice([0x222222, 0x334455, 0x553333, 0x335544]);
+    parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.55).translate(0, 1.68, 0), c: beanieC });
+    parts.push({ g: new THREE.CylinderGeometry(0.285, 0.285, 0.08, 10).translate(0, 1.72, 0), c: beanieC });
   } else {
     // Причёска без головного убора
     parts.push({ g: new THREE.SphereGeometry(0.28, 8, 6, 0, Math.PI * 2, 0, Math.PI * 0.6).translate(0, 1.64, 0), c: hairC });
@@ -900,6 +987,7 @@ export function buildDriverMesh(options = {}) {
     arms.push(arm);
   }
 
+  g.scale.set(bulk, height, bulk);
   g.userData = { legs, arms, archetype: 'driver', isAnimal: false };
   return g;
 }
