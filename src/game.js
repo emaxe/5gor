@@ -101,6 +101,10 @@ export class Game {
     // Состояние дрифт-бонуса (все скаляры, zero-alloc)
     this._driftDuration = 0;   // накопленные секунды заноса
     this._driftDist = 0;       // накопленная дистанция заноса, м
+    this._psActive = false;    // идёт ли текущий цикл торможения (идеальная остановка)
+    this._psPrevSpeed = 0;     // скорость на предыдущем кадре для расчёта замедления
+    this._psMaxDecel = 0;      // пиковое замедление за текущий цикл торможения (м/с²)
+    this._pendingPerfectStop = false; // флаг: плавная остановка ждёт завершения заказа
 
     // GPS-маршрутизация
     this._gpsRoute = null;
@@ -355,6 +359,7 @@ export class Game {
       this.comboStreak = 0;
       this._driftDuration = 0;
       this._driftDist = 0;
+      this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
       this.orders.onCrash(d.impact);
     });
@@ -364,6 +369,7 @@ export class Game {
       this.comboStreak = 0;
       this._driftDuration = 0;
       this._driftDist = 0;
+      this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
       this.setRating(this.rating - CFG.ratingFail.hitPed);
       this.addMoney(-300);
       this.shakeT = 0.3; this.shakeAmp = 0.4;
@@ -474,6 +480,16 @@ export class Game {
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
       const streakText = this.comboStreak > 1 ? ' 🔥 серия ' + this.comboStreak + ' ×' + comboMult.toFixed(2) : '';
       this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay + bonusPay) + bonus + streakText, '#7ee787');
+      // Идеальная остановка: бонус за плавное торможение перед высадкой
+      if (this._pendingPerfectStop) {
+        this._pendingPerfectStop = false;
+        const rw = CFG.perfectStopBaseReward;
+        this.addMoney(rw);
+        this.shiftStats.earned += rw;
+        this.player.style = clamp(this.player.style + CFG.perfectStopStyleBonus, 0, 1);
+        this.ui.toast('✨ Идеальная остановка! +' + fmtMoney(rw) + ' ₽', '#7ee787');
+        Events.emit('stop:perfect', { decel: Math.round(this._psMaxDecel * 10) / 10, reward: rw });
+      }
       if (this.rating >= 100) this.ui.toast('Максимальный рейтинг! Пятигорск ваш! ⭐', '#ffd75e');
       // Ночной заказ — событие для достижений
       if (this.hour >= CFG.nightStartHour || this.hour < CFG.nightEndHour) {
@@ -496,6 +512,7 @@ export class Game {
     });
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
+      this._pendingPerfectStop = false;
       this.setRating(this.rating - CFG.ratingFail.failOrder);
     });
     events.on('shift:started', () => {
@@ -565,6 +582,7 @@ export class Game {
     this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
     this._driftDuration = 0;
     this._driftDist = 0;
+    this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
     this.police.reset();
     this.weather = pickWeighted([
       { v: 'clear', w: 55 }, { v: 'rain', w: 25 }, { v: 'fog', w: 20 },
@@ -1218,6 +1236,7 @@ export class Game {
     // следы шин при заносе
     this.skidMarks.update(this.player, this.world);
     this._updateDrift(dt, input);
+    this._updatePerfectStop(dt, input);
 
     // трафик и пешеходы
     const density = w.traffic * (this.hour >= 22 || this.hour < 6 ? 0.55 : 1);
@@ -1413,6 +1432,38 @@ export class Game {
 
     this._driftDuration = 0;
     this._driftDist = 0;
+  }
+
+  /**
+   * Детекция и начисление награды за плавную остановку (Perfect Stop).
+   * Зеркалит _updateDrift: покадрово отслеживает пиковое замедление при торможении;
+   * при полной остановке с активным заказом и пассажиром ставит флаг _pendingPerfectStop,
+   * который потребляется в обработчике order:completed. Zero-alloc (только скаляры).
+   * @param {number} dt - Прошедшее время кадра в секундах
+   * @param {{brake: number, handbrake: boolean, throttle: number}} input - Ввод игрока
+   */
+  _updatePerfectStop(dt, input) {
+    const p = this.player;
+    if (dt <= 0.0001) { this._psPrevSpeed = p.speed; return; }
+
+    const decel = (this._psPrevSpeed - p.speed) / dt; // м/с², положительное = замедление
+    const braking = input.brake > 0 && !input.handbrake && p.speed >= CFG.perfectStopMinSpeed;
+
+    if (braking) {
+      // фаза торможения: копим пиковое замедление
+      if (!this._psActive) { this._psActive = true; this._psMaxDecel = 0; }
+      if (decel > this._psMaxDecel) this._psMaxDecel = decel;
+      this._pendingPerfectStop = false; // флаг живёт только до следующего движения
+    } else if (this._psActive) {
+      // торможение закончилось — оцениваем плавность полной остановки
+      this._psActive = false;
+      if (p.speed <= 0.8 && this._psMaxDecel > 0 && this._psMaxDecel <= CFG.perfectStopMaxDecel
+          && this.orders.active && p.passengerCount > 0) {
+        this._pendingPerfectStop = true;
+      }
+    }
+
+    this._psPrevSpeed = p.speed;
   }
 
   _walk(dt) {
