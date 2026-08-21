@@ -8509,6 +8509,206 @@ class PedGraph {
   }
 }
 
+/* ===== gps.js ===== */
+/**
+ * Граф автомобильных дорог и поиск маршрутов (GPS-навигатор).
+ * Чистая логика без THREE/DOM — тестируется в Node.js.
+ * Дорожная сеть Пятигорска представляет собой регулярную сетку перекрёстков 9x9
+ * с шагом 64 м (координаты от -256 до +256).
+ */
+
+// Кэш графа смежности по ссылке на массив перекрёстков
+let _cachedIntersections = null;
+let _cachedGraph = null;
+
+// Переиспользуемые структуры для BFS — zero-alloc в цикле маршрутизации
+const _bfsQueue = [];
+const _bfsParent = new Map();
+
+/**
+ * Находит геометрически ближайший узел (перекрёсток) к заданной точке (x, z).
+ * @param {Array<{x: number, z: number}>} intersections
+ * @param {number} x
+ * @param {number} z
+ * @returns {{x: number, z: number}|null}
+ */
+function findNearestNode(intersections, x, z) {
+  if (!intersections || intersections.length === 0) return null;
+  let best = null;
+  let minDstSq = Infinity;
+  for (let i = 0; i < intersections.length; i++) {
+    const node = intersections[i];
+    const dx = node.x - x;
+    const dz = node.z - z;
+    const dstSq = dx * dx + dz * dz;
+    if (dstSq < minDstSq) {
+      minDstSq = dstSq;
+      best = node;
+    }
+  }
+  return best;
+}
+
+/**
+ * Строит граф смежности перекрёстков (карта "x,z" -> массив соседних узлов).
+ * Узлы считаются соединёнными дорогой, если расстояние Манхэттена |dx| + |dz| === 64.
+ * Кэширует результат по ссылке на массив intersections.
+ * @param {Array<{x: number, z: number}>} intersections
+ * @returns {Map<string, Array<{x: number, z: number}>>}
+ */
+function buildCarRoadGraph(intersections) {
+  if (!intersections || intersections.length === 0) return new Map();
+  if (intersections === _cachedIntersections && _cachedGraph) {
+    return _cachedGraph;
+  }
+
+  const nodeMap = new Map();
+  const adj = new Map();
+
+  for (let i = 0; i < intersections.length; i++) {
+    const isec = intersections[i];
+    const key = isec.x + ',' + isec.z;
+    nodeMap.set(key, isec);
+    adj.set(key, []);
+  }
+
+  const offsets = [
+    { dx: 64, dz: 0 },
+    { dx: -64, dz: 0 },
+    { dx: 0, dz: 64 },
+    { dx: 0, dz: -64 },
+  ];
+
+  for (let i = 0; i < intersections.length; i++) {
+    const isec = intersections[i];
+    const key = isec.x + ',' + isec.z;
+    const neighbors = adj.get(key);
+    for (let o = 0; o < offsets.length; o++) {
+      const neighborKey = (isec.x + offsets[o].dx) + ',' + (isec.z + offsets[o].dz);
+      const neighbor = nodeMap.get(neighborKey);
+      if (neighbor) {
+        neighbors.push(neighbor);
+      }
+    }
+  }
+
+  _cachedIntersections = intersections;
+  _cachedGraph = adj;
+  return adj;
+}
+
+/**
+ * Вычисляет общую длину ломаной маршрута.
+ * @param {Array<{x: number, z: number}>} pts
+ * @returns {number}
+ */
+function routeLength(pts) {
+  if (!pts || pts.length < 2) return 0;
+  let total = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const p1 = pts[i];
+    const p2 = pts[i + 1];
+    const dx = p2.x - p1.x;
+    const dz = p2.z - p1.z;
+    total += Math.hypot(dx, dz);
+  }
+  return total;
+}
+
+/**
+ * Выполняет BFS-поиск кратчайшего пути между перекрёстками по графу дорог.
+ * @private
+ * @param {Map<string, Array<{x: number, z: number}>>} graph
+ * @param {{x: number, z: number}} startNode
+ * @param {{x: number, z: number}} endNode
+ * @returns {Array<{x: number, z: number}>|null}
+ */
+function _bfsCarPath(graph, startNode, endNode) {
+  const startKey = startNode.x + ',' + startNode.z;
+  const endKey = endNode.x + ',' + endNode.z;
+  if (startKey === endKey) {
+    return [startNode];
+  }
+
+  _bfsQueue.length = 0;
+  _bfsParent.clear();
+
+  _bfsQueue.push(startNode);
+  _bfsParent.set(startKey, null);
+
+  let head = 0;
+  let found = false;
+
+  while (head < _bfsQueue.length) {
+    const curr = _bfsQueue[head++];
+    const currKey = curr.x + ',' + curr.z;
+    if (currKey === endKey) {
+      found = true;
+      break;
+    }
+
+    const neighbors = graph.get(currKey);
+    if (neighbors) {
+      for (let i = 0; i < neighbors.length; i++) {
+        const next = neighbors[i];
+        const nextKey = next.x + ',' + next.z;
+        if (!_bfsParent.has(nextKey)) {
+          _bfsParent.set(nextKey, curr);
+          _bfsQueue.push(next);
+        }
+      }
+    }
+  }
+
+  if (!found) return null;
+
+  const path = [];
+  let curr = endNode;
+  while (curr) {
+    path.push(curr);
+    const key = curr.x + ',' + curr.z;
+    curr = _bfsParent.get(key);
+  }
+  path.reverse();
+  return path;
+}
+
+/**
+ * Ищет автомобильный маршрут от (fromX, fromZ) до (toX, toZ) по дорожной сети.
+ * Включает точную начальную точку, путь по перекрёсткам и точную конечную точку.
+ * @param {Array<{x: number, z: number}>} intersections
+ * @param {Map<string, Array<{x: number, z: number}>>} graph
+ * @param {number} fromX
+ * @param {number} fromZ
+ * @param {number} toX
+ * @param {number} toZ
+ * @returns {Array<{x: number, z: number}>|null}
+ */
+function findCarRoute(intersections, graph, fromX, fromZ, toX, toZ) {
+  if (!intersections || intersections.length === 0 || !graph) return null;
+  const startNode = findNearestNode(intersections, fromX, fromZ);
+  const endNode = findNearestNode(intersections, toX, toZ);
+  if (!startNode || !endNode) return null;
+
+  const nodePath = _bfsCarPath(graph, startNode, endNode);
+  if (!nodePath) return null;
+
+  const pts = [{ x: fromX, z: fromZ }];
+  for (let i = 0; i < nodePath.length; i++) {
+    const n = nodePath[i];
+    const last = pts[pts.length - 1];
+    if (Math.abs(last.x - n.x) > 0.01 || Math.abs(last.z - n.z) > 0.01) {
+      pts.push({ x: n.x, z: n.z });
+    }
+  }
+  const last = pts[pts.length - 1];
+  if (Math.abs(last.x - toX) > 0.01 || Math.abs(last.z - toZ) > 0.01) {
+    pts.push({ x: toX, z: toZ });
+  }
+
+  return pts;
+}
+
 /* ===== pedavoid.js ===== */
 // src/pedavoid.js
 // Чистые геометрические пробы для обхода статических препятствий пешеходами.
@@ -14498,6 +14698,7 @@ class AchievementManager {
 
 
 
+
 const DRIVER_PALETTES = {
   shirt: [0x283848, 0x503525, 0x304030, 0x222226, 0x485868, 0x5c4033, 0x334455, 0x8a2424],
   pants: [0x1a2430, 0x2a2a3a, 0x3a3a4a, 0x4a3a2a, 0x222222, 0xd0c0aa],
@@ -14741,7 +14942,7 @@ class UIManager {
     if (el.textContent !== text) el.textContent = text; // сравнение строк дешевле лишней DOM-записи
   }
 
-  updateHud(player, gameState, orders, hour, camera, world) {
+  updateHud(player, gameState, orders, hour, camera, world, gpsRoute) {
     const els = this._els;
     this._setText(els.money, fmtMoney(gameState.money));
     const stars = '★'.repeat(Math.round(gameState.rating / 20)) + '☆'.repeat(5 - Math.round(gameState.rating / 20));
@@ -14793,12 +14994,14 @@ class UIManager {
       oc.classList.add('hidden');
     }
 
-    // стрелка-навигатор: появляется только при активном принятом задании и показывает на конечную точку (высадка/цель)
+    // стрелка-навигатор: появляется только при активном принятом задании
     const nw = els['nav-arrow-wrap'];
     const target = orders.activeDrop;
     if (target) {
       nw.classList.remove('hidden');
-      const dx = target.x - player.x, dz = target.z - player.z;
+      const hasRoute = gpsRoute && gpsRoute.length > 1;
+      const navTarget = hasRoute ? gpsRoute[1] : target;
+      const dx = navTarget.x - player.x, dz = navTarget.z - player.z;
       // ➤ указывает вправо при rotate(0) — «вперёд» = -90°.
       // Раскладываем вектор к цели по осям машины: forward=(sin h,cos h),
       // right=(-cos h,sin h) — ПРАВО ИНВЕРТИРОВАНО (-X): камера сзади, поэтому
@@ -14810,7 +15013,8 @@ class UIManager {
       let ang = -Math.atan2(fwdC, rgtC);
       ang = Math.atan2(Math.sin(ang), Math.cos(ang)); // кратчайший доворот в [-π,π]
       els['nav-arrow'].style.transform = 'rotate(' + Math.round(ang * 180 / Math.PI * 10) / 10 + 'deg)';
-      els['nav-dist'].textContent = Math.round(dist2D(player.x, player.z, target.x, target.z)) + ' м';
+      const remainingDist = hasRoute ? routeLength(gpsRoute) : dist2D(player.x, player.z, target.x, target.z);
+      els['nav-dist'].textContent = Math.round(remainingDist) + ' м';
     } else {
       nw.classList.add('hidden');
     }
@@ -14869,7 +15073,7 @@ class UIManager {
   }
 
   /* ---------- Мини-карта (heading-up: карта вращается, стрелка всегда вверх) ---------- */
-  renderMinimap(player, orders, world, traffic, car) {
+  renderMinimap(player, orders, world, traffic, car, gpsRoute) {
     const c = this.$('minimap');
     const g = c.getContext('2d');
     const W = c.width;
@@ -14889,21 +15093,28 @@ class UIManager {
       const srcX = (vx0 + 320) * bsc, srcY = (vz0 + 320) * bsc;
       g.drawImage(this._baseMap, srcX, srcY, view * bsc, view * bsc, vx0 * scale, vz0 * scale, view * scale, view * scale);
     }
-    // маршрут до точки высадки, если взят заказ (по дорожной сетке: L-путь через
-    // ближайшую вертикальную дорогу; мир-координаты уже в повёрнутом контексте)
+    // маршрут до точки высадки, если взят заказ (по дорожной сетке: полилиния GPS-маршрута,
+    // либо фолбэк на L-путь; мир-координаты уже в повёрнутом контексте)
     const activeDrop = orders && orders.activeDrop;
     if (orders && orders.active && activeDrop) {
-      const CELL = 64;
-      const vx = Math.round(player.x / CELL) * CELL;
       const rx = (x) => x * scale, rz = (z) => z * scale;
       g.strokeStyle = 'rgba(255, 214, 80, 0.9)';
       g.lineWidth = 2.5;
       g.lineJoin = 'round';
       g.beginPath();
-      g.moveTo(rx(player.x), rz(player.z));
-      g.lineTo(rx(vx), rz(player.z));
-      g.lineTo(rx(vx), rz(activeDrop.z));
-      g.lineTo(rx(activeDrop.x), rz(activeDrop.z));
+      if (gpsRoute && gpsRoute.length > 1) {
+        g.moveTo(rx(gpsRoute[0].x), rz(gpsRoute[0].z));
+        for (let i = 1; i < gpsRoute.length; i++) {
+          g.lineTo(rx(gpsRoute[i].x), rz(gpsRoute[i].z));
+        }
+      } else {
+        const CELL = 64;
+        const vx = Math.round(player.x / CELL) * CELL;
+        g.moveTo(rx(player.x), rz(player.z));
+        g.lineTo(rx(vx), rz(player.z));
+        g.lineTo(rx(vx), rz(activeDrop.z));
+        g.lineTo(rx(activeDrop.x), rz(activeDrop.z));
+      }
       g.stroke();
     }
     // полицейские машины
@@ -15005,7 +15216,7 @@ class UIManager {
   }
 
   /* ---------- Большая карта ---------- */
-  renderBigMap(player, orders, world, car) {
+  renderBigMap(player, orders, world, car, gpsRoute) {
     const c = this.$('bigmap');
     const availW = window.innerWidth * 0.96, availH = window.innerHeight * 0.86;
     const size = Math.min(availW, availH);
@@ -15013,6 +15224,20 @@ class UIManager {
     const g = c.getContext('2d');
     this._ensureBaseMap(world);
     g.drawImage(this._baseMap, 0, 0, size, size);
+    // маршрут GPS
+    if (orders && orders.active && orders.activeDrop) {
+      if (gpsRoute && gpsRoute.length > 1) {
+        g.strokeStyle = 'rgba(255, 214, 80, 0.9)';
+        g.lineWidth = 3;
+        g.lineJoin = 'round';
+        g.beginPath();
+        g.moveTo((gpsRoute[0].x + 320) / 640 * size, (gpsRoute[0].z + 320) / 640 * size);
+        for (let i = 1; i < gpsRoute.length; i++) {
+          g.lineTo((gpsRoute[i].x + 320) / 640 * size, (gpsRoute[i].z + 320) / 640 * size);
+        }
+        g.stroke();
+      }
+    }
     // подписи районов
     g.font = '13px system-ui'; g.fillStyle = 'rgba(255,255,255,0.85)'; g.textAlign = 'center';
     const centers = {
@@ -15535,6 +15760,7 @@ class UIManager {
 
 
 
+
 // Таблица цвета неба по часу суток + переиспользуемые Color-объекты для
 // _updateTime (каждый кадр) — вместо new THREE.Color(...) на каждый вызов (OPT-18)
 const SKY_TABLE = [
@@ -15614,6 +15840,13 @@ class Game {
     this.soundOn = true;
     this.musicOn = true;
     this.comboStreak = 0;
+
+    // GPS-маршрутизация
+    this._gpsRoute = null;
+    this._gpsLastDrop = null;
+    this._gpsAccum = 0;
+    this._gpsFromX = 0;
+    this._gpsFromZ = 0;
 
     // Обучение и подсказки (S1)
     this._tutorialStep = 0;
@@ -16023,7 +16256,7 @@ class Game {
       this.ui.showScreen('settings', true);
     } else if (name === 'map') {
       this.ui.showScreen('map', true);
-      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null);
+      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null, this._gpsRoute);
     } else if (name === 'shiftend') {
       this.ui.showScreen('shiftend', true);
       this.ui.renderShiftEnd({ money: this.money, rating: this.rating, day: this.day }, this.shiftStats);
@@ -16775,18 +17008,40 @@ class Game {
       x: this.player.x, z: this.player.z, heading: this.player.heading, hour: this.hour,
     });
 
+    // GPS-маршрут (троттлинг 2 Гц: пересчёт каждые 0.5 с при смене дропа или смещении >32 м)
+    this._gpsAccum = (this._gpsAccum || 0) + dt;
+    if (this._gpsAccum >= 0.5) {
+      this._gpsAccum = 0;
+      const activeDrop = this.orders && this.orders.active && this.orders.activeDrop;
+      if (activeDrop && this.world && this.world.intersections) {
+        const dx = this.player.x - (this._gpsFromX || 0);
+        const dz = this.player.z - (this._gpsFromZ || 0);
+        const movedFar = (dx * dx + dz * dz) > (32 * 32);
+        if (activeDrop !== this._gpsLastDrop || movedFar || !this._gpsRoute) {
+          const graph = buildCarRoadGraph(this.world.intersections);
+          this._gpsRoute = findCarRoute(this.world.intersections, graph, this.player.x, this.player.z, activeDrop.x, activeDrop.z);
+          this._gpsLastDrop = activeDrop;
+          this._gpsFromX = this.player.x;
+          this._gpsFromZ = this.player.z;
+        }
+      } else {
+        this._gpsRoute = null;
+        this._gpsLastDrop = null;
+      }
+    }
+
     // HUD (троттлинг до ~15 Гц — DOM-запись не нуждается в 60 Гц)
     this._hudAccum = (this._hudAccum || 0) + dt;
     if (this._hudAccum >= 1 / 15) {
       this._hudAccum = 0;
-      this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world);
+      this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world, this._gpsRoute);
     }
 
     // миникарта (троттлинг до ~20 Гц)
     this._minimapAccum = (this._minimapAccum || 0) + dt;
     if (this._minimapAccum >= 1 / 20) {
       this._minimapAccum = 0;
-      this.ui.renderMinimap(this.player, this.orders, this.world, this.traffic);
+      this.ui.renderMinimap(this.player, this.orders, this.world, this.traffic, null, this._gpsRoute);
     }
 
     // автосохранение
@@ -16866,6 +17121,29 @@ class Game {
       this.shiftStats.km += this.playerPed.speed * dt / 1000;
     }
 
+    // GPS-маршрут в пешем режиме (троттлинг 2 Гц)
+    this._gpsAccum = (this._gpsAccum || 0) + dt;
+    if (this._gpsAccum >= 0.5) {
+      this._gpsAccum = 0;
+      const activeDrop = this.orders && this.orders.active && this.orders.activeDrop;
+      const ped = this.playerPed || this.player;
+      if (activeDrop && this.world && this.world.intersections && ped) {
+        const dx = ped.x - (this._gpsFromX || 0);
+        const dz = ped.z - (this._gpsFromZ || 0);
+        const movedFar = (dx * dx + dz * dz) > (32 * 32);
+        if (activeDrop !== this._gpsLastDrop || movedFar || !this._gpsRoute) {
+          const graph = buildCarRoadGraph(this.world.intersections);
+          this._gpsRoute = findCarRoute(this.world.intersections, graph, ped.x, ped.z, activeDrop.x, activeDrop.z);
+          this._gpsLastDrop = activeDrop;
+          this._gpsFromX = ped.x;
+          this._gpsFromZ = ped.z;
+        }
+      } else {
+        this._gpsRoute = null;
+        this._gpsLastDrop = null;
+      }
+    }
+
     // HUD (троттлинг до ~15 Гц)
     this._hudAccum = (this._hudAccum || 0) + dt;
     if (this._hudAccum >= 1 / 15) {
@@ -16880,7 +17158,7 @@ class Game {
     if (this._minimapAccum >= 1 / 20) {
       this._minimapAccum = 0;
       if (this.playerPed) {
-        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player);
+        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player, this._gpsRoute);
       }
     }
 

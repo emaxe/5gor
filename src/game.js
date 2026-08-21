@@ -16,6 +16,7 @@ import { InputManager } from './input.js';
 import { PoliceManager } from './police.js';
 import { AchievementManager } from './achievements.js';
 import { DISPATCHER_BRIEFS, DRIVER_DAY_NOTES, getDispatcherBrief, getDriverDayNote } from './dialogues.js';
+import { buildCarRoadGraph, findCarRoute } from './gps.js';
 
 // Таблица цвета неба по часу суток + переиспользуемые Color-объекты для
 // _updateTime (каждый кадр) — вместо new THREE.Color(...) на каждый вызов (OPT-18)
@@ -96,6 +97,13 @@ export class Game {
     this.soundOn = true;
     this.musicOn = true;
     this.comboStreak = 0;
+
+    // GPS-маршрутизация
+    this._gpsRoute = null;
+    this._gpsLastDrop = null;
+    this._gpsAccum = 0;
+    this._gpsFromX = 0;
+    this._gpsFromZ = 0;
 
     // Обучение и подсказки (S1)
     this._tutorialStep = 0;
@@ -505,7 +513,7 @@ export class Game {
       this.ui.showScreen('settings', true);
     } else if (name === 'map') {
       this.ui.showScreen('map', true);
-      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null);
+      this.ui.renderBigMap(this.playerPed || this.player, this.orders, this.world, this.playerPed ? this.player : null, this._gpsRoute);
     } else if (name === 'shiftend') {
       this.ui.showScreen('shiftend', true);
       this.ui.renderShiftEnd({ money: this.money, rating: this.rating, day: this.day }, this.shiftStats);
@@ -1257,18 +1265,40 @@ export class Game {
       x: this.player.x, z: this.player.z, heading: this.player.heading, hour: this.hour,
     });
 
+    // GPS-маршрут (троттлинг 2 Гц: пересчёт каждые 0.5 с при смене дропа или смещении >32 м)
+    this._gpsAccum = (this._gpsAccum || 0) + dt;
+    if (this._gpsAccum >= 0.5) {
+      this._gpsAccum = 0;
+      const activeDrop = this.orders && this.orders.active && this.orders.activeDrop;
+      if (activeDrop && this.world && this.world.intersections) {
+        const dx = this.player.x - (this._gpsFromX || 0);
+        const dz = this.player.z - (this._gpsFromZ || 0);
+        const movedFar = (dx * dx + dz * dz) > (32 * 32);
+        if (activeDrop !== this._gpsLastDrop || movedFar || !this._gpsRoute) {
+          const graph = buildCarRoadGraph(this.world.intersections);
+          this._gpsRoute = findCarRoute(this.world.intersections, graph, this.player.x, this.player.z, activeDrop.x, activeDrop.z);
+          this._gpsLastDrop = activeDrop;
+          this._gpsFromX = this.player.x;
+          this._gpsFromZ = this.player.z;
+        }
+      } else {
+        this._gpsRoute = null;
+        this._gpsLastDrop = null;
+      }
+    }
+
     // HUD (троттлинг до ~15 Гц — DOM-запись не нуждается в 60 Гц)
     this._hudAccum = (this._hudAccum || 0) + dt;
     if (this._hudAccum >= 1 / 15) {
       this._hudAccum = 0;
-      this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world);
+      this.ui.updateHud(this.player, this, this.orders, this.hour, this.chaseCam, this.world, this._gpsRoute);
     }
 
     // миникарта (троттлинг до ~20 Гц)
     this._minimapAccum = (this._minimapAccum || 0) + dt;
     if (this._minimapAccum >= 1 / 20) {
       this._minimapAccum = 0;
-      this.ui.renderMinimap(this.player, this.orders, this.world, this.traffic);
+      this.ui.renderMinimap(this.player, this.orders, this.world, this.traffic, null, this._gpsRoute);
     }
 
     // автосохранение
@@ -1348,6 +1378,29 @@ export class Game {
       this.shiftStats.km += this.playerPed.speed * dt / 1000;
     }
 
+    // GPS-маршрут в пешем режиме (троттлинг 2 Гц)
+    this._gpsAccum = (this._gpsAccum || 0) + dt;
+    if (this._gpsAccum >= 0.5) {
+      this._gpsAccum = 0;
+      const activeDrop = this.orders && this.orders.active && this.orders.activeDrop;
+      const ped = this.playerPed || this.player;
+      if (activeDrop && this.world && this.world.intersections && ped) {
+        const dx = ped.x - (this._gpsFromX || 0);
+        const dz = ped.z - (this._gpsFromZ || 0);
+        const movedFar = (dx * dx + dz * dz) > (32 * 32);
+        if (activeDrop !== this._gpsLastDrop || movedFar || !this._gpsRoute) {
+          const graph = buildCarRoadGraph(this.world.intersections);
+          this._gpsRoute = findCarRoute(this.world.intersections, graph, ped.x, ped.z, activeDrop.x, activeDrop.z);
+          this._gpsLastDrop = activeDrop;
+          this._gpsFromX = ped.x;
+          this._gpsFromZ = ped.z;
+        }
+      } else {
+        this._gpsRoute = null;
+        this._gpsLastDrop = null;
+      }
+    }
+
     // HUD (троттлинг до ~15 Гц)
     this._hudAccum = (this._hudAccum || 0) + dt;
     if (this._hudAccum >= 1 / 15) {
@@ -1362,7 +1415,7 @@ export class Game {
     if (this._minimapAccum >= 1 / 20) {
       this._minimapAccum = 0;
       if (this.playerPed) {
-        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player);
+        this.ui.renderMinimap(this.playerPed, this.orders, this.world, this.traffic, this.player, this._gpsRoute);
       }
     }
 
