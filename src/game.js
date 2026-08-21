@@ -98,6 +98,10 @@ export class Game {
     this.musicOn = true;
     this.comboStreak = 0;
 
+    // Состояние дрифт-бонуса (все скаляры, zero-alloc)
+    this._driftDuration = 0;   // накопленные секунды заноса
+    this._driftDist = 0;       // накопленная дистанция заноса, м
+
     // GPS-маршрутизация
     this._gpsRoute = null;
     this._gpsLastDrop = null;
@@ -349,6 +353,8 @@ export class Game {
     events.on('crash', (d) => {
       this.shiftStats.crashes++;
       this.comboStreak = 0;
+      this._driftDuration = 0;
+      this._driftDist = 0;
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
       this.orders.onCrash(d.impact);
     });
@@ -356,6 +362,8 @@ export class Game {
       if (d && d.byPlayer === false) return;
       this.shiftStats.peds++;
       this.comboStreak = 0;
+      this._driftDuration = 0;
+      this._driftDist = 0;
       this.setRating(this.rating - CFG.ratingFail.hitPed);
       this.addMoney(-300);
       this.shakeT = 0.3; this.shakeAmp = 0.4;
@@ -555,6 +563,8 @@ export class Game {
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
     this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+    this._driftDuration = 0;
+    this._driftDist = 0;
     this.police.reset();
     this.weather = pickWeighted([
       { v: 'clear', w: 55 }, { v: 'rain', w: 25 }, { v: 'fog', w: 20 },
@@ -1207,6 +1217,7 @@ export class Game {
     this.player.snapToTerrain(this.world);
     // следы шин при заносе
     this.skidMarks.update(this.player, this.world);
+    this._updateDrift(dt, input);
 
     // трафик и пешеходы
     const density = w.traffic * (this.hour >= 22 || this.hour < 6 ? 0.55 : 1);
@@ -1371,6 +1382,37 @@ export class Game {
     // автосохранение
     this._saveTimer += dt;
     if (this._saveTimer > 30) { this._saveTimer = 0; this.save(); }
+  }
+
+  /**
+   * Детекция и начисление награды за управляемый дрифт.
+   * @param {number} dt - Прошедшее время за кадр в секундах
+   * @param {{handbrake: boolean}} input - Текущий ввод игрока
+   */
+  _updateDrift(dt, input) {
+    const p = this.player;
+    const isDrifting = input.handbrake && p.slip >= CFG.driftMinSlip && p.speed >= CFG.driftMinSpeed;
+
+    if (isDrifting) {
+      this._driftDuration += dt;
+      this._driftDist += p.speed * dt;
+      return;
+    }
+
+    if (this._driftDuration >= CFG.driftMinDuration) {
+      const extraTime = this._driftDuration - CFG.driftMinDuration;
+      const reward = Math.min(CFG.driftMaxReward, Math.round(CFG.driftBaseReward + extraTime * CFG.driftRewardPerSec));
+
+      this.addMoney(reward);
+      if (this.shiftStats) this.shiftStats.earned += reward;
+      if (p.passengerCount > 0) p.style = clamp(p.style + CFG.driftStyleBonus, 0, 1);
+
+      this.ui.toast('💨 Занос! +' + reward + ' ₽', '#ffd75e');
+      Events.emit('drift:completed', { duration: this._driftDuration, dist: this._driftDist, reward });
+    }
+
+    this._driftDuration = 0;
+    this._driftDist = 0;
   }
 
   _walk(dt) {
