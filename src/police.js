@@ -4,7 +4,7 @@
  * ============================================================ */
 
 import { CFG } from './config.js';
-import { dist2D, clamp } from './utils.js';
+import { dist2D, clamp, segmentIntersectsAABB } from './utils.js';
 import { Events } from './eventbus.js';
 
 /**
@@ -41,19 +41,57 @@ export class PoliceManager {
   }
 
   /**
-   * Проверить, есть ли полицейская машина рядом с игроком.
+   * Проверить, есть ли полицейская машина рядом с игроком И в прямой видимости
+   * (не перекрыта зданием).
    * @param {import('./player.js').PlayerCar} player - Машина игрока
    * @param {import('./traffic.js').TrafficManager} traffic - Менеджер трафика
+   * @param {import('./citygen.js').World} [world] - Мир (для проверки видимости)
    * @returns {boolean}
    */
-  _policeNearby(player, traffic) {
+  _policeNearby(player, traffic, world) {
     if (!traffic || !traffic.cars) return false;
     for (const car of traffic.cars) {
       if (!car.alive || !car.mesh || !car.mesh.visible || car.beacon !== 'police') continue;
       const d = dist2D(car.x, car.z, player.x, player.z);
-      if (d < POLICE_DETECT_RADIUS) return true;
+      if (d < POLICE_DETECT_RADIUS) {
+        // Полиция штрафует только если видит нарушение — сквозь здания не видит
+        if (!this._hasLineOfSight(car.x, car.z, player.x, player.z, world)) continue;
+        return true;
+      }
     }
     return false;
+  }
+
+  /**
+   * Проверить прямую видимость между двумя точками (нет перекрывающих зданий).
+   * Использует spatial hash зданий (ячейки 16×16м) для эффективного запроса.
+   * @param {number} x0 - X первой точки (патруль)
+   * @param {number} z0 - Z первой точки (патруль)
+   * @param {number} x1 - X второй точки (игрок)
+   * @param {number} z1 - Z второй точки (игрок)
+   * @param {import('./citygen.js').World} [world]
+   * @returns {boolean} true, если видимость не перекрыта зданиями
+   */
+  _hasLineOfSight(x0, z0, x1, z1, world) {
+    if (!world) return true;
+    // Обходим только ячейки, которые покрывает отрезок (bounding box отрезка).
+    // Здание в соседней ячейке может дублироваться — повторный тест дешёвый,
+    // Set для дедупликации не создаём (zero-alloc).
+    const cell = world._buildingHashCell || 16;
+    const minCx = Math.floor(Math.min(x0, x1) / cell);
+    const maxCx = Math.floor(Math.max(x0, x1) / cell);
+    const minCz = Math.floor(Math.min(z0, z1) / cell);
+    const maxCz = Math.floor(Math.max(z0, z1) / cell);
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cz = minCz; cz <= maxCz; cz++) {
+        const bucket = world._buildingHash.get(cx + ',' + cz);
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          if (segmentIntersectsAABB(x0, z0, x1, z1, bucket[i])) return false;
+        }
+      }
+    }
+    return true;
   }
 
   /**
@@ -68,7 +106,7 @@ export class PoliceManager {
     // Только на дороге — не штрафуем за езду по бездорожью (там и так медленно)
     const onRoad = world ? world.onRoad(player.x, player.z) : player.onRoad;
     if (!onRoad) return;
-    if (!this._policeNearby(player, traffic)) return;
+    if (!this._policeNearby(player, traffic, world)) return;
     this._fine(VIOLATIONS.speeding);
   }
 
@@ -85,7 +123,7 @@ export class PoliceManager {
     if (Math.abs(player.speed) < 3) return; // Стоит/медленно едет — не нарушение
     const onRoad = world ? world.onRoad(player.x, player.z) : player.onRoad;
     if (onRoad !== undefined && !onRoad) return; // Вне дороги светофоров нет
-    if (!this._policeNearby(player, traffic)) return;
+    if (!this._policeNearby(player, traffic, world)) return;
     if (!lights || !lights.length) return;
 
     const px = player.x, pz = player.z;
@@ -129,10 +167,11 @@ export class PoliceManager {
    * Сбита пешехода — штраф от полиции если рядом патруль.
    * @param {import('./player.js').PlayerCar} player
    * @param {import('./traffic.js').TrafficManager} traffic
+   * @param {import('./citygen.js').World} [world]
    */
-  checkHitPed(player, traffic) {
+  checkHitPed(player, traffic, world) {
     if (this._onCooldown('hitPed')) return;
-    if (!this._policeNearby(player, traffic)) return;
+    if (!this._policeNearby(player, traffic, world)) return;
     this._fine(VIOLATIONS.hitPed);
   }
 
@@ -140,10 +179,11 @@ export class PoliceManager {
    * Нападение на прохожего — штраф от полиции если рядом патруль.
    * @param {import('./playerped.js').PlayerPed} playerPed
    * @param {import('./traffic.js').TrafficManager} traffic
+   * @param {import('./citygen.js').World} [world]
    */
-  checkPunchPed(playerPed, traffic) {
+  checkPunchPed(playerPed, traffic, world) {
     if (this._onCooldown('pedPunch')) return;
-    if (!this._policeNearby(playerPed, traffic)) return;
+    if (!this._policeNearby(playerPed, traffic, world)) return;
     this._fine(VIOLATIONS.pedPunch);
   }
 

@@ -358,7 +358,7 @@ export class Game {
       if (this.orders.active && this.orders.active.type !== 'package') this.orders.fail(this.orders.active, 'ped');
       this.ui.toast('Вы сбили пешехода! -300 ₽, рейтинг -15', '#ff6b6b');
       // Полиция может выписать дополнительный штраф если рядом патруль
-      this.police.checkHitPed(this.player, this.traffic);
+      this.police.checkHitPed(this.player, this.traffic, this.world);
       this.achievements.checkAll();
       // сам пешеход (отлёт/лежание) обрабатывается в peds._knockDown
     });
@@ -370,7 +370,7 @@ export class Game {
       this.setRating(this.rating - ratingLoss);
       this.ui.toast('Нападение на прохожего! -' + fine + ' ₽, рейтинг -' + ratingLoss, '#ff7b72');
       if (typeof this.police.checkPunchPed === 'function') {
-        this.police.checkPunchPed(this.playerPed, this.traffic);
+        this.police.checkPunchPed(this.playerPed, this.traffic, this.world);
       }
       if (typeof this.achievements.onPunchPed === 'function') {
         this.achievements.onPunchPed();

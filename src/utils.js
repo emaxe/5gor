@@ -1065,6 +1065,49 @@ export function circleAABB(px, pz, r, box, playerY = 0, playerH = 1.5) {
 }
 
 /**
+ * Проверка пересечения 2D-отрезка [(x0, z0) -> (x1, z1)] с осепараллельным
+ * прямоугольником (AABB). Slab method, zero-alloc — только скалярная арифметика.
+ * @param {number} x0
+ * @param {number} z0
+ * @param {number} x1
+ * @param {number} z1
+ * @param {{x0: number, z0: number, x1: number, z1: number}} box
+ * @returns {boolean} true, если отрезок пересекает или касается AABB
+ */
+export function segmentIntersectsAABB(x0, z0, x1, z1, box) {
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  let tMin = 0;
+  let tMax = 1;
+
+  if (Math.abs(dx) < 1e-8) {
+    if (x0 < box.x0 || x0 > box.x1) return false;
+  } else {
+    const invDx = 1 / dx;
+    let t1 = (box.x0 - x0) * invDx;
+    let t2 = (box.x1 - x0) * invDx;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return false;
+  }
+
+  if (Math.abs(dz) < 1e-8) {
+    if (z0 < box.z0 || z0 > box.z1) return false;
+  } else {
+    const invDz = 1 / dz;
+    let t1 = (box.z0 - z0) * invDz;
+    let t2 = (box.z1 - z0) * invDz;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return false;
+  }
+
+  return true;
+}
+
+/**
  * Проверяет, находится ли точка (x, z) в зоне видимости камеры игрока.
  * @param {number} x - Координата X
  * @param {number} z - Координата Z

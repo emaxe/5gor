@@ -2099,6 +2099,49 @@ function circleAABB(px, pz, r, box, playerY = 0, playerH = 1.5) {
 }
 
 /**
+ * Проверка пересечения 2D-отрезка [(x0, z0) -> (x1, z1)] с осепараллельным
+ * прямоугольником (AABB). Slab method, zero-alloc — только скалярная арифметика.
+ * @param {number} x0
+ * @param {number} z0
+ * @param {number} x1
+ * @param {number} z1
+ * @param {{x0: number, z0: number, x1: number, z1: number}} box
+ * @returns {boolean} true, если отрезок пересекает или касается AABB
+ */
+function segmentIntersectsAABB(x0, z0, x1, z1, box) {
+  const dx = x1 - x0;
+  const dz = z1 - z0;
+  let tMin = 0;
+  let tMax = 1;
+
+  if (Math.abs(dx) < 1e-8) {
+    if (x0 < box.x0 || x0 > box.x1) return false;
+  } else {
+    const invDx = 1 / dx;
+    let t1 = (box.x0 - x0) * invDx;
+    let t2 = (box.x1 - x0) * invDx;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return false;
+  }
+
+  if (Math.abs(dz) < 1e-8) {
+    if (z0 < box.z0 || z0 > box.z1) return false;
+  } else {
+    const invDz = 1 / dz;
+    let t1 = (box.z0 - z0) * invDz;
+    let t2 = (box.z1 - z0) * invDz;
+    if (t1 > t2) { const tmp = t1; t1 = t2; t2 = tmp; }
+    if (t1 > tMin) tMin = t1;
+    if (t2 < tMax) tMax = t2;
+    if (tMin > tMax) return false;
+  }
+
+  return true;
+}
+
+/**
  * Проверяет, находится ли точка (x, z) в зоне видимости камеры игрока.
  * @param {number} x - Координата X
  * @param {number} z - Координата Z
@@ -14328,19 +14371,57 @@ class PoliceManager {
   }
 
   /**
-   * Проверить, есть ли полицейская машина рядом с игроком.
+   * Проверить, есть ли полицейская машина рядом с игроком И в прямой видимости
+   * (не перекрыта зданием).
    * @param {import('./player.js').PlayerCar} player - Машина игрока
    * @param {import('./traffic.js').TrafficManager} traffic - Менеджер трафика
+   * @param {import('./citygen.js').World} [world] - Мир (для проверки видимости)
    * @returns {boolean}
    */
-  _policeNearby(player, traffic) {
+  _policeNearby(player, traffic, world) {
     if (!traffic || !traffic.cars) return false;
     for (const car of traffic.cars) {
       if (!car.alive || !car.mesh || !car.mesh.visible || car.beacon !== 'police') continue;
       const d = dist2D(car.x, car.z, player.x, player.z);
-      if (d < POLICE_DETECT_RADIUS) return true;
+      if (d < POLICE_DETECT_RADIUS) {
+        // Полиция штрафует только если видит нарушение — сквозь здания не видит
+        if (!this._hasLineOfSight(car.x, car.z, player.x, player.z, world)) continue;
+        return true;
+      }
     }
     return false;
+  }
+
+  /**
+   * Проверить прямую видимость между двумя точками (нет перекрывающих зданий).
+   * Использует spatial hash зданий (ячейки 16×16м) для эффективного запроса.
+   * @param {number} x0 - X первой точки (патруль)
+   * @param {number} z0 - Z первой точки (патруль)
+   * @param {number} x1 - X второй точки (игрок)
+   * @param {number} z1 - Z второй точки (игрок)
+   * @param {import('./citygen.js').World} [world]
+   * @returns {boolean} true, если видимость не перекрыта зданиями
+   */
+  _hasLineOfSight(x0, z0, x1, z1, world) {
+    if (!world) return true;
+    // Обходим только ячейки, которые покрывает отрезок (bounding box отрезка).
+    // Здание в соседней ячейке может дублироваться — повторный тест дешёвый,
+    // Set для дедупликации не создаём (zero-alloc).
+    const cell = world._buildingHashCell || 16;
+    const minCx = Math.floor(Math.min(x0, x1) / cell);
+    const maxCx = Math.floor(Math.max(x0, x1) / cell);
+    const minCz = Math.floor(Math.min(z0, z1) / cell);
+    const maxCz = Math.floor(Math.max(z0, z1) / cell);
+    for (let cx = minCx; cx <= maxCx; cx++) {
+      for (let cz = minCz; cz <= maxCz; cz++) {
+        const bucket = world._buildingHash.get(cx + ',' + cz);
+        if (!bucket) continue;
+        for (let i = 0; i < bucket.length; i++) {
+          if (segmentIntersectsAABB(x0, z0, x1, z1, bucket[i])) return false;
+        }
+      }
+    }
+    return true;
   }
 
   /**
@@ -14355,7 +14436,7 @@ class PoliceManager {
     // Только на дороге — не штрафуем за езду по бездорожью (там и так медленно)
     const onRoad = world ? world.onRoad(player.x, player.z) : player.onRoad;
     if (!onRoad) return;
-    if (!this._policeNearby(player, traffic)) return;
+    if (!this._policeNearby(player, traffic, world)) return;
     this._fine(VIOLATIONS.speeding);
   }
 
@@ -14372,7 +14453,7 @@ class PoliceManager {
     if (Math.abs(player.speed) < 3) return; // Стоит/медленно едет — не нарушение
     const onRoad = world ? world.onRoad(player.x, player.z) : player.onRoad;
     if (onRoad !== undefined && !onRoad) return; // Вне дороги светофоров нет
-    if (!this._policeNearby(player, traffic)) return;
+    if (!this._policeNearby(player, traffic, world)) return;
     if (!lights || !lights.length) return;
 
     const px = player.x, pz = player.z;
@@ -14416,10 +14497,11 @@ class PoliceManager {
    * Сбита пешехода — штраф от полиции если рядом патруль.
    * @param {import('./player.js').PlayerCar} player
    * @param {import('./traffic.js').TrafficManager} traffic
+   * @param {import('./citygen.js').World} [world]
    */
-  checkHitPed(player, traffic) {
+  checkHitPed(player, traffic, world) {
     if (this._onCooldown('hitPed')) return;
-    if (!this._policeNearby(player, traffic)) return;
+    if (!this._policeNearby(player, traffic, world)) return;
     this._fine(VIOLATIONS.hitPed);
   }
 
@@ -14427,10 +14509,11 @@ class PoliceManager {
    * Нападение на прохожего — штраф от полиции если рядом патруль.
    * @param {import('./playerped.js').PlayerPed} playerPed
    * @param {import('./traffic.js').TrafficManager} traffic
+   * @param {import('./citygen.js').World} [world]
    */
-  checkPunchPed(playerPed, traffic) {
+  checkPunchPed(playerPed, traffic, world) {
     if (this._onCooldown('pedPunch')) return;
-    if (!this._policeNearby(playerPed, traffic)) return;
+    if (!this._policeNearby(playerPed, traffic, world)) return;
     this._fine(VIOLATIONS.pedPunch);
   }
 
@@ -16101,7 +16184,7 @@ class Game {
       if (this.orders.active && this.orders.active.type !== 'package') this.orders.fail(this.orders.active, 'ped');
       this.ui.toast('Вы сбили пешехода! -300 ₽, рейтинг -15', '#ff6b6b');
       // Полиция может выписать дополнительный штраф если рядом патруль
-      this.police.checkHitPed(this.player, this.traffic);
+      this.police.checkHitPed(this.player, this.traffic, this.world);
       this.achievements.checkAll();
       // сам пешеход (отлёт/лежание) обрабатывается в peds._knockDown
     });
@@ -16113,7 +16196,7 @@ class Game {
       this.setRating(this.rating - ratingLoss);
       this.ui.toast('Нападение на прохожего! -' + fine + ' ₽, рейтинг -' + ratingLoss, '#ff7b72');
       if (typeof this.police.checkPunchPed === 'function') {
-        this.police.checkPunchPed(this.playerPed, this.traffic);
+        this.police.checkPunchPed(this.playerPed, this.traffic, this.world);
       }
       if (typeof this.achievements.onPunchPed === 'function') {
         this.achievements.onPunchPed();
