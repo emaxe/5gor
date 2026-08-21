@@ -12971,7 +12971,11 @@ class SkidMarks {
     if (dx * dx + dz * dz < CFG.skidSegLen * CFG.skidSegLen) return;
 
     const w = CFG.skidWidth;
-    const y = world.heightAt(player.x, player.z) + 0.03; // зазор против z-fighting
+    // Высота поверхности: на Машуке (серпантин) heightAt даёт реальный рельеф;
+    // в городе (heightAt = 0) асфальт/тротуар — плоские короба с верхом 0.10/0.15,
+    // поэтому след поднимаем над ними, иначе он тонет под асфальтом и не виден.
+    const hy = world.heightAt(player.x, player.z);
+    const y = hy > 0.5 ? hy + 0.03 : 0.16; // зазор против z-fighting (верх тротуара 0.15)
     // два квада: левое колесо и правое колесо (prev→cur, ширина w)
     this._writeQuad(this._head, this._plX, this._plZ, this._prX, this._prZ,
       curLX, curLZ, curRX, curRZ, y, w);
