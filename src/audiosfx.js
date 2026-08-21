@@ -177,6 +177,14 @@ export class SfxLibrary {
     e.tone(70, 0.15, 'sine', 0.2);
   }
 
+  /* Опасное сближение (near-miss) — короткий свист воздуха (Doppler whoosh) */
+  nearMiss() {
+    const e = this.engine;
+    if (!e.enabled) return;
+    e.noiseBurst(0.14, 0.2, 800);             // шумовой свист воздуха
+    e.tone(550, 0.14, 'sine', 0.12, 0, 280);    // нисходящий питч 550→280 Гц
+  }
+
   /* Закрытие двери — щелчок + удар + короткий резонанс кузова (посадка) */
   doorClose() {
     const e = this.engine;

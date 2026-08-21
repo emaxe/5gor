@@ -360,6 +360,9 @@ export class Game {
       this._driftDuration = 0;
       this._driftDist = 0;
       this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
+      // сброс одноразовых флагов near-miss: столкновение с NPC не должно
+      // давать награду за «опасное сближение» (флаг _nmHit ставит детектор)
+      if (d && d.car) { d.car._nmHit = true; d.car._nmPassed = false; }
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
       this.orders.onCrash(d.impact);
     });
@@ -1247,6 +1250,7 @@ export class Game {
     this.traffic.update(dt, this.player, this.world, density, this.peds, this.playerPed);
     this.peds.update(dt, this.player, this.traffic, this.world);
     CFG.pedViolatorChance = prevViolator;
+    this._updateNearMiss(dt);
 
     // камера
     this.chaseCam.applyInput(this.input, dt);
@@ -1464,6 +1468,92 @@ export class Game {
     }
 
     this._psPrevSpeed = p.speed;
+  }
+
+  /**
+   * Награда за «опасное сближение» (near-miss): игрок на скорости проезжает
+   * вплотную к NPC-машине или пешеходу, НЕ касаясь их (зазор меньше порога).
+   * Чисто аддитивно, физику коллизий не меняет. Zero-alloc: без новых массивов
+   * в кадре. Одноразовый флаг на NPC
+   * (_nmPassed) сбрасывается только после удаления сущности на дистанцию
+   * nearMissResetDist. После реального столкновения (crash/hitPed) детектор
+   * для этого NPC глушится флагом _nmHit.
+   * @param {number} dt - Прошедшее время кадра в секундах
+   */
+  _updateNearMiss(dt) {
+    const p = this.player;
+    if (p.speed < CFG.nearMissMinSpeed) return;
+    const fwdX = Math.sin(p.heading), fwdZ = Math.cos(p.heading);
+    const rc = (p.stats.w || 1.9) * 0.5 * 1.03;
+    const sep = (p.stats.len || 4.3) * 0.5 - (p.stats.w || 1.9) * 0.5;
+    const px = p.x, pz = p.z;
+
+    // 1. NPC-машины (трафик)
+    const cars = this.traffic.cars;
+    for (let i = 0; i < cars.length; i++) {
+      const c = cars[i];
+      if (!c || !c.alive || !c.mesh || !c.mesh.visible) continue;
+      this._checkNearMiss(c, c.radius, CFG.nearMissCarMargin, false, px, pz, fwdX, fwdZ, rc, sep);
+    }
+    // 2. Пешеходы и животные
+    const peds = this.peds.cars;
+    for (let i = 0; i < peds.length; i++) {
+      const e = peds[i];
+      if (!e || !e.alive || !e.mesh || !e.mesh.visible) continue;
+      if (e.knockT > 0 || e.hitCd > 0) { if (e.hitCd > 0) e._nmHit = true; continue; }
+      this._checkNearMiss(e, 0.45, CFG.nearMissPedMargin, true, px, pz, fwdX, fwdZ, rc, sep);
+    }
+  }
+
+  /**
+   * Дешёвая проверка близкого проезда мимо одной сущности.
+   * @param {object} e - Сущность (машина или пешеход) с полями x,z
+   * @param {number} eRadius - Радиус сущности (машина def.r, пешеход ~0.45)
+   * @param {number} margin - Макс. зазор для награды (м)
+   * @param {boolean} isPed - true если пешеход (для текста тоста)
+   */
+  _checkNearMiss(e, eRadius, margin, isPed, px, pz, fwdX, fwdZ, rc, sep) {
+    const dx = e.x - px, dz = e.z - pz;
+    // грубый отсев за квадратом ~7м — экономит math в кадре
+    if (dx > 7 || dx < -7 || dz > 7 || dz < -7) {
+      // сущность далеко — сбрасываем одноразовый флаг, чтобы сближение
+      // можно было засчитать снова при следующем проезде
+      if (e._nmPassed || e._nmHit) { e._nmPassed = false; e._nmHit = false; }
+      return;
+    }
+    // дистанция до трёх кругов капсулы игрока (перед/центр/зад)
+    const d0 = dist2D(e.x, e.z, px + fwdX * sep, pz + fwdZ * sep);
+    const d1 = dist2D(e.x, e.z, px, pz);
+    const d2 = dist2D(e.x, e.z, px - fwdX * sep, pz - fwdZ * sep);
+    const minD = Math.min(d0, d1, d2);
+    const clearance = minD - (rc + eRadius);
+
+    if (clearance <= 0) { e._nmHit = true; e._nmPassed = false; return; } // касание/удар
+    if (clearance > margin + CFG.nearMissResetDist) {
+      if (e._nmPassed || e._nmHit) { e._nmPassed = false; e._nmHit = false; }
+      return;
+    }
+
+    // сближение в коридоре зазора, без контакта, на скорости
+    if (!e._nmPassed && !e._nmHit && clearance <= margin && this.player.speed >= CFG.nearMissMinSpeed) {
+      e._nmPassed = true;
+      this._triggerNearMiss(isPed, e.x, e.z);
+    }
+  }
+
+  /**
+   * Начисление награды за опасное сближение. Зеркалит _updateDrift.
+   * @param {boolean} isPed - true если мимо пешехода, false если мимо машины
+   * @param {number} x - Мировая X-координата сущности
+   * @param {number} z - Мировая Z-координата сущности
+   */
+  _triggerNearMiss(isPed, x, z) {
+    const reward = CFG.nearMissReward;
+    this.addMoney(reward);
+    if (this.shiftStats) this.shiftStats.earned += reward;
+    if (this.player.passengerCount > 0) this.player.style = clamp(this.player.style + CFG.nearMissStyleBonus, 0, 1);
+    this.ui.toast(isPed ? '⚡ Опасное сближение! +' + reward + ' ₽' : '⚡ Опасный обгон! +' + reward + ' ₽', '#70d6ff');
+    Events.emit('nearmiss', { type: isPed ? 'ped' : 'car', reward, x, z });
   }
 
   _walk(dt) {
