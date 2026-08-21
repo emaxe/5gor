@@ -411,8 +411,10 @@ export class TrafficManager {
           }
 
           // 2. Наезд машиной трафика на пешехода
-          const distFull = Math.hypot(car.x - p.x, car.z - p.z);
-          if (distFull < car.radius + 0.65 && p.knockT <= 0 && p.hitCd <= 0) {
+          const ddx = car.x - p.x, ddz = car.z - p.z;
+          const rrHit = car.radius + 0.65;
+          if (ddx * ddx + ddz * ddz < rrHit * rrHit && p.knockT <= 0 && p.hitCd <= 0) {
+            const distFull = Math.hypot(ddx, ddz);
             p.hitCd = 1.2;
             const nx = (p.x - car.x) / (distFull || 1);
             const nz = (p.z - car.z) / (distFull || 1);

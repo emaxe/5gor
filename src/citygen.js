@@ -65,6 +65,9 @@ export class World {
     /** @type {Map<string, Array<object>>} spatial hash propsAABB по ячейкам 10×10м */
     this._propHash = new Map();
     this._propHashCell = 10;
+    /** @type {Map<string, Array<object>>} spatial hash buildings по ячейкам 16×16м */
+    this._buildingHash = new Map();
+    this._buildingHashCell = 16;
     /** @type {Array<{x: number, z: number, r: number}>} круглые коллайдеры */
     this.circleColliders = [];
     this.roadsV = [];
@@ -209,6 +212,24 @@ export class World {
     return false;
   }
 
+  /* Строит spatial hash для зданий по ячейкам 16×16м */
+  _buildBuildingHash() {
+    this._buildingHash.clear();
+    for (const b of this.buildings) {
+      const cx0 = Math.floor(b.x0 / this._buildingHashCell);
+      const cx1 = Math.floor(b.x1 / this._buildingHashCell);
+      const cz0 = Math.floor(b.z0 / this._buildingHashCell);
+      const cz1 = Math.floor(b.z1 / this._buildingHashCell);
+      for (let cx = cx0; cx <= cx1; cx++) {
+        for (let cz = cz0; cz <= cz1; cz++) {
+          const key = cx + ',' + cz;
+          if (!this._buildingHash.has(key)) this._buildingHash.set(key, []);
+          this._buildingHash.get(key).push(b);
+        }
+      }
+    }
+  }
+
   /* Проверяет близость к точкам посадки такси (pickupPoints) */
   _isNearPickupPoint(x, z, margin = 2.0) {
     const nearZ = Math.round((z + 208) / 48) * 48 - 208;
@@ -297,6 +318,7 @@ export class World {
     this._playgrounds();
     this._parkedCars();
     this._collectPickupPoints();
+    this._buildBuildingHash();
   }
 
   _ground() {

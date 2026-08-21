@@ -337,15 +337,45 @@ export class PlayerCar {
 
   _resolveAt(px, pz, rc, sep, world, traffic) {
     const py = world.heightAt ? world.heightAt(px, pz) : 0;
-    // здания
-    for (const b of world.buildings) {
-      const c = circleAABB(px, pz, rc, b, py, 1.5);
-      if (c) this._resolve(c, false, world);
+    // здания (spatial hash, 3×3 ячейки 16м)
+    if (world._buildingHash) {
+      const bcell = world._buildingHashCell || 16;
+      const bcx = Math.floor(px / bcell), bcz = Math.floor(pz / bcell);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const bucket = world._buildingHash.get((bcx + dx) + ',' + (bcz + dz));
+          if (!bucket) continue;
+          for (let i = 0; i < bucket.length; i++) {
+            const c = circleAABB(px, pz, rc, bucket[i], py, 1.5);
+            if (c) this._resolve(c, false, world);
+          }
+        }
+      }
+    } else if (world.buildings) {
+      for (const b of world.buildings) {
+        const c = circleAABB(px, pz, rc, b, py, 1.5);
+        if (c) this._resolve(c, false, world);
+      }
     }
-    // пропсы (столбы, знаки, киоски, ограды)
-    for (const p of world.propsAABB) {
-      const c = circleAABB(px, pz, rc, p, py, 1.5);
-      if (c) this._resolve(c, false, world);
+    // пропсы (spatial hash, 3×3 ячейки 10м)
+    if (world._propHash) {
+      const pcell = world._propHashCell || 10;
+      const pcx = Math.floor(px / pcell), pcz = Math.floor(pz / pcell);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const bucket = world._propHash.get((pcx + dx) + ',' + (pcz + dz));
+          if (!bucket) continue;
+          for (let i = 0; i < bucket.length; i++) {
+            const c = circleAABB(px, pz, rc, bucket[i], py, 1.5);
+            if (c) this._resolve(c, false, world);
+          }
+        }
+      }
+    } else if (world.propsAABB) {
+      for (const p of world.propsAABB) {
+        const c = circleAABB(px, pz, rc, p, py, 1.5);
+        if (c) this._resolve(c, false, world);
+      }
     }
     // круглые коллайдеры (озеро)
     for (const cld of world.circleColliders) {
@@ -390,10 +420,16 @@ export class PlayerCar {
     // пешеходы и животные: каждый капсульный круг проверяем раздельно, чтобы
     // задевать пешехода только когда капсула реально его касается
     if (world.peds) {
-      for (const p of world.peds.cars) this._collidePed(p, rc, px, pz, world);
+      for (const p of world.peds.cars) {
+        if (Math.abs(px - p.x) > 3 || Math.abs(pz - p.z) > 3) continue;
+        this._collidePed(p, rc, px, pz, world);
+      }
       if (world.gameRef && world.gameRef.orders) {
         for (const o of world.gameRef.orders.open) {
-          if (o.passenger && o.passenger.mesh) this._collidePed(o.passenger, rc, px, pz, world);
+          if (o.passenger && o.passenger.mesh) {
+            if (Math.abs(px - o.passenger.x) > 3 || Math.abs(pz - o.passenger.z) > 3) continue;
+            this._collidePed(o.passenger, rc, px, pz, world);
+          }
         }
       }
     }

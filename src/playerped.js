@@ -275,7 +275,24 @@ export class PlayerPed {
     const py = world.heightAt ? world.heightAt(this.x, this.z) : 0;
 
     // 1. Здания: circleAABB (радиус 0.35) с выталкиванием по нормали
-    if (world.buildings) {
+    if (world._buildingHash) {
+      const cell = world._buildingHashCell || 16;
+      const cx = Math.floor(this.x / cell);
+      const cz = Math.floor(this.z / cell);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dz = -1; dz <= 1; dz++) {
+          const bucket = world._buildingHash.get((cx + dx) + ',' + (cz + dz));
+          if (!bucket) continue;
+          for (let i = 0; i < bucket.length; i++) {
+            const c = circleAABB(this.x, this.z, 0.35, bucket[i], py, 1.7);
+            if (c) {
+              this.x += c.nx * c.depth;
+              this.z += c.nz * c.depth;
+            }
+          }
+        }
+      }
+    } else if (world.buildings) {
       for (let i = 0; i < world.buildings.length; i++) {
         const c = circleAABB(this.x, this.z, 0.35, world.buildings[i], py, 1.7);
         if (c) {

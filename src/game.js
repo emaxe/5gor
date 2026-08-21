@@ -28,6 +28,8 @@ const SKY_TINT_RAIN = new THREE.Color(0x3a4856);
 const SKY_TINT_FOG = new THREE.Color(0x8a95a2);
 const _tmpSky = new THREE.Color();
 const _tmpFogColor = new THREE.Color();
+const _driveInput = { throttle: 0, brake: 0, handbrake: false, steer: 0 };
+const _tempSiren = { x: 0, z: 0, type: null };
 
 const RAIN_VERT = `
 uniform float uTime;
@@ -1156,13 +1158,11 @@ export class Game {
 
     // ввод
     const touch = this.ui.getTouchInput();
-    const input = {
-      throttle: Math.max(this.input.throttle, touch ? touch.gas : 0),
-      brake: Math.max(this.input.brake, touch ? touch.brake : 0),
-      handbrake: this.input.handbrake || (touch ? touch.hb : false),
-      steer: this.input.steer + (touch ? touch.steer * 0.85 : 0),
-    };
-    input.steer = clamp(input.steer, -1, 1);
+    const input = _driveInput;
+    input.throttle = Math.max(this.input.throttle, touch ? touch.gas : 0);
+    input.brake = Math.max(this.input.brake, touch ? touch.brake : 0);
+    input.handbrake = this.input.handbrake || (touch ? touch.hb : false);
+    input.steer = clamp(this.input.steer + (touch ? touch.steer * 0.85 : 0), -1, 1);
     this.player.setSteer(input.steer);
     this.player.update(dt, input, this.world, this.traffic);
     this.player.snapToTerrain(this.world);
@@ -1226,7 +1226,13 @@ export class Game {
     for (const c of this.traffic.cars) {
       if (!c.beacon || !c.mesh.visible) continue;
       const d = dist2D(c.x, c.z, this.player.x, this.player.z);
-      if (d < sirenDist) { sirenDist = d; siren = { x: c.x, z: c.z, type: c.beacon }; }
+      if (d < sirenDist) {
+        sirenDist = d;
+        _tempSiren.x = c.x;
+        _tempSiren.z = c.z;
+        _tempSiren.type = c.beacon;
+        siren = _tempSiren;
+      }
     }
     let nearestPedDist, nearestPedPan, bestPd = 12;
     for (const p of this.peds.cars) {

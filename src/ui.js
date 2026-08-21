@@ -31,6 +31,10 @@ export class UIManager {
     };
     this.isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
     this.interactCb = null;
+    this._interactWrap = null;
+    this._interactBtn = null;
+    this._lastInteractLabel = undefined;
+    this._lastInteractCb = null;
     this._bindButtons();
     this._bindTouch();
     this._baseMap = null;
@@ -567,18 +571,25 @@ export class UIManager {
 
   /* ---------- Контекстная кнопка ---------- */
   setInteract(label, cb) {
-    const wrap = this.$('btn-interact-wrap');
+    const wrap = this._interactWrap || (this._interactWrap = this.$('btn-interact-wrap'));
     if (label) {
-      wrap.classList.remove('hidden');
-      const btn = this.$('btn-interact');
+      if (this._lastInteractLabel === label && this._lastInteractCb === cb && wrap && !wrap.classList.contains('hidden')) {
+        return; // состояние не изменилось
+      }
+      if (wrap) wrap.classList.remove('hidden');
+      const btn = this._interactBtn || (this._interactBtn = this.$('btn-interact'));
       if (btn) btn.textContent = label;
-      this.interactCb = cb;
+      this._lastInteractLabel = label;
+      this._lastInteractCb = cb;
     } else {
-      wrap.classList.add('hidden');
-      this.interactCb = null;
-      const btn = this.$('btn-interact');
+      if (this._lastInteractLabel === null && wrap && wrap.classList.contains('hidden')) return;
+      if (wrap) wrap.classList.add('hidden');
+      this._lastInteractLabel = null;
+      this._lastInteractCb = null;
+      const btn = this._interactBtn || (this._interactBtn = this.$('btn-interact'));
       if (btn) btn.style.opacity = '';
     }
+    this.interactCb = cb || null;
   }
 
   /* ---------- Диалоги пассажиров ---------- */
