@@ -1051,23 +1051,37 @@ export class World {
       eye.position.set(sx * 0.22, 4.65, 0.55); g.add(eye);
     }
 
-    // Расправленные крылья — по 3 пластины-пера на каждое крыло
+    // Расправленные крылья — единая связная конструкция с перекрытием сегментов
     for (const s of [-1, 1]) {
-      // Верхняя часть крыла (ближе к телу)
-      const wing1 = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.12, 0.9), eagleMat);
-      wing1.position.set(s * 0.9, 4.1, -0.1);
-      wing1.rotation.z = s * 0.25; wing1.rotation.y = s * 0.15;
-      g.add(wing1);
-      // Средняя часть крыла
-      const wing2 = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.1, 0.7), eagleMat);
-      wing2.position.set(s * 2.0, 3.85, -0.15);
-      wing2.rotation.z = s * 0.4; wing2.rotation.y = s * 0.25;
-      g.add(wing2);
-      // Кончик крыла (перья)
-      const wing3 = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.08, 0.5), eagleMat);
-      wing3.position.set(s * 3.0, 3.55, -0.2);
-      wing3.rotation.z = s * 0.55; wing3.rotation.y = s * 0.35;
-      g.add(wing3);
+      // 1. Основание крыла (плечо): глубоко входит в туловище (x от ±0.08 до ±1.32)
+      const wingBase = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.16, 0.85), eagleMat);
+      wingBase.position.set(s * 0.7, 3.85, -0.05);
+      wingBase.rotation.set(-0.1, s * 0.15, s * 0.28);
+      g.add(wingBase);
+
+      // 2. Средняя часть (предплечье): гладко продолжает основание с перекрытием (x от ±1.17 до ±2.43)
+      const wingMid = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.13, 0.72), eagleMat);
+      wingMid.position.set(s * 1.8, 4.30, -0.22);
+      wingMid.rotation.set(-0.15, s * 0.25, s * 0.42);
+      g.add(wingMid);
+
+      // 3. Кончик крыла (маховые перья): плавно завершает изгиб крыла вверх (x от ±2.23 до ±3.17)
+      const wingTip = new THREE.Mesh(new THREE.BoxGeometry(1.15, 0.10, 0.58), eagleMat);
+      wingTip.position.set(s * 2.7, 4.90, -0.42);
+      wingTip.rotation.set(-0.2, s * 0.35, s * 0.60);
+      g.add(wingTip);
+
+      // 4. Нижний веер перьев (основание): добавляет крылу ширину и объем сзади/снизу
+      const wingFeathersInner = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.08, 0.65), eagleMat);
+      wingFeathersInner.position.set(s * 0.95, 3.62, -0.28);
+      wingFeathersInner.rotation.set(-0.28, s * 0.12, s * 0.20);
+      g.add(wingFeathersInner);
+
+      // 5. Вторичные маховые перья (середина): связывает нижний ярус с кончиком крыла
+      const wingFeathersOuter = new THREE.Mesh(new THREE.BoxGeometry(1.2, 0.07, 0.52), eagleMat);
+      wingFeathersOuter.position.set(s * 2.05, 4.02, -0.46);
+      wingFeathersOuter.rotation.set(-0.30, s * 0.24, s * 0.35);
+      g.add(wingFeathersOuter);
     }
 
     // Когти на змее — маленькие конусы
