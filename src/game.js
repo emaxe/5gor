@@ -317,6 +317,8 @@ export class Game {
 
     this.orders = new PassengerManager(this.world);
 
+    this.skidMarks = new SkidMarks(this.scene);
+
     this.player.fuel = CFG.startFuel;
     this.chaseCam = new ChaseCamera(this.camera);
     this.chaseCam.reset(this.player);
@@ -571,6 +573,7 @@ export class Game {
     this.player.setPos(0, 20, 0);
     this.player.repair();
     this.player.wash();
+    this.skidMarks.clear();
     this.chaseCam.setTargetMode('car');
     this.chaseCam.reset(this.player);
     this.setState('driving');
@@ -798,6 +801,7 @@ export class Game {
     this.chaseCam.reset(this.player);
     this.ui.toast('Эвакуатор доставил машину на перекрёсток', '#7ee787');
     this.audio.chime();
+    this.skidMarks.clear();
     this._gpsFuelRoute = null; this._gpsFuelTarget = null; this._gpsTargetType = null;
     this._gpsRoute = null; this._gpsLastDrop = null;
     this.setState('driving');
@@ -1201,6 +1205,8 @@ export class Game {
     this.player.setSteer(input.steer);
     this.player.update(dt, input, this.world, this.traffic);
     this.player.snapToTerrain(this.world);
+    // следы шин при заносе
+    this.skidMarks.update(this.player, this.world);
 
     // трафик и пешеходы
     const density = w.traffic * (this.hour >= 22 || this.hour < 6 ? 0.55 : 1);

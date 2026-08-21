@@ -30,6 +30,7 @@ MODULES = [
     "traffic.js",
     "peds.js",
     "camera.js",
+    "skidmarks.js",
     "dialogues.js",
     "orders.js",
     "upgrades.js",
