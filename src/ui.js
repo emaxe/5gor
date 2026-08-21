@@ -1,4 +1,4 @@
-import { CFG, DISTRICTS, UPGRADES, CARS, TUNING } from './config.js';
+import { CFG, DISTRICTS, UPGRADES, CARS, TUNING, MOOD_TIERS } from './config.js';
 import { fmtMoney, fmtTime, fmtClock, choice, dist2D } from './utils.js';
 import { routeLength } from './gps.js';
 import { Events } from './eventbus.js';
@@ -24,6 +24,7 @@ export class UIManager {
     for (const id of [
       'money', 'rating', 'clock', 'day', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
       'order-card', 'order-title', 'order-desc', 'order-timer', 'order-pay',
+      'order-mood', 'mood-emoji', 'mood-label', 'mood-bar-fill',
       'nav-arrow-wrap', 'nav-arrow', 'nav-dist',
     ]) this._els[id] = document.getElementById(id);
     this.screens = {
@@ -44,6 +45,9 @@ export class UIManager {
     this._dialogueTimer = null;
     this._lastRating = null;
     this._achBannerTimer = null;
+    this._lastMoodVisible = null; // dirty-check видимости индикатора настроения
+    this._lastMoodTier = -1;      // dirty-check ступени настроения
+    this._lastMoodPct = -1;       // dirty-check процента полосы настроения
 
     Events.on('passenger:speak', (d) => this.showDialogue(d.speaker, d.text, d.avatar, d.color));
     Events.on('radio:changed', (st) => this.updateRadioDisplay(st));
@@ -298,6 +302,9 @@ export class UIManager {
       oc.classList.add('hidden');
     }
 
+    // Настроение пассажира (стиль вождения) — показываем только при перевозке пассажира
+    this._updateMood(player, orders);
+
     // стрелка-навигатор: появляется только при активном принятом задании или при маршруте к заправке
     const nw = els['nav-arrow-wrap'];
     const orderTarget = orders && orders.activeDrop;
@@ -340,6 +347,49 @@ export class UIManager {
     const btnInteract = this.$('btn-interact');
     if (btnInteract && btnInteract.style.opacity !== '') {
       btnInteract.style.opacity = '';
+    }
+  }
+
+  /**
+   * Индикатор настроения пассажира (стиль вождения player.style, 0..1).
+   * Чистое представление — не влияет на экономику/награды. Показывается только
+   * при перевозке пассажира (passengerCount > 0). Dirty-check: DOM-запись только
+   * при смене видимости, ступени или целого процента полосы.
+   */
+  _updateMood(player, orders) {
+    const els = this._els;
+    const moodEl = els['order-mood'];
+    if (!moodEl) return;
+    const hasPassenger = !!(orders && orders.active && player.passengerCount > 0);
+
+    if (this._lastMoodVisible !== hasPassenger) {
+      moodEl.classList.toggle('hidden', !hasPassenger);
+      this._lastMoodVisible = hasPassenger;
+      if (!hasPassenger) {
+        this._lastMoodTier = -1;
+        this._lastMoodPct = -1;
+      }
+    }
+    if (!hasPassenger) return;
+
+    const style = clamp(player.style, 0, 1);
+    const pct = Math.round(style * 100);
+    if (this._lastMoodPct !== pct) {
+      this._lastMoodPct = pct;
+      els['mood-bar-fill'].style.width = pct + '%';
+    }
+
+    let tier = 0;
+    for (let i = MOOD_TIERS.length - 1; i >= 0; i--) {
+      if (style >= MOOD_TIERS[i].minStyle) { tier = i; break; }
+    }
+    if (this._lastMoodTier !== tier) {
+      this._lastMoodTier = tier;
+      const mood = MOOD_TIERS[tier];
+      this._setText(els['mood-emoji'], mood.emoji);
+      this._setText(els['mood-label'], mood.label);
+      els['mood-label'].style.color = mood.color;
+      els['mood-bar-fill'].style.backgroundColor = mood.color;
     }
   }
 

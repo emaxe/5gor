@@ -49,6 +49,17 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 #order-desc { font-size: 11px; color: #9aa4b0; margin-top: 1px; }
 #order-timer { font-size: 12px; font-weight: 700; color: #ff7b72; font-variant-numeric: tabular-nums; }
 #order-pay { font-size: 12px; color: #7ee787; font-weight: 600; }
+/* ---------- Настроение пассажира в карточке заказа ---------- */
+#order-mood {
+  margin-top: 5px; padding-top: 4px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  display: flex; flex-direction: column; gap: 3px; align-items: center;
+}
+#mood-header { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; line-height: 1.2; }
+#mood-emoji { font-size: 13px; line-height: 1; }
+#mood-label { color: #c9d1d9; letter-spacing: 0.2px; transition: color 0.2s ease; }
+.mood-bar-wrap { width: 100%; height: 4px; background: rgba(255,255,255,0.12); border-radius: 2px; overflow: hidden; }
+#mood-bar-fill { height: 100%; width: 70%; border-radius: 2px; background: #58a6ff; transition: width 0.15s ease, background-color 0.25s ease; }
 #dialogue-bubble {
   background: rgba(16, 24, 38, 0.82);
   backdrop-filter: blur(8px);
@@ -485,6 +496,16 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
       <div id="order-desc"></div>
       <div id="order-timer"></div>
       <div id="order-pay"></div>
+      <!-- Настроение пассажира (стиль вождения, 0..1) -->
+      <div id="order-mood" class="hidden">
+        <div id="mood-header">
+          <span id="mood-emoji">😊</span>
+          <span id="mood-label">Доволен</span>
+        </div>
+        <div class="mood-bar-wrap">
+          <div id="mood-bar-fill"></div>
+        </div>
+      </div>
     </div>
     <div id="dialogue-bubble" class="hidden">
       <div id="dialogue-avatar">💬</div>
@@ -931,6 +952,17 @@ const CFG = {
   // сохранений — реальные настройки теперь в CFG.gfx)
   quality: 'high', // high | low (вкл/выкл тени, pixelRatio)
 };
+
+/* Шкала настроения пассажира (стиль вождения player.style, 0..1).
+   Первый подошедший по minStyle <= style. Чистое представление (View) — не влияет
+   на экономику/награды, только отображает уже вычисленный player.style. */
+const MOOD_TIERS = [
+  { minStyle: 0.00, emoji: '😡', label: 'В ярости',   color: '#ff7b72' },
+  { minStyle: 0.25, emoji: '😰', label: 'Нервничает', color: '#ff9e3a' },
+  { minStyle: 0.45, emoji: '😐', label: 'Нормально',  color: '#e3b341' },
+  { minStyle: 0.65, emoji: '😊', label: 'Доволен',    color: '#58a6ff' },
+  { minStyle: 0.85, emoji: '🤩', label: 'В восторге', color: '#7ee787' },
+];
 
 /* Настройки графики: реальные поля, применяемые applyGfx() (game.js). Дефолты
    соответствуют текущему поведению quality:'high'. */
@@ -15042,6 +15074,7 @@ class UIManager {
     for (const id of [
       'money', 'rating', 'clock', 'day', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
       'order-card', 'order-title', 'order-desc', 'order-timer', 'order-pay',
+      'order-mood', 'mood-emoji', 'mood-label', 'mood-bar-fill',
       'nav-arrow-wrap', 'nav-arrow', 'nav-dist',
     ]) this._els[id] = document.getElementById(id);
     this.screens = {
@@ -15062,6 +15095,9 @@ class UIManager {
     this._dialogueTimer = null;
     this._lastRating = null;
     this._achBannerTimer = null;
+    this._lastMoodVisible = null; // dirty-check видимости индикатора настроения
+    this._lastMoodTier = -1;      // dirty-check ступени настроения
+    this._lastMoodPct = -1;       // dirty-check процента полосы настроения
 
     Events.on('passenger:speak', (d) => this.showDialogue(d.speaker, d.text, d.avatar, d.color));
     Events.on('radio:changed', (st) => this.updateRadioDisplay(st));
@@ -15316,6 +15352,9 @@ class UIManager {
       oc.classList.add('hidden');
     }
 
+    // Настроение пассажира (стиль вождения) — показываем только при перевозке пассажира
+    this._updateMood(player, orders);
+
     // стрелка-навигатор: появляется только при активном принятом задании или при маршруте к заправке
     const nw = els['nav-arrow-wrap'];
     const orderTarget = orders && orders.activeDrop;
@@ -15358,6 +15397,49 @@ class UIManager {
     const btnInteract = this.$('btn-interact');
     if (btnInteract && btnInteract.style.opacity !== '') {
       btnInteract.style.opacity = '';
+    }
+  }
+
+  /**
+   * Индикатор настроения пассажира (стиль вождения player.style, 0..1).
+   * Чистое представление — не влияет на экономику/награды. Показывается только
+   * при перевозке пассажира (passengerCount > 0). Dirty-check: DOM-запись только
+   * при смене видимости, ступени или целого процента полосы.
+   */
+  _updateMood(player, orders) {
+    const els = this._els;
+    const moodEl = els['order-mood'];
+    if (!moodEl) return;
+    const hasPassenger = !!(orders && orders.active && player.passengerCount > 0);
+
+    if (this._lastMoodVisible !== hasPassenger) {
+      moodEl.classList.toggle('hidden', !hasPassenger);
+      this._lastMoodVisible = hasPassenger;
+      if (!hasPassenger) {
+        this._lastMoodTier = -1;
+        this._lastMoodPct = -1;
+      }
+    }
+    if (!hasPassenger) return;
+
+    const style = clamp(player.style, 0, 1);
+    const pct = Math.round(style * 100);
+    if (this._lastMoodPct !== pct) {
+      this._lastMoodPct = pct;
+      els['mood-bar-fill'].style.width = pct + '%';
+    }
+
+    let tier = 0;
+    for (let i = MOOD_TIERS.length - 1; i >= 0; i--) {
+      if (style >= MOOD_TIERS[i].minStyle) { tier = i; break; }
+    }
+    if (this._lastMoodTier !== tier) {
+      this._lastMoodTier = tier;
+      const mood = MOOD_TIERS[tier];
+      this._setText(els['mood-emoji'], mood.emoji);
+      this._setText(els['mood-label'], mood.label);
+      els['mood-label'].style.color = mood.color;
+      els['mood-bar-fill'].style.backgroundColor = mood.color;
     }
   }
 

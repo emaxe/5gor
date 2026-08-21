@@ -41,6 +41,17 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 #order-desc { font-size: 11px; color: #9aa4b0; margin-top: 1px; }
 #order-timer { font-size: 12px; font-weight: 700; color: #ff7b72; font-variant-numeric: tabular-nums; }
 #order-pay { font-size: 12px; color: #7ee787; font-weight: 600; }
+/* ---------- Настроение пассажира в карточке заказа ---------- */
+#order-mood {
+  margin-top: 5px; padding-top: 4px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  display: flex; flex-direction: column; gap: 3px; align-items: center;
+}
+#mood-header { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600; line-height: 1.2; }
+#mood-emoji { font-size: 13px; line-height: 1; }
+#mood-label { color: #c9d1d9; letter-spacing: 0.2px; transition: color 0.2s ease; }
+.mood-bar-wrap { width: 100%; height: 4px; background: rgba(255,255,255,0.12); border-radius: 2px; overflow: hidden; }
+#mood-bar-fill { height: 100%; width: 70%; border-radius: 2px; background: #58a6ff; transition: width 0.15s ease, background-color 0.25s ease; }
 #dialogue-bubble {
   background: rgba(16, 24, 38, 0.82);
   backdrop-filter: blur(8px);

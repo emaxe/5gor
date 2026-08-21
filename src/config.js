@@ -214,6 +214,17 @@ export const CFG = {
   quality: 'high', // high | low (вкл/выкл тени, pixelRatio)
 };
 
+/* Шкала настроения пассажира (стиль вождения player.style, 0..1).
+   Первый подошедший по minStyle <= style. Чистое представление (View) — не влияет
+   на экономику/награды, только отображает уже вычисленный player.style. */
+export const MOOD_TIERS = [
+  { minStyle: 0.00, emoji: '😡', label: 'В ярости',   color: '#ff7b72' },
+  { minStyle: 0.25, emoji: '😰', label: 'Нервничает', color: '#ff9e3a' },
+  { minStyle: 0.45, emoji: '😐', label: 'Нормально',  color: '#e3b341' },
+  { minStyle: 0.65, emoji: '😊', label: 'Доволен',    color: '#58a6ff' },
+  { minStyle: 0.85, emoji: '🤩', label: 'В восторге', color: '#7ee787' },
+];
+
 /* Настройки графики: реальные поля, применяемые applyGfx() (game.js). Дефолты
    соответствуют текущему поведению quality:'high'. */
 // pixelBudget — потолок пикселей буфера рендера (ширина×высота×pixelRatio²).
