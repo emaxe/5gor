@@ -185,6 +185,20 @@ export class SfxLibrary {
     e.tone(550, 0.14, 'sine', 0.12, 0, 280);    // нисходящий питч 550→280 Гц
   }
 
+  /* Достижение порога серии сближений — восходящий аккорд, громче и выше с уровнем */
+  nearMissStreak(level = 1) {
+    const e = this.engine;
+    if (!e.enabled) return;
+    const g = 0.14 + level * 0.03;
+    const baseFreq = 520 + level * 160;           // 680 / 840 / 1000 Гц по уровню
+    e.noiseBurst(0.16, g, 900 + level * 250);     // свист воздуха с более широким фильтром
+    e.tone(baseFreq, 0.15, 'triangle', g, 0, baseFreq * 0.7);
+    e.tone(baseFreq * 1.5, 0.12, 'sine', g * 0.85, 0.04, baseFreq * 1.1);
+    if (level >= 3) {
+      e.tone(baseFreq * 2, 0.18, 'sawtooth', g * 0.6, 0.08, baseFreq * 1.3);
+    }
+  }
+
   /* Закрытие двери — щелчок + удар + короткий резонанс кузова (посадка) */
   doorClose() {
     const e = this.engine;

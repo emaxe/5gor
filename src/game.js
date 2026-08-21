@@ -98,6 +98,10 @@ export class Game {
     this.musicOn = true;
     this.comboStreak = 0;
 
+    // Состояние серии опасных сближений (near-miss streak), отдельно от combo заказов
+    this._nmStreak = 0;        // текущая длина серии сближений
+    this._nmLastTime = 0;      // shiftElapsed в момент последнего сближения
+
     // Состояние дрифт-бонуса (все скаляры, zero-alloc)
     this._driftDuration = 0;   // накопленные секунды заноса
     this._driftDist = 0;       // накопленная дистанция заноса, м
@@ -360,6 +364,7 @@ export class Game {
       this._driftDuration = 0;
       this._driftDist = 0;
       this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
+      this._nmStreak = 0; this._nmLastTime = 0;
       // сброс одноразовых флагов near-miss: столкновение с NPC не должно
       // давать награду за «опасное сближение» (флаг _nmHit ставит детектор)
       if (d && d.car) { d.car._nmHit = true; d.car._nmPassed = false; }
@@ -373,6 +378,7 @@ export class Game {
       this._driftDuration = 0;
       this._driftDist = 0;
       this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
+      this._nmStreak = 0; this._nmLastTime = 0;
       this.setRating(this.rating - CFG.ratingFail.hitPed);
       this.addMoney(-300);
       this.shakeT = 0.3; this.shakeAmp = 0.4;
@@ -412,9 +418,11 @@ export class Game {
       }
     });
     events.on('stall', () => {
+      this._nmStreak = 0; this._nmLastTime = 0;
       this.ui.toast('Двигатель заглох!', '#ffb030');
     });
     events.on('noFuel', () => {
+      this._nmStreak = 0; this._nmLastTime = 0;
       this.ui.toast('Кончилось топливо! До заправки пешком…', '#ffb030');
     });
     events.on('edge', () => {
@@ -520,6 +528,7 @@ export class Game {
     });
     events.on('shift:started', () => {
       this.comboStreak = 0;
+      this._nmStreak = 0; this._nmLastTime = 0;
       this._refuelTipShown = false;
     });
   }
@@ -1543,17 +1552,46 @@ export class Game {
 
   /**
    * Начисление награды за опасное сближение. Зеркалит _updateDrift.
+   * Серия последовательных сближений в пределах окна даёт растущий множитель
+   * награды (×2/×5/×10 на порогах 2/5/10), отдельный от комбо заказов.
    * @param {boolean} isPed - true если мимо пешехода, false если мимо машины
    * @param {number} x - Мировая X-координата сущности
    * @param {number} z - Мировая Z-координата сущности
    */
   _triggerNearMiss(isPed, x, z) {
-    const reward = CFG.nearMissReward;
+    const now = this.shiftElapsed;
+    if (this._nmStreak > 0 && (now - this._nmLastTime) <= CFG.nearMissStreakWindow) {
+      this._nmStreak++;
+    } else {
+      this._nmStreak = 1;
+    }
+    this._nmLastTime = now;
+
+    // множитель по порогам серии (скалярный расчёт без аллокаций)
+    let mult = 1;
+    for (let i = 0; i < CFG.nearMissStreakTiers.length; i++) {
+      if (this._nmStreak >= CFG.nearMissStreakTiers[i].count) mult = CFG.nearMissStreakTiers[i].mult;
+    }
+    const reward = CFG.nearMissReward * mult;
     this.addMoney(reward);
     if (this.shiftStats) this.shiftStats.earned += reward;
     if (this.player.passengerCount > 0) this.player.style = clamp(this.player.style + CFG.nearMissStyleBonus, 0, 1);
-    this.ui.toast(isPed ? '⚡ Опасное сближение! +' + reward + ' ₽' : '⚡ Опасный обгон! +' + reward + ' ₽', '#70d6ff');
-    Events.emit('nearmiss', { type: isPed ? 'ped' : 'car', reward, x, z });
+
+    // тост-милестоун при достижении нового порога серии
+    let milestone = null;
+    for (let i = 0; i < CFG.nearMissStreakTiers.length; i++) {
+      const t = CFG.nearMissStreakTiers[i];
+      if (this._nmStreak === t.count) { milestone = t; break; }
+    }
+    if (milestone) {
+      this.ui.toast('🔥 Серия сближений ×' + this._nmStreak + '! Множитель ×' + milestone.mult + ' (+' + reward + ' ₽)', '#ffd75e');
+      Events.emit('nearmiss:streak', { streak: this._nmStreak, mult: milestone.mult, level: milestone.level, reward, x, z });
+    } else {
+      const base = isPed ? '⚡ Опасное сближение!' : '⚡ Опасный обгон!';
+      const multText = mult > 1 ? ' ×' + mult : '';
+      this.ui.toast(base + ' +' + reward + ' ₽' + multText, '#70d6ff');
+    }
+    Events.emit('nearmiss', { type: isPed ? 'ped' : 'car', reward, streak: this._nmStreak, mult, x, z });
   }
 
   _walk(dt) {

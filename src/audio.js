@@ -69,6 +69,10 @@ export class AudioManager {
       if (!this._ready) return;
       this.sfx.nearMiss();
     });
+    Events.on('nearmiss:streak', (d) => {
+      if (!this._ready) return;
+      this.sfx.nearMissStreak(d && d.level ? d.level : 1);
+    });
     Events.on('ped:kick', () => {
       if (!this._ready) return;
       this.sfx.thud();
