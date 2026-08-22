@@ -23,7 +23,7 @@ export class UIManager {
     this._els = {};
     for (const id of [
       'money', 'rating', 'clock', 'day', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
-      'order-card', 'order-title', 'order-desc', 'order-timer', 'order-pay',
+      'order-card', 'order-title', 'order-progress', 'order-desc', 'order-timer', 'order-pay',
       'order-mood', 'mood-emoji', 'mood-label', 'mood-bar-fill',
       'nav-arrow-wrap', 'nav-arrow', 'nav-dist',
     ]) this._els[id] = document.getElementById(id);
@@ -294,6 +294,18 @@ export class UIManager {
     if (a) {
       oc.classList.remove('hidden');
       els['order-title'].textContent = a.title;
+      // Мультистоп-прогресс: «Остановка 1/3» при нескольких точках высадки
+      const dropCount = (a.drops && a.drops.length) || 1;
+      if (dropCount > 1) {
+        const prog = els['order-progress'];
+        if (prog) {
+          prog.classList.remove('hidden');
+          prog.textContent = 'Остановка ' + (a.dropIdx + 1) + '/' + dropCount;
+        }
+      } else {
+        const prog = els['order-progress'];
+        if (prog) prog.classList.add('hidden');
+      }
       els['order-desc'].textContent = a.drops[a.dropIdx].name;
       els['order-timer'].style.display = a.timeLimit ? '' : 'none';
       if (a.timeLimit) els['order-timer'].textContent = '⏱ ' + Math.ceil(a.timer) + ' с';
