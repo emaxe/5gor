@@ -1066,6 +1066,10 @@ export class Game {
       nearMisses: achStats.nearMisses,
       punches: achStats.punches,
       maxNearMissStreak: achStats.maxNearMissStreak,
+      maxSpeed: achStats.maxSpeed,
+      maxRating: achStats.maxRating,
+      nightOrders: achStats.nightOrders,
+      policeFines: achStats.policeFines,
     };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,

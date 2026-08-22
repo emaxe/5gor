@@ -208,6 +208,13 @@ export class AchievementManager {
     this.stats.totalPunches = stats.punches || stats.totalPunches || 0;
     this.stats.totalNearMisses = stats.nearMisses || 0;
     this.stats.maxNearMissStreak = stats.maxNearMissStreak || 0;
+    // maxSpeed/maxRating/nightOrders/policeFines — долговременные счётчики
+    // (гейтят достижения «Ночная сова», «Враг народа», «Шумахер», «Звезда»);
+    // без переноса в save()-спред и loadStats они сбрасываются при каждой загрузке.
+    this.stats.maxSpeedKmh = stats.maxSpeed || this.stats.maxSpeedKmh;
+    this.stats.maxRating = stats.maxRating || this.stats.maxRating;
+    this.stats.nightOrders = stats.nightOrders || 0;
+    this.stats.policeFines = stats.policeFines || 0;
   }
 
   /**
