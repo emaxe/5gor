@@ -1060,6 +1060,7 @@ export class Game {
       missions: achStats.missions,
       km: achStats.km,
       nearMisses: achStats.nearMisses,
+      punches: achStats.punches,
     };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,
