@@ -15337,6 +15337,26 @@ class UIManager {
     } else if (this._streakEl) {
       this._streakEl.style.display = 'none';
     }
+
+    // индикатор серии опасных сближений (множитель ×2/×5/×10)
+    const nmStreak = gameState._nmStreak || 0;
+    let nmMult = 1;
+    const nmTiers = CFG.nearMissStreakTiers || [];
+    for (let i = 0; i < nmTiers.length; i++) {
+      if (nmStreak >= nmTiers[i].count) nmMult = nmTiers[i].mult;
+    }
+    if (nmMult > 1) {
+      if (!this._nmStreakEl) {
+        this._nmStreakEl = document.createElement('span');
+        this._nmStreakEl.style.cssText = 'color:#70d6ff;font-size:13px;font-weight:700;margin-left:6px;white-space:nowrap;';
+        const moneyEl = els.money;
+        if (moneyEl && moneyEl.parentNode) moneyEl.parentNode.insertBefore(this._nmStreakEl, moneyEl.nextSibling);
+      }
+      this._nmStreakEl.textContent = '💨 ×' + nmMult;
+      this._nmStreakEl.style.display = '';
+    } else if (this._nmStreakEl) {
+      this._nmStreakEl.style.display = 'none';
+    }
     this._setText(els.clock, fmtClock(hour));
     this._setText(els.day, 'День ' + gameState.day);
     const kmh = Math.round(Math.abs(player.speed) * 3.6);
