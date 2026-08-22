@@ -117,8 +117,11 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
   line-height: 1.25;
 }
 #nav-arrow-wrap {
+  /* СТРЕЛКА-НАВИГАТОР СКРЫТА: работает неправильно, доработаем позже.
+     Убрать display:none, чтобы вернуть. Логика в ui.js не тронута. */
+  display: none;
   background: rgba(10,14,20,0.35); border-radius: 50%; width: 64px; height: 64px;
-  display: flex; align-items: center; justify-content: center; position: fixed;
+  align-items: center; justify-content: center; position: fixed;
   top: 12px; left: 50%; transform: translateX(-50%);
   border: 1px solid rgba(255,255,255,0.10);
   /* fixed-позиционирование: компас не смещается от количества сообщений в #hud-tc */
