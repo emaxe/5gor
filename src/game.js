@@ -591,7 +591,7 @@ export class Game {
     this.day = day;
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
-    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0 };
+    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0 };
     this._driftDuration = 0;
     this._driftDist = 0;
     this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
@@ -1575,7 +1575,10 @@ export class Game {
     }
     const reward = CFG.nearMissReward * mult;
     this.addMoney(reward);
-    if (this.shiftStats) this.shiftStats.earned += reward;
+    if (this.shiftStats) {
+      this.shiftStats.earned += reward;
+      this.shiftStats.nearMisses++;
+    }
     if (this.player.passengerCount > 0) this.player.style = clamp(this.player.style + CFG.nearMissStyleBonus, 0, 1);
     // Lifetime-статистика опасных сближений (для ачивок)
     this.achievements.stats.totalNearMisses = (this.achievements.stats.totalNearMisses || 0) + 1;
