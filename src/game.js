@@ -15,7 +15,7 @@ import { AudioManager } from './audio.js';
 import { InputManager } from './input.js';
 import { PoliceManager } from './police.js';
 import { AchievementManager } from './achievements.js';
-import { DISPATCHER_BRIEFS, DRIVER_DAY_NOTES, getDispatcherBrief, getDriverDayNote } from './dialogues.js';
+import { DISPATCHER_BRIEFS, DRIVER_DAY_NOTES, PASSENGER_DRIFT_REACTIONS, getDispatcherBrief, getDriverDayNote } from './dialogues.js';
 import { buildCarRoadGraph, findCarRoute } from './gps.js';
 
 // Таблица цвета неба по часу суток + переиспользуемые Color-объекты для
@@ -105,6 +105,7 @@ export class Game {
     // Состояние дрифт-бонуса (все скаляры, zero-alloc)
     this._driftDuration = 0;   // накопленные секунды заноса
     this._driftDist = 0;       // накопленная дистанция заноса, м
+    this._driftReactionCd = 0; // кулдаун реплики пассажира на занос, сек
     this._psActive = false;    // идёт ли текущий цикл торможения (идеальная остановка)
     this._psPrevSpeed = 0;     // скорость на предыдущем кадре для расчёта замедления
     this._psMaxDecel = 0;      // пиковое замедление за текущий цикл торможения (м/с²)
@@ -1262,6 +1263,7 @@ export class Game {
     // следы шин при заносе
     this.skidMarks.update(this.player, this.world);
     this._updateDrift(dt, input);
+    if (this._driftReactionCd > 0) this._driftReactionCd -= dt;
     this._updatePerfectStop(dt, input);
 
     // трафик и пешеходы
@@ -1455,6 +1457,18 @@ export class Game {
 
       this.ui.toast('💨 Занос! +' + reward + ' ₽', '#ffd75e');
       Events.emit('drift:completed', { duration: this._driftDuration, dist: this._driftDist, reward });
+
+      // Пассажир реагирует на занос (не чаще раза в ~8 сек, только при перевозке)
+      if (p.passengerCount > 0 && this._driftReactionCd <= 0 && this.orders.active) {
+        this._driftReactionCd = 8;
+        const a = this.orders.active;
+        Events.emit('passenger:speak', {
+          speaker: a.clientName || 'Пассажир',
+          text: choice(PASSENGER_DRIFT_REACTIONS),
+          avatar: a.clientAvatar || '🧑',
+          color: a.color || '#f2c12e'
+        });
+      }
     }
 
     this._driftDuration = 0;
