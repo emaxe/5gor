@@ -15429,7 +15429,12 @@ class UIManager {
       els['order-desc'].textContent = a.drops[a.dropIdx].name;
       els['order-timer'].style.display = a.timeLimit ? '' : 'none';
       if (a.timeLimit) els['order-timer'].textContent = '⏱ ' + Math.ceil(a.timer) + ' с';
-      els['order-pay'].textContent = '≈ ' + fmtMoney(a.estPay) + ' + чаевые';
+      // Ночью фактическая выплата умножается на nightMult (orders.js complete),
+      // но estPay считается при спавне без множителя. Показываем честную оценку
+      // с учётом ночного тарифа, чтобы игрок не видел вдвое заниженную цифру.
+      const night = hour >= CFG.nightStartHour || hour < CFG.nightEndHour;
+      const shownPay = night ? Math.round(a.estPay * CFG.nightMult) : a.estPay;
+      els['order-pay'].textContent = '≈ ' + fmtMoney(shownPay) + (night ? ' (ночь ×' + CFG.nightMult + ')' : '') + ' + чаевые';
     } else {
       oc.classList.add('hidden');
     }
