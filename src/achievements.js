@@ -38,6 +38,9 @@ const ACHIEVEMENTS = [
   // --- Бойцовские ---
   { id: 'hot_head',      name: 'Горячая голова',       desc: 'Нападите на 10 прохожих за смену',      toast: 'Кулаки — вторая профессия таксиста',    icon: '👊', check: s => s.shiftPunches >= 10 },
   { id: 'brawler',       name: 'Дерущийся таксист',    desc: 'Нападите на 50 прохожих за все время',  toast: 'Гроза пешеходов проспекта Кирова',      icon: '🥊', check: s => s.totalPunches >= 50 },
+  // --- Вождение ---
+  { id: 'near_miss_50',  name: 'Скользкий тип',         desc: 'Совершите 50 опасных сближений',       toast: 'Прошёл в миллиметре — и не поцарапал',   icon: '💨', check: s => s.totalNearMisses >= 50 },
+  { id: 'near_miss_200', name: 'Призрак дорог',         desc: 'Совершите 200 опасных сближений',      toast: 'Ты невидимка на пятигорских трассах',    icon: '👻', check: s => s.totalNearMisses >= 200 },
 ];
 
 const STORAGE_KEY = '5gor_achievements_v1';
@@ -107,6 +110,7 @@ export class AchievementManager {
       shiftPeds: 0,
       shiftPunches: 0,
       totalPunches: 0,
+      totalNearMisses: 0,
     };
   }
 
@@ -198,6 +202,7 @@ export class AchievementManager {
     this.stats.totalMissions = stats.missions || 0;
     this.stats.totalKm = stats.km || 0;
     this.stats.totalPunches = stats.punches || stats.totalPunches || 0;
+    this.stats.totalNearMisses = stats.nearMisses || 0;
   }
 
   /**
@@ -217,6 +222,7 @@ export class AchievementManager {
       policeFines: this.stats.policeFines,
       punches: this.stats.totalPunches,
       totalPunches: this.stats.totalPunches,
+      nearMisses: this.stats.totalNearMisses,
     };
   }
 }

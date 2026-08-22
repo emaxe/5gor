@@ -1058,6 +1058,7 @@ export class Game {
       tips: achStats.tips,
       missions: achStats.missions,
       km: achStats.km,
+      nearMisses: achStats.nearMisses,
     };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,
@@ -1576,6 +1577,9 @@ export class Game {
     this.addMoney(reward);
     if (this.shiftStats) this.shiftStats.earned += reward;
     if (this.player.passengerCount > 0) this.player.style = clamp(this.player.style + CFG.nearMissStyleBonus, 0, 1);
+    // Lifetime-статистика опасных сближений (для ачивок)
+    this.achievements.stats.totalNearMisses = (this.achievements.stats.totalNearMisses || 0) + 1;
+    this.achievements.checkAll();
 
     // тост-милестоун при достижении нового порога серии
     let milestone = null;
