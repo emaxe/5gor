@@ -472,6 +472,8 @@ export class Game {
 
     events.on('order:completed', (r) => {
       this.comboStreak++;
+      // рекорд серии заказов за смену — для итогов смены
+      if (this.comboStreak > this.shiftStats.maxCombo) this.shiftStats.maxCombo = this.comboStreak;
       this.addMoney(r.total);
       this.shiftStats.earned += r.pay;
       this.shiftStats.tips += r.tips;
@@ -592,7 +594,9 @@ export class Game {
     this.day = day;
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
-    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0, drifts: 0, perfectStops: 0 };
+    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0, drifts: 0, perfectStops: 0, maxCombo: 0 };
+    // серия заказов — свой счётчик каждой смены, сбрасывается на границе смены
+    this.comboStreak = 0;
     this._driftDuration = 0;
     this._driftDist = 0;
     this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
