@@ -3,6 +3,7 @@ import { CFG } from './config.js';
 import { rand, clamp, choice, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture, makeSpeechSprite, updateSpeechSprite, isInPlayerView } from './utils.js';
 import { buildCarModel, shapeVariants } from './carmodel.js';
 import { Events } from './eventbus.js';
+import { DRIVER_SHOUTS } from './dialogues.js';
 
 const _tempTrafficWp = { x: 0, z: 0 };
 const _tempTrafficFrom = { x: 0, z: 0 };
@@ -170,7 +171,8 @@ export class TrafficManager {
     Events.on('crash', (d) => {
       if (d && d.victim === 'car' && d.car && d.impact > 3) {
         Events.emit('horn', { sourceX: d.car.x, sourceZ: d.car.z });
-        this.say(d.car, choice(DRIVER_RAM_QUOTES), 3.0);
+        // В 30% случаев — общий пул ругани водителя (больше разнообразия фраз)
+        this.say(d.car, Math.random() < 0.3 ? choice(DRIVER_SHOUTS) : choice(DRIVER_RAM_QUOTES), 3.0);
       }
     });
   }

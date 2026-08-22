@@ -10056,6 +10056,7 @@ class PlayerPed {
 
 
 
+
 const _tempTrafficWp = { x: 0, z: 0 };
 const _tempTrafficFrom = { x: 0, z: 0 };
 const _tempTrafficTo = { x: 0, z: 0 };
@@ -10222,7 +10223,8 @@ class TrafficManager {
     Events.on('crash', (d) => {
       if (d && d.victim === 'car' && d.car && d.impact > 3) {
         Events.emit('horn', { sourceX: d.car.x, sourceZ: d.car.z });
-        this.say(d.car, choice(DRIVER_RAM_QUOTES), 3.0);
+        // В 30% случаев — общий пул ругани водителя (больше разнообразия фраз)
+        this.say(d.car, Math.random() < 0.3 ? choice(DRIVER_SHOUTS) : choice(DRIVER_RAM_QUOTES), 3.0);
       }
     });
   }
@@ -10768,6 +10770,7 @@ class TrafficManager {
 let WORLD_INTERSECTIONS = [];
 
 /* ===== peds.js ===== */
+
 
 
 
@@ -12546,7 +12549,8 @@ class PedestrianManager {
       } else if (this.world && !this.world.onRoad(player.x, player.z)) {
         pool = CURSE_SIDEWALK_QUOTES;
       }
-      this.say(p, choice(pool), 3.0);
+      // В 30% случаев — общий пул ругани пешехода (больше разнообразия фраз)
+      this.say(p, Math.random() < 0.3 ? choice(PEDESTRIAN_SHOUTS) : choice(pool), 3.0);
     }
 
     // Разъярённый пешеход пинает авто игрока

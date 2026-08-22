@@ -4,6 +4,7 @@ import { rand, clamp, lerp, choice, dist2D, buildPedMesh, makeSpeechSprite, upda
 import { Events } from './eventbus.js';
 import { PedGraph } from './pedgraph.js';
 import { probeForwardBlocked, FORWARD_DISTANCES, segmentBlocked, reachableTarget } from './pedavoid.js';
+import { PEDESTRIAN_SHOUTS } from './dialogues.js';
 
 const _tempPedWp = { x: 0, z: 0 };
 const _tempPedWpSync = { x: 0, z: 0 };
@@ -1777,7 +1778,8 @@ export class PedestrianManager {
       } else if (this.world && !this.world.onRoad(player.x, player.z)) {
         pool = CURSE_SIDEWALK_QUOTES;
       }
-      this.say(p, choice(pool), 3.0);
+      // В 30% случаев — общий пул ругани пешехода (больше разнообразия фраз)
+      this.say(p, Math.random() < 0.3 ? choice(PEDESTRIAN_SHOUTS) : choice(pool), 3.0);
     }
 
     // Разъярённый пешеход пинает авто игрока
