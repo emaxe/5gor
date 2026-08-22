@@ -497,6 +497,7 @@ export class Game {
         const rw = CFG.perfectStopBaseReward;
         this.addMoney(rw);
         this.shiftStats.earned += rw;
+        this.shiftStats.perfectStops++;
         this.player.style = clamp(this.player.style + CFG.perfectStopStyleBonus, 0, 1);
         this.ui.toast('✨ Идеальная остановка! +' + fmtMoney(rw) + ' ₽', '#7ee787');
         Events.emit('stop:perfect', { decel: Math.round(this._psMaxDecel * 10) / 10, reward: rw });
@@ -591,7 +592,7 @@ export class Game {
     this.day = day;
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
-    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0 };
+    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0, drifts: 0, perfectStops: 0 };
     this._driftDuration = 0;
     this._driftDist = 0;
     this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
@@ -1437,7 +1438,7 @@ export class Game {
       const reward = Math.min(CFG.driftMaxReward, Math.round(CFG.driftBaseReward + extraTime * CFG.driftRewardPerSec));
 
       this.addMoney(reward);
-      if (this.shiftStats) this.shiftStats.earned += reward;
+      if (this.shiftStats) { this.shiftStats.earned += reward; this.shiftStats.drifts++; }
       if (p.passengerCount > 0) p.style = clamp(p.style + CFG.driftStyleBonus, 0, 1);
 
       this.ui.toast('💨 Занос! +' + reward + ' ₽', '#ffd75e');

@@ -930,6 +930,7 @@ export class UIManager {
       'Пройдено: <b>' + Math.round(s.km) + '</b> км<br>' +
       'Аварий: <b>' + s.crashes + '</b> · Пешеходов задето: <b>' + s.peds + '</b><br>' +
       'Опасных сближений: <b>' + (s.nearMisses || 0) + '</b> ⚡<br>' +
+      'Заносов: <b>' + (s.drifts || 0) + '</b> 💨 · Идеальных остановок: <b>' + (s.perfectStops || 0) + '</b> ✨<br>' +
       'Рейтинг: <b>' + Math.round(g.rating) + '</b> ' + stars + '<br>' +
       'Миссий выполнено: <b>' + s.missions + '</b><br>' +
       'Накоплено: <b>' + fmtMoney(g.money) + '</b>' +
