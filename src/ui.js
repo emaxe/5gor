@@ -22,7 +22,7 @@ export class UIManager {
     this.$ = (id) => document.getElementById(id);
     this._els = {};
     for (const id of [
-      'money', 'rating', 'clock', 'day', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
+      'money', 'rating', 'clock', 'day', 'weather', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
       'order-card', 'order-title', 'order-progress', 'order-desc', 'order-timer', 'order-pay',
       'order-mood', 'mood-emoji', 'mood-label', 'mood-bar-fill',
       'nav-arrow-wrap', 'nav-arrow', 'nav-dist',
@@ -301,6 +301,20 @@ export class UIManager {
     }
     this._setText(els.clock, fmtClock(hour));
     this._setText(els.day, 'День ' + gameState.day);
+    // индикатор погоды (туман/дождь влияют на видимость)
+    const weatherEl = els.weather;
+    if (weatherEl) {
+      const w = gameState.weather;
+      const map = { rain: ['🌧 Дождь', 'w-rain'], fog: ['🌫 Туман', 'w-fog'] };
+      const hit = map[w];
+      if (hit) {
+        if (weatherEl.className !== hit[1]) { weatherEl.className = hit[1]; }
+        if (weatherEl.textContent !== hit[0]) { weatherEl.textContent = hit[0]; }
+        if (weatherEl.classList.contains('hidden')) weatherEl.classList.remove('hidden');
+      } else if (!weatherEl.classList.contains('hidden')) {
+        weatherEl.classList.add('hidden');
+      }
+    }
     const kmh = Math.round(Math.abs(player.speed) * 3.6);
     els['speed-val'].textContent = kmh;
     els['fuel-bar'].style.width = clamp(player.fuel / player.stats.tank * 100, 0, 100) + '%';
