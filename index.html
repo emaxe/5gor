@@ -5770,9 +5770,12 @@ class World {
 
     const isecCoords = this.intersections.map(i => i.x);
 
+    // Разметка ТОЛЬКО в пределах дорожного полотна (±256 м): штрихи за городской
+    // границей падали на траву (баг «разметка выходит на траву»).
+    const ROAD_EDGE = 256;
     const dashesV = [];
     for (const r of this.roadsV) {
-      for (let z = -288; z <= 288; z += 6.4) {
+      for (let z = -ROAD_EDGE; z <= ROAD_EDGE; z += 6.4) {
         // Пропускаем спавн штриха, если он попадает внутрь зоны перекрёстка (±8.5 м от центра перекрёстка)
         const insideIsec = isecCoords.some(cz => Math.abs(z - cz) < H + 1.5);
         if (insideIsec) continue;
@@ -5785,7 +5788,7 @@ class World {
 
     const dashesH = [];
     for (const r of this.roadsH) {
-      for (let x = -288; x <= 288; x += 6.4) {
+      for (let x = -ROAD_EDGE; x <= ROAD_EDGE; x += 6.4) {
         const insideIsec = isecCoords.some(cx => Math.abs(x - cx) < H + 1.5);
         if (insideIsec) continue;
 
@@ -5882,18 +5885,21 @@ class World {
 
     for (const isec of this.intersections) {
       const sx = isec.x, sz = isec.z;
+      // Городские границы: дороги идут только до ±256 м, за ними трава. У граничных
+      // перекрёстков зебра рисуется ТОЛЬКО на внутреннем подходе — внешняя полоса
+      // (|coord| + 6.2) падала на траву за пределами дорожного полотна.
+      const atNorth = sz <= -256, atSouth = sz >= 256; // верх/низ карты
+      const atWest = sx <= -256, atEast = sx >= 256;      // лево/право карты
       // 4 зебры вокруг каждого перекрёстка
       for (let k = -2; k <= 2; k++) {
         const off = k * 1.1;
         // Верхний и нижний подходы к перекрёстку (полосы вдоль X)
-        const mNorth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz - 6.2);
-        const mSouth = new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz + 6.2);
-        listV.push(mNorth, mSouth);
+        if (!atNorth) listV.push(new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz - 6.2));
+        if (!atSouth) listV.push(new THREE.Matrix4().makeTranslation(sx + off, 0.11, sz + 6.2));
 
         // Левый и правый подходы к перекрёстку (полосы вдоль Z)
-        const mWest = new THREE.Matrix4().makeTranslation(sx - 6.2, 0.11, sz + off);
-        const mEast = new THREE.Matrix4().makeTranslation(sx + 6.2, 0.11, sz + off);
-        listH.push(mWest, mEast);
+        if (!atWest) listH.push(new THREE.Matrix4().makeTranslation(sx - 6.2, 0.11, sz + off));
+        if (!atEast) listH.push(new THREE.Matrix4().makeTranslation(sx + 6.2, 0.11, sz + off));
       }
     }
 
