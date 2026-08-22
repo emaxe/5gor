@@ -14871,6 +14871,9 @@ const ACHIEVEMENTS = [
   // --- Вождение ---
   { id: 'near_miss_50',  name: 'Скользкий тип',         desc: 'Совершите 50 опасных сближений',       toast: 'Прошёл в миллиметре — и не поцарапал',   icon: '💨', check: s => s.totalNearMisses >= 50 },
   { id: 'near_miss_200', name: 'Призрак дорог',         desc: 'Совершите 200 опасных сближений',      toast: 'Ты невидимка на пятигорских трассах',    icon: '👻', check: s => s.totalNearMisses >= 200 },
+  // --- Серии сближений ---
+  { id: 'streak_5',      name: 'Серийный сближатель',   desc: 'Достигните серии из 5 сближений подряд', toast: 'Пять раз в миллиметре — и ни царапины',   icon: '🎯', check: s => s.maxNearMissStreak >= 5 },
+  { id: 'streak_10',     name: 'Невидимка трасс',       desc: 'Достигните серии из 10 сближений подряд', toast: 'Десять призрачных проходов подряд',      icon: '🌀', check: s => s.maxNearMissStreak >= 10 },
 ];
 
 const STORAGE_KEY = '5gor_achievements_v1';
@@ -14941,6 +14944,7 @@ class AchievementManager {
       shiftPunches: 0,
       totalPunches: 0,
       totalNearMisses: 0,
+      maxNearMissStreak: 0,
     };
   }
 
@@ -15033,6 +15037,7 @@ class AchievementManager {
     this.stats.totalKm = stats.km || 0;
     this.stats.totalPunches = stats.punches || stats.totalPunches || 0;
     this.stats.totalNearMisses = stats.nearMisses || 0;
+    this.stats.maxNearMissStreak = stats.maxNearMissStreak || 0;
   }
 
   /**
@@ -15053,6 +15058,7 @@ class AchievementManager {
       punches: this.stats.totalPunches,
       totalPunches: this.stats.totalPunches,
       nearMisses: this.stats.totalNearMisses,
+      maxNearMissStreak: this.stats.maxNearMissStreak,
     };
   }
 }
@@ -17262,6 +17268,7 @@ class Game {
       km: achStats.km,
       nearMisses: achStats.nearMisses,
       punches: achStats.punches,
+      maxNearMissStreak: achStats.maxNearMissStreak,
     };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,
@@ -17785,6 +17792,10 @@ class Game {
     if (this.player.passengerCount > 0) this.player.style = clamp(this.player.style + CFG.nearMissStyleBonus, 0, 1);
     // Lifetime-статистика опасных сближений (для ачивок)
     this.achievements.stats.totalNearMisses = (this.achievements.stats.totalNearMisses || 0) + 1;
+    // Lifetime-максимум серии сближений (для ачивок streak_5 / streak_10)
+    if (this._nmStreak > (this.achievements.stats.maxNearMissStreak || 0)) {
+      this.achievements.stats.maxNearMissStreak = this._nmStreak;
+    }
     this.achievements.checkAll();
 
     // тост-милестоун при достижении нового порога серии

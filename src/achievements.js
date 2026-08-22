@@ -41,6 +41,9 @@ const ACHIEVEMENTS = [
   // --- Вождение ---
   { id: 'near_miss_50',  name: 'Скользкий тип',         desc: 'Совершите 50 опасных сближений',       toast: 'Прошёл в миллиметре — и не поцарапал',   icon: '💨', check: s => s.totalNearMisses >= 50 },
   { id: 'near_miss_200', name: 'Призрак дорог',         desc: 'Совершите 200 опасных сближений',      toast: 'Ты невидимка на пятигорских трассах',    icon: '👻', check: s => s.totalNearMisses >= 200 },
+  // --- Серии сближений ---
+  { id: 'streak_5',      name: 'Серийный сближатель',   desc: 'Достигните серии из 5 сближений подряд', toast: 'Пять раз в миллиметре — и ни царапины',   icon: '🎯', check: s => s.maxNearMissStreak >= 5 },
+  { id: 'streak_10',     name: 'Невидимка трасс',       desc: 'Достигните серии из 10 сближений подряд', toast: 'Десять призрачных проходов подряд',      icon: '🌀', check: s => s.maxNearMissStreak >= 10 },
 ];
 
 const STORAGE_KEY = '5gor_achievements_v1';
@@ -111,6 +114,7 @@ export class AchievementManager {
       shiftPunches: 0,
       totalPunches: 0,
       totalNearMisses: 0,
+      maxNearMissStreak: 0,
     };
   }
 
@@ -203,6 +207,7 @@ export class AchievementManager {
     this.stats.totalKm = stats.km || 0;
     this.stats.totalPunches = stats.punches || stats.totalPunches || 0;
     this.stats.totalNearMisses = stats.nearMisses || 0;
+    this.stats.maxNearMissStreak = stats.maxNearMissStreak || 0;
   }
 
   /**
@@ -223,6 +228,7 @@ export class AchievementManager {
       punches: this.stats.totalPunches,
       totalPunches: this.stats.totalPunches,
       nearMisses: this.stats.totalNearMisses,
+      maxNearMissStreak: this.stats.maxNearMissStreak,
     };
   }
 }

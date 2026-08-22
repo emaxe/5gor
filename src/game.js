@@ -1061,6 +1061,7 @@ export class Game {
       km: achStats.km,
       nearMisses: achStats.nearMisses,
       punches: achStats.punches,
+      maxNearMissStreak: achStats.maxNearMissStreak,
     };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,
@@ -1584,6 +1585,10 @@ export class Game {
     if (this.player.passengerCount > 0) this.player.style = clamp(this.player.style + CFG.nearMissStyleBonus, 0, 1);
     // Lifetime-статистика опасных сближений (для ачивок)
     this.achievements.stats.totalNearMisses = (this.achievements.stats.totalNearMisses || 0) + 1;
+    // Lifetime-максимум серии сближений (для ачивок streak_5 / streak_10)
+    if (this._nmStreak > (this.achievements.stats.maxNearMissStreak || 0)) {
+      this.achievements.stats.maxNearMissStreak = this._nmStreak;
+    }
     this.achievements.checkAll();
 
     // тост-милестоун при достижении нового порога серии
