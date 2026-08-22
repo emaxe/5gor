@@ -1070,6 +1070,8 @@ export class Game {
       maxRating: achStats.maxRating,
       nightOrders: achStats.nightOrders,
       policeFines: achStats.policeFines,
+      drifts: achStats.drifts,
+      perfectStops: achStats.perfectStops,
     };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,

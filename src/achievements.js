@@ -44,6 +44,11 @@ const ACHIEVEMENTS = [
   // --- Серии сближений ---
   { id: 'streak_5',      name: 'Серийный сближатель',   desc: 'Достигните серии из 5 сближений подряд', toast: 'Пять раз в миллиметре — и ни царапины',   icon: '🎯', check: s => s.maxNearMissStreak >= 5 },
   { id: 'streak_10',     name: 'Невидимка трасс',       desc: 'Достигните серии из 10 сближений подряд', toast: 'Десять призрачных проходов подряд',      icon: '🌀', check: s => s.maxNearMissStreak >= 10 },
+  // --- Стиль вождения ---
+  { id: 'drift_50',      name: 'Король заносов',        desc: 'Совершите 50 заносов за все время',      toast: 'Пятигорский серпантин — твоя трасса',    icon: '💨', check: s => s.totalDrifts >= 50 },
+  { id: 'drift_200',     name: 'Дрифт-легенда',         desc: 'Совершите 200 заносов за все время',    toast: 'Резина плавится, рейтинг растёт',         icon: '🛞', check: s => s.totalDrifts >= 200 },
+  { id: 'perfect_stop_30', name: 'Мастер торможения',   desc: 'Совершите 30 идеальных остановок',     toast: 'Пассажир и не заметил, что мы ехали',     icon: '🛑', check: s => s.totalPerfectStops >= 30 },
+  { id: 'perfect_stop_100', name: 'Джентльмен дорог',   desc: 'Совершите 100 идеальных остановок',    toast: 'Плавнее не бывает — чаевые сами в карман', icon: '🎩', check: s => s.totalPerfectStops >= 100 },
 ];
 
 const STORAGE_KEY = '5gor_achievements_v1';
@@ -95,6 +100,14 @@ export class AchievementManager {
     Events.on('night:order', () => {
       this.stats.nightOrders++;
     });
+    Events.on('drift:completed', () => {
+      this.stats.totalDrifts++;
+      this.checkAll();
+    });
+    Events.on('stop:perfect', () => {
+      this.stats.totalPerfectStops++;
+      this.checkAll();
+    });
   }
 
   _initStats() {
@@ -115,6 +128,8 @@ export class AchievementManager {
       totalPunches: 0,
       totalNearMisses: 0,
       maxNearMissStreak: 0,
+      totalDrifts: 0,
+      totalPerfectStops: 0,
     };
   }
 
@@ -215,6 +230,8 @@ export class AchievementManager {
     this.stats.maxRating = stats.maxRating || this.stats.maxRating;
     this.stats.nightOrders = stats.nightOrders || 0;
     this.stats.policeFines = stats.policeFines || 0;
+    this.stats.totalDrifts = stats.drifts || 0;
+    this.stats.totalPerfectStops = stats.perfectStops || 0;
   }
 
   /**
@@ -236,6 +253,8 @@ export class AchievementManager {
       totalPunches: this.stats.totalPunches,
       nearMisses: this.stats.totalNearMisses,
       maxNearMissStreak: this.stats.maxNearMissStreak,
+      drifts: this.stats.totalDrifts,
+      perfectStops: this.stats.totalPerfectStops,
     };
   }
 }
