@@ -49,12 +49,6 @@ export class UpgradeSystem {
     return s;
   }
 
-  /* Цвет кузова из тюнинга */
-  colorHex() {
-    const c = TUNING.colors.find((t) => t.c === this.tuning.color);
-    return (c || TUNING.colors[0]).c;
-  }
-
   tuningForCar() {
     const rims = TUNING.rims[this.tuning.rims];
     const kit = TUNING.bodyKits[this.tuning.bodyKit];

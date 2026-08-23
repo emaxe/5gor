@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CFG } from './config.js';
+import { CFG, CAR_TYPE_SHAPE } from './config.js';
 import { clamp, lerp, dist2D, circleAABB, makePlateTexture, makeTaxiSignTexture, makeCheckerStripTexture, makeStripeDecalTexture, makeRacingDecalTexture } from './utils.js';
 import { buildCarModel } from './carmodel.js';
 import { Events } from './eventbus.js';
@@ -13,17 +13,6 @@ const DECAL_TEXTURE = {
   checker: makeCheckerStripTexture,
   stripe: () => makeStripeDecalTexture('#ffffff', '#1a1a1a'),
   racing: makeRacingDecalTexture,
-};
-
-/* carType (config.js CARS[].base.carType) -> силуэт + габариты (carmodel.js CAR_SHAPES) */
-const CAR_TYPE_SHAPE = {
-  taxi:     { shape: 'sedan', w: 1.9,  len: 4.3 },
-  classic:  { shape: 'retro', w: 1.85, len: 4.0 },
-  comfort:  { shape: 'hatch', w: 1.92, len: 4.25 },
-  minivan:  { shape: 'van',   w: 2.05, len: 4.7 },
-  business: { shape: 'premium', w: 1.95, len: 4.6 },
-  sport:    { shape: 'coupe', w: 1.9,  len: 4.35 },
-  offroad:  { shape: 'suv',   w: 2.05, len: 4.8 },
 };
 
 /**

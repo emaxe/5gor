@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG, LANDMARKS, DISTRICTS } from './config.js';
-import { dist2D, rand, choice, pickWeighted, fmtMoney, makeMarkerTexture, makeBeamSprite, buildPedMesh, attachParcelBox, detachParcelBox } from './utils.js';
+import { dist2D, rand, choice, pickWeighted, fmtMoney, makeMarkerTexture, makeBeamSprite, buildPedMesh, attachParcelBox, detachParcelBox, disposeMeshGeometries } from './utils.js';
 import { Events } from './eventbus.js';
 import { getPassengerDialogue, PASSENGER_NAMES, CLIENT_AVATARS } from './dialogues.js';
 
@@ -355,6 +355,7 @@ class PassengerManager {
   _removePassenger(order) {
     if (order.passenger) {
       if (order.passenger.mesh.parent) this.world.scene.remove(order.passenger.mesh);
+      disposeMeshGeometries(order.passenger.mesh);
       order.passenger = null;
     }
   }
@@ -560,9 +561,14 @@ class PassengerManager {
     for (let i = this._walkers.length - 1; i >= 0; i--) {
       const p = this._walkers[i];
       p.walkT += dt;
-      if (p.walkT > 6) { this.world.scene.remove(p.mesh); this._walkers.splice(i, 1); continue; }
+      if (p.walkT > 6) { this.world.scene.remove(p.mesh); disposeMeshGeometries(p.mesh); this._walkers.splice(i, 1); continue; }
       p.mesh.position.x += p.wx * 1.8 * dt;
       p.mesh.position.z += p.wz * 1.8 * dt;
+      // привязка к рельефу (на Машуке/серпантине высота меняется по пути)
+      if (this.world) {
+        const wh = this.world.heightAt(p.mesh.position.x, p.mesh.position.z);
+        p.mesh.position.y = wh + 0.02;
+      }
       const ph = p.walkT * 9;
       const u = p.mesh.userData;
       if (u && u.legs) {
@@ -658,7 +664,8 @@ class PassengerManager {
         pas.mesh.visible = true;
         this.world.scene.add(pas.mesh);
         const offsetSide = Math.random() < 0.5 ? 1.5 : -1.5;
-        pas.mesh.position.set(drop.x + offsetSide, 0, drop.z + offsetSide);
+        const wy = this.world ? this.world.heightAt(drop.x + offsetSide, drop.z + offsetSide) : 0;
+        pas.mesh.position.set(drop.x + offsetSide, wy + 0.02, drop.z + offsetSide);
         let bx = 0, bz = 0, best = 1e9;
         for (const r of this.world.roadsV) {
           const d = Math.abs(drop.x - r.c);
@@ -708,6 +715,7 @@ class PassengerManager {
     // Удаляем ожидающего получателя посылки
     if (a.recipient && a.recipient.mesh) {
       if (a.recipient.mesh.parent) this.world.scene.remove(a.recipient.mesh);
+      disposeMeshGeometries(a.recipient.mesh);
       a.recipient = null;
     }
     Events.emit('order:failed', { reason, order: a });
@@ -736,10 +744,6 @@ class PassengerManager {
     return 0;
   }
 
-  markerPositions() {
-    return this.open.map((o) => ({ x: o.pickup.x, z: o.pickup.z, icon: o.icon, color: o.color, title: o.title }));
-  }
-
   get activeDrop() {
     return this.active ? this.active.drops[this.active.dropIdx] : null;
   }
@@ -749,17 +753,17 @@ class PassengerManager {
     // Удаляем получателя посылки если активный заказ был типа package
     if (this.active && this.active.recipient && this.active.recipient.mesh) {
       if (this.active.recipient.mesh.parent) this.world.scene.remove(this.active.recipient.mesh);
+      disposeMeshGeometries(this.active.recipient.mesh);
     }
     this.open = [];
     this.active = null;
     this.completed = [];
     this._hideDropMarker();
     this._cabOut();
-    for (const p of this._walkers) this.world.scene.remove(p.mesh);
+    for (const p of this._walkers) { this.world.scene.remove(p.mesh); disposeMeshGeometries(p.mesh); }
     this._walkers = [];
   }
 }
 
 export const Orders = PassengerManager;
-export const OrdersManager = PassengerManager;
 export { PassengerManager, MISSION_TEMPLATES };

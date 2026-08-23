@@ -2,6 +2,11 @@ import * as THREE from 'three';
 import { PALETTES } from './config.js';
 
 export const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+/** Освобождает геометрии всех мешей в группе/меше (для удаления NPC из сцены). */
+export function disposeMeshGeometries(obj) {
+  if (!obj) return;
+  obj.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+}
 /* Гладкий минимум/максимум (полиномиальный, C¹) — для сопряжения форм рельефа */
 export const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
 export const smax = (a, b, k) => -smin(-a, -b, k);

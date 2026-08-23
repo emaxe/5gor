@@ -6,6 +6,12 @@ import { PedGraph } from './pedgraph.js';
 import { probeForwardBlocked, FORWARD_DISTANCES, segmentBlocked, reachableTarget } from './pedavoid.js';
 import { PEDESTRIAN_SHOUTS } from './dialogues.js';
 
+/* Порядок кандидатов бокового обхода статики в _avoidStatic (zero-alloc: не аллоцировать
+   массив каждый кадр на каждого пешехода). Вариант зависит от запомненной стороны. */
+const AVOID_ORDER = [1.4, -1.4, 2.4, -2.4];
+const AVOID_ORDER_RIGHT = [1.4, 2.4, -1.4, -2.4];
+const AVOID_ORDER_LEFT = [-1.4, -2.4, 1.4, 2.4];
+
 const _tempPedWp = { x: 0, z: 0 };
 const _tempPedWpSync = { x: 0, z: 0 };
 const _tempPedWpTurn = { x: 0, z: 0 };
@@ -1601,8 +1607,8 @@ export class PedestrianManager {
     // препятствие, сначала пробуем кандидатов на той же стороне — иначе
     // каждый кадр он перескакивает на противоположную и дёргается.
     const ordered = p._avoidSide !== 0
-      ? (p._avoidSide > 0 ? [1.4, 2.4, -1.4, -2.4] : [-1.4, -2.4, 1.4, 2.4])
-      : [1.4, -1.4, 2.4, -2.4];
+      ? (p._avoidSide > 0 ? AVOID_ORDER_RIGHT : AVOID_ORDER_LEFT)
+      : AVOID_ORDER;
     for (const o of ordered) {
       const cand = clamp(baseOff + o, -1.5, 1.5);
       const pr0 = this._lanePoint(p, cand);
@@ -2086,14 +2092,6 @@ export class PedestrianManager {
       const speechY = p.knockT > 0 ? (h + 1.2) : (h + 2.4);
       p.speechSprite.position.set(p.x, speechY, p.z);
     }
-  }
-
-  debugSummary() {
-    if (!this.graph) return 'graph: none';
-    const active = this.cars.filter(p => p.active).length;
-    const near = this.cars.filter(p => p.nearZone).length;
-    const routes = this.cars.filter(p => p.route).length;
-    return `nodes:${this.graph.nodes.length} active:${active} near:${near} routed:${routes}`;
   }
 }
 

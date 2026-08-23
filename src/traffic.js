@@ -714,5 +714,11 @@ export class TrafficManager {
   }
 }
 
-/* Перекрёстки мира (заполняется после World.build в game.js) */
-export let WORLD_INTERSECTIONS = [];
+/* Перекрёстки мира (заполняется после World.build в game.js через setWorldIntersections) */
+export const WORLD_INTERSECTIONS = [];
+/** Сеттер для перекрёстков — задаёт список через мутацию массива (в ESM присваивание
+ *  импортированной переменной — SyntaxError, поэтому мутируем сам массив). */
+export function setWorldIntersections(list) {
+  WORLD_INTERSECTIONS.length = 0;
+  for (const i of list) WORLD_INTERSECTIONS.push(i);
+}

@@ -313,6 +313,18 @@ export const CARS = {
   },
 };
 
+/* Габариты кузова по carType — ЕДИНЫЙ источник правды (shape для carmodel, w/len для
+   капсульных коллайдеров player/playerped и геометрии skidmarks). Не дублировать в модулях. */
+export const CAR_TYPE_SHAPE = {
+  taxi:     { shape: 'sedan',    w: 1.9,  len: 4.3 },
+  classic:  { shape: 'retro',    w: 1.85, len: 4.0 },
+  comfort:  { shape: 'hatch',    w: 1.92, len: 4.25 },
+  minivan:  { shape: 'van',      w: 2.05, len: 4.7 },
+  business: { shape: 'premium',  w: 1.95, len: 4.6 },
+  sport:    { shape: 'coupe',    w: 1.9,  len: 4.35 },
+  offroad:  { shape: 'suv',      w: 2.05, len: 4.8 },
+};
+
 /* Тюнинг: цвета кузова, диски, спойлер */
 export const TUNING = {
   colors: [

@@ -5,17 +5,18 @@ import { Events } from './eventbus.js';
 import { World } from './citygen.js';
 import { PlayerCar } from './player.js';
 import { PlayerPed } from './playerped.js';
-import { TRAFFIC_TYPES, TrafficManager, WORLD_INTERSECTIONS } from './traffic.js';
+import { TRAFFIC_TYPES, TrafficManager, setWorldIntersections } from './traffic.js';
 import { PedestrianManager } from './peds.js';
 import { ChaseCamera } from './camera.js';
-import { OrdersManager } from './orders.js';
+import { PassengerManager } from './orders.js';
 import { UpgradeSystem } from './upgrades.js';
 import { UIManager } from './ui.js';
+import { SkidMarks } from './skidmarks.js';
 import { AudioManager } from './audio.js';
 import { InputManager } from './input.js';
 import { PoliceManager } from './police.js';
 import { AchievementManager } from './achievements.js';
-import { DISPATCHER_BRIEFS, DRIVER_DAY_NOTES, PASSENGER_DRIFT_REACTIONS, getDispatcherBrief, getDriverDayNote } from './dialogues.js';
+import { PASSENGER_DRIFT_REACTIONS, getDispatcherBrief, getDriverDayNote } from './dialogues.js';
 import { buildCarRoadGraph, findCarRoute } from './gps.js';
 
 // Таблица цвета неба по часу суток + переиспользуемые Color-объекты для
@@ -309,7 +310,7 @@ export class Game {
     this.world.build();
     if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
     if (this._debugOverlay) console.log(`world.build(): ${(performance.now() - t0).toFixed(1)}ms`);
-    WORLD_INTERSECTIONS = this.world.intersections;
+    setWorldIntersections(this.world.intersections);
   }
 
   _initManagers() {
@@ -370,7 +371,8 @@ export class Game {
       // давать награду за «опасное сближение» (флаг _nmHit ставит детектор)
       if (d && d.car) { d.car._nmHit = true; d.car._nmPassed = false; }
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
-      this.orders.onCrash(d.impact);
+      const penalty = this.orders.onCrash(d.impact);
+      if (penalty && penalty < 0) this.addMoney(penalty);
     });
     events.on('hitPed', (d) => {
       if (d && d.byPlayer === false) return;
@@ -447,11 +449,6 @@ export class Game {
       this.comboStreak = 0;
       this.addMoney(-v.fine);
       this.setRating(this.rating - v.ratingLoss);
-    });
-
-    events.on('achievement:unlocked', (ach) => {
-      // Достижение уже показывает тост из AchievementManager.checkAll()
-      // Здесь можно добавить звук в будущем
     });
 
     events.on('spatial:shout', (d) => {

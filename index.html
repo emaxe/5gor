@@ -1062,6 +1062,18 @@ const CARS = {
   },
 };
 
+/* Габариты кузова по carType — ЕДИНЫЙ источник правды (shape для carmodel, w/len для
+   капсульных коллайдеров player/playerped и геометрии skidmarks). Не дублировать в модулях. */
+const CAR_TYPE_SHAPE = {
+  taxi:     { shape: 'sedan',    w: 1.9,  len: 4.3 },
+  classic:  { shape: 'retro',    w: 1.85, len: 4.0 },
+  comfort:  { shape: 'hatch',    w: 1.92, len: 4.25 },
+  minivan:  { shape: 'van',      w: 2.05, len: 4.7 },
+  business: { shape: 'premium',  w: 1.95, len: 4.6 },
+  sport:    { shape: 'coupe',    w: 1.9,  len: 4.35 },
+  offroad:  { shape: 'suv',      w: 2.05, len: 4.8 },
+};
+
 /* Тюнинг: цвета кузова, диски, спойлер */
 const TUNING = {
   colors: [
@@ -1120,6 +1132,11 @@ const WEATHER_DEFS = {
 
 /* ===== utils.js ===== */
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+/** Освобождает геометрии всех мешей в группе/меше (для удаления NPC из сцены). */
+function disposeMeshGeometries(obj) {
+  if (!obj) return;
+  obj.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+}
 /* Гладкий минимум/максимум (полиномиальный, C¹) — для сопряжения форм рельефа */
 const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; return Math.min(a, b) - h * h * k * 0.25; };
 const smax = (a, b, k) => -smin(-a, -b, k);
@@ -5244,9 +5261,13 @@ class InputManager {
     this.steerOrigin = 0;
     this.steerValue = 0;
 
+    // кнопки UI, читаемые каждый кадр в update() — кэшируем, чтобы не искать в DOM
+    this._hbBtn = null;
     this._bindKeys();
     this._bindMouse();
     this._bindVisibility();
+    // btn-hb создаётся UI-ом; пробуем достать сразу, деградируем в null (кнопки нет)
+    try { this._hbBtn = document.getElementById('btn-hb'); } catch { /* noop */ }
   }
 
   _bindKeys() {
@@ -5322,7 +5343,9 @@ class InputManager {
     let gas = 0, brk = 0;
     if (k.has('ArrowUp') || k.has('KeyW')) gas = 1;
     if (k.has('ArrowDown') || k.has('KeyS')) brk = 1;
-    const hbBtn = document.getElementById('btn-hb');
+    // ленивый кэш кнопки ручника — ищем в DOM только пока не нашли (btn-hb создаётся UI-ом)
+    if (!this._hbBtn) { try { this._hbBtn = document.getElementById('btn-hb'); } catch { /* noop */ } }
+    const hbBtn = this._hbBtn;
     this.throttle = gas;
     this.brake = brk;
     this.handbrake = (k.has('Space') && !this.isTouch) || (hbBtn && hbBtn._pressed);
@@ -5351,6 +5374,11 @@ class InputManager {
 
 
 
+/* Переиспользуемые 3D-объекты для update() (zero-alloc в hot-path фуникулёра/светофоров) */
+const _updColor = new THREE.Color();
+const _updCableDir = new THREE.Vector3();
+const _updPerp = new THREE.Vector3();
+const _updLookDir = new THREE.Vector3();
 
 // Цвета ламп светофора (красный/жёлтый/зелёный, вкл/выкл) — общие константы вместо
 // пересоздания массивов на каждый кадр в update() (OPT-18)
@@ -8321,7 +8349,7 @@ class World {
     }
 
     let lampsUpdated = false;
-    const tempColor = new THREE.Color();
+    const tempColor = _updColor;
 
     for (const l of this.lights) {
       // Цикл 16 с:
@@ -8361,8 +8389,8 @@ class World {
     // Анимация кабинок фуникулёра
     if (this.cableCars && this._cableHeads) {
       // перпендикуляр к линии троса (для бокового смещения кабинки к одному из тросов)
-      const cableDir = new THREE.Vector3().subVectors(this._cableTop, this._cableBase).normalize();
-      const perp = new THREE.Vector3(-cableDir.z, 0, cableDir.x);
+      const cableDir = _updCableDir.subVectors(this._cableTop, this._cableBase).normalize();
+      const perp = _updPerp.set(-cableDir.z, 0, cableDir.x);
       for (let ci = 0; ci < this.cableCars.length; ci++) {
         const car = this.cableCars[ci];
         car.t += car.dir * car.speed * dt;
@@ -8380,7 +8408,7 @@ class World {
         );
         // ориентация кабинки вдоль направления троса
         const next = this._cablePointAt(Math.min(0.99, car.t + 0.01));
-        const lookDir = new THREE.Vector3().subVectors(next, pos);
+        const lookDir = _updLookDir.subVectors(next, pos);
         if (lookDir.lengthSq() > 0.001) {
           car.group.rotation.y = Math.atan2(lookDir.x, lookDir.z);
         }
@@ -8985,17 +9013,6 @@ const DECAL_TEXTURE = {
   racing: makeRacingDecalTexture,
 };
 
-/* carType (config.js CARS[].base.carType) -> силуэт + габариты (carmodel.js CAR_SHAPES) */
-const CAR_TYPE_SHAPE = {
-  taxi:     { shape: 'sedan', w: 1.9,  len: 4.3 },
-  classic:  { shape: 'retro', w: 1.85, len: 4.0 },
-  comfort:  { shape: 'hatch', w: 1.92, len: 4.25 },
-  minivan:  { shape: 'van',   w: 2.05, len: 4.7 },
-  business: { shape: 'premium', w: 1.95, len: 4.6 },
-  sport:    { shape: 'coupe', w: 1.9,  len: 4.35 },
-  offroad:  { shape: 'suv',   w: 2.05, len: 4.8 },
-};
-
 /**
  * Класс автомобиля игрока (физика, коллизии, визуал и свойства).
  */
@@ -9561,17 +9578,6 @@ class PlayerCar {
 
 
 
-/* Габариты кузова автомобиля для вычисления капсульного коллайдера (длина, ширина) */
-const PED_CAR_SHAPES = {
-  taxi:     { w: 1.9,  len: 4.3 },
-  classic:  { w: 1.85, len: 4.0 },
-  comfort:  { w: 1.92, len: 4.25 },
-  minivan:  { w: 2.05, len: 4.7 },
-  business: { w: 1.95, len: 4.6 },
-  sport:    { w: 1.9,  len: 4.35 },
-  offroad:  { w: 2.05, len: 4.8 },
-};
-
 /**
  * Класс пешехода-аватара игрока (физика, коллизии, визуал и анимация ходьбы/бега).
  */
@@ -9912,7 +9918,7 @@ class PlayerPed {
     // 4. Своя машина: капсульный коллайдер (3 круга)
     if (playerCar) {
       const cType = (playerCar.stats && playerCar.stats.carType) || 'taxi';
-      const shape = PED_CAR_SHAPES[cType] || PED_CAR_SHAPES.taxi;
+      const shape = CAR_TYPE_SHAPE[cType] || CAR_TYPE_SHAPE.taxi;
       const halfW = shape.w / 2;
       const halfL = shape.len / 2;
       const rc = halfW * 1.03;
@@ -10054,6 +10060,7 @@ class PlayerPed {
   dispose() {
     if (this.mesh && this.scene) {
       this.scene.remove(this.mesh);
+      disposeMeshGeometries(this.mesh);
     }
   }
 }
@@ -10774,8 +10781,14 @@ class TrafficManager {
   }
 }
 
-/* Перекрёстки мира (заполняется после World.build в game.js) */
-let WORLD_INTERSECTIONS = [];
+/* Перекрёстки мира (заполняется после World.build в game.js через setWorldIntersections) */
+const WORLD_INTERSECTIONS = [];
+/** Сеттер для перекрёстков — задаёт список через мутацию массива (в ESM присваивание
+ *  импортированной переменной — SyntaxError, поэтому мутируем сам массив). */
+function setWorldIntersections(list) {
+  WORLD_INTERSECTIONS.length = 0;
+  for (const i of list) WORLD_INTERSECTIONS.push(i);
+}
 
 /* ===== peds.js ===== */
 
@@ -10784,6 +10797,12 @@ let WORLD_INTERSECTIONS = [];
 
 
 
+
+/* Порядок кандидатов бокового обхода статики в _avoidStatic (zero-alloc: не аллоцировать
+   массив каждый кадр на каждого пешехода). Вариант зависит от запомненной стороны. */
+const AVOID_ORDER = [1.4, -1.4, 2.4, -2.4];
+const AVOID_ORDER_RIGHT = [1.4, 2.4, -1.4, -2.4];
+const AVOID_ORDER_LEFT = [-1.4, -2.4, 1.4, 2.4];
 
 const _tempPedWp = { x: 0, z: 0 };
 const _tempPedWpSync = { x: 0, z: 0 };
@@ -12380,8 +12399,8 @@ class PedestrianManager {
     // препятствие, сначала пробуем кандидатов на той же стороне — иначе
     // каждый кадр он перескакивает на противоположную и дёргается.
     const ordered = p._avoidSide !== 0
-      ? (p._avoidSide > 0 ? [1.4, 2.4, -1.4, -2.4] : [-1.4, -2.4, 1.4, 2.4])
-      : [1.4, -1.4, 2.4, -2.4];
+      ? (p._avoidSide > 0 ? AVOID_ORDER_RIGHT : AVOID_ORDER_LEFT)
+      : AVOID_ORDER;
     for (const o of ordered) {
       const cand = clamp(baseOff + o, -1.5, 1.5);
       const pr0 = this._lanePoint(p, cand);
@@ -12866,14 +12885,6 @@ class PedestrianManager {
       p.speechSprite.position.set(p.x, speechY, p.z);
     }
   }
-
-  debugSummary() {
-    if (!this.graph) return 'graph: none';
-    const active = this.cars.filter(p => p.active).length;
-    const near = this.cars.filter(p => p.nearZone).length;
-    const routes = this.cars.filter(p => p.route).length;
-    return `nodes:${this.graph.nodes.length} active:${active} near:${near} routed:${routes}`;
-  }
 }
 
 
@@ -12984,17 +12995,6 @@ class ChaseCamera {
  * Кольцевой буфер из квадов — ноль аллокаций после конструктора.
  * Читает уже существующее поле player.slip (интенсивность заноса).
  * ============================================================ */
-
-/* Габариты задней оси по типу кузова (совпадает с CAR_TYPE_SHAPE в player.js) */
-const SKID_SHAPE = {
-  taxi:     { w: 1.9,  len: 4.3 },
-  classic:  { w: 1.85, len: 4.0 },
-  comfort:  { w: 1.92, len: 4.25 },
-  minivan:  { w: 2.05, len: 4.7 },
-  business: { w: 1.95, len: 4.6 },
-  sport:    { w: 1.9,  len: 4.35 },
-  offroad:  { w: 2.05, len: 4.8 },
-};
 class SkidMarks {
   /**
    * @param {THREE.Scene} scene - сцена Three.js
@@ -13037,7 +13037,7 @@ class SkidMarks {
 
   /* Скалярный кэш геометрии задней оси для текущей машины (по carType). */
   _syncShape(player) {
-    const s = SKID_SHAPE[player.stats.carType] || SKID_SHAPE.taxi;
+    const s = CAR_TYPE_SHAPE[player.stats.carType] || CAR_TYPE_SHAPE.taxi;
     this._halfTrack = s.w * 0.42;      // полуширина колеи задней оси
     this._backOff = -s.len * 0.31;     // задняя ось от центра масс (капсула ~ центр)
   }
@@ -13120,11 +13120,6 @@ class SkidMarks {
     P[rbase + 6] = rx1 - bxX * hl; P[rbase + 7] = y; P[rbase + 8] = rz1 - bxZ * hl;
     P[rbase + 9] = rx1 + bxX * hl; P[rbase + 10] = y; P[rbase + 11] = rz1 + bxZ * hl;
     this.mesh.geometry.attributes.position.needsUpdate = true;
-  }
-
-  /* Разрыв ленты (телепорт). */
-  resetTrail() {
-    this._hasPrev = false;
   }
 
   /* Полная очистка (новая смена / эвакуатор). Обнуляем все вершины. */
@@ -14088,6 +14083,7 @@ class PassengerManager {
   _removePassenger(order) {
     if (order.passenger) {
       if (order.passenger.mesh.parent) this.world.scene.remove(order.passenger.mesh);
+      disposeMeshGeometries(order.passenger.mesh);
       order.passenger = null;
     }
   }
@@ -14293,9 +14289,14 @@ class PassengerManager {
     for (let i = this._walkers.length - 1; i >= 0; i--) {
       const p = this._walkers[i];
       p.walkT += dt;
-      if (p.walkT > 6) { this.world.scene.remove(p.mesh); this._walkers.splice(i, 1); continue; }
+      if (p.walkT > 6) { this.world.scene.remove(p.mesh); disposeMeshGeometries(p.mesh); this._walkers.splice(i, 1); continue; }
       p.mesh.position.x += p.wx * 1.8 * dt;
       p.mesh.position.z += p.wz * 1.8 * dt;
+      // привязка к рельефу (на Машуке/серпантине высота меняется по пути)
+      if (this.world) {
+        const wh = this.world.heightAt(p.mesh.position.x, p.mesh.position.z);
+        p.mesh.position.y = wh + 0.02;
+      }
       const ph = p.walkT * 9;
       const u = p.mesh.userData;
       if (u && u.legs) {
@@ -14391,7 +14392,8 @@ class PassengerManager {
         pas.mesh.visible = true;
         this.world.scene.add(pas.mesh);
         const offsetSide = Math.random() < 0.5 ? 1.5 : -1.5;
-        pas.mesh.position.set(drop.x + offsetSide, 0, drop.z + offsetSide);
+        const wy = this.world ? this.world.heightAt(drop.x + offsetSide, drop.z + offsetSide) : 0;
+        pas.mesh.position.set(drop.x + offsetSide, wy + 0.02, drop.z + offsetSide);
         let bx = 0, bz = 0, best = 1e9;
         for (const r of this.world.roadsV) {
           const d = Math.abs(drop.x - r.c);
@@ -14441,6 +14443,7 @@ class PassengerManager {
     // Удаляем ожидающего получателя посылки
     if (a.recipient && a.recipient.mesh) {
       if (a.recipient.mesh.parent) this.world.scene.remove(a.recipient.mesh);
+      disposeMeshGeometries(a.recipient.mesh);
       a.recipient = null;
     }
     Events.emit('order:failed', { reason, order: a });
@@ -14469,10 +14472,6 @@ class PassengerManager {
     return 0;
   }
 
-  markerPositions() {
-    return this.open.map((o) => ({ x: o.pickup.x, z: o.pickup.z, icon: o.icon, color: o.color, title: o.title }));
-  }
-
   get activeDrop() {
     return this.active ? this.active.drops[this.active.dropIdx] : null;
   }
@@ -14482,18 +14481,18 @@ class PassengerManager {
     // Удаляем получателя посылки если активный заказ был типа package
     if (this.active && this.active.recipient && this.active.recipient.mesh) {
       if (this.active.recipient.mesh.parent) this.world.scene.remove(this.active.recipient.mesh);
+      disposeMeshGeometries(this.active.recipient.mesh);
     }
     this.open = [];
     this.active = null;
     this.completed = [];
     this._hideDropMarker();
     this._cabOut();
-    for (const p of this._walkers) this.world.scene.remove(p.mesh);
+    for (const p of this._walkers) { this.world.scene.remove(p.mesh); disposeMeshGeometries(p.mesh); }
     this._walkers = [];
   }
 }
 const Orders = PassengerManager;
-const OrdersManager = PassengerManager;
 
 /* ===== upgrades.js ===== */
 
@@ -14543,12 +14542,6 @@ class UpgradeSystem {
     s.tank += this.levels.tank * 50;
     s.capacity += this.levels.capacity;
     return s;
-  }
-
-  /* Цвет кузова из тюнинга */
-  colorHex() {
-    const c = TUNING.colors.find((t) => t.c === this.tuning.color);
-    return (c || TUNING.colors[0]).c;
   }
 
   tuningForCar() {
@@ -16289,6 +16282,7 @@ class UIManager {
 
 
 
+
 // Таблица цвета неба по часу суток + переиспользуемые Color-объекты для
 // _updateTime (каждый кадр) — вместо new THREE.Color(...) на каждый вызов (OPT-18)
 const SKY_TABLE = [
@@ -16580,7 +16574,7 @@ class Game {
     this.world.build();
     if (this.renderer.shadowMap.enabled) this.renderer.shadowMap.needsUpdate = true;
     if (this._debugOverlay) console.log(`world.build(): ${(performance.now() - t0).toFixed(1)}ms`);
-    WORLD_INTERSECTIONS = this.world.intersections;
+    setWorldIntersections(this.world.intersections);
   }
 
   _initManagers() {
@@ -16641,7 +16635,8 @@ class Game {
       // давать награду за «опасное сближение» (флаг _nmHit ставит детектор)
       if (d && d.car) { d.car._nmHit = true; d.car._nmPassed = false; }
       this.shakeT = 0.45; this.shakeAmp = Math.min(0.6, d.impact / 40);
-      this.orders.onCrash(d.impact);
+      const penalty = this.orders.onCrash(d.impact);
+      if (penalty && penalty < 0) this.addMoney(penalty);
     });
     events.on('hitPed', (d) => {
       if (d && d.byPlayer === false) return;
@@ -16718,11 +16713,6 @@ class Game {
       this.comboStreak = 0;
       this.addMoney(-v.fine);
       this.setRating(this.rating - v.ratingLoss);
-    });
-
-    events.on('achievement:unlocked', (ach) => {
-      // Достижение уже показывает тост из AchievementManager.checkAll()
-      // Здесь можно добавить звук в будущем
     });
 
     events.on('spatial:shout', (d) => {
@@ -18131,7 +18121,6 @@ class Game {
 }
 
 /* ===== main.js ===== */
-
 
 /* Глобальный оверлей ошибок: показываем любую непойманную ошибку */
 let _errors = [];

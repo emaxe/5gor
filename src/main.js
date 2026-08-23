@@ -1,5 +1,4 @@
 import { Game } from './game.js';
-import { showError as utilShowError } from './utils.js';
 
 /* Глобальный оверлей ошибок: показываем любую непойманную ошибку */
 let _errors = [];

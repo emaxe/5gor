@@ -1,6 +1,12 @@
 import * as THREE from 'three';
 import { CFG, DISTRICTS, PALETTES, LANDMARKS, FUEL_STATIONS } from './config.js';
 import { mulberry32, dist2D, rand, clamp, choice, makeCanvas, canvasToTexture, lerp, mergeColored, mergeGeoms, makePlateTexture, makeTaxiTexture, getWindowMaterial, getRoofMaterial, smin, smax } from './utils.js';
+
+/* Переиспользуемые 3D-объекты для update() (zero-alloc в hot-path фуникулёра/светофоров) */
+const _updColor = new THREE.Color();
+const _updCableDir = new THREE.Vector3();
+const _updPerp = new THREE.Vector3();
+const _updLookDir = new THREE.Vector3();
 import { taperedBox } from './carmodel.js';
 
 // Цвета ламп светофора (красный/жёлтый/зелёный, вкл/выкл) — общие константы вместо
@@ -2972,7 +2978,7 @@ export class World {
     }
 
     let lampsUpdated = false;
-    const tempColor = new THREE.Color();
+    const tempColor = _updColor;
 
     for (const l of this.lights) {
       // Цикл 16 с:
@@ -3012,8 +3018,8 @@ export class World {
     // Анимация кабинок фуникулёра
     if (this.cableCars && this._cableHeads) {
       // перпендикуляр к линии троса (для бокового смещения кабинки к одному из тросов)
-      const cableDir = new THREE.Vector3().subVectors(this._cableTop, this._cableBase).normalize();
-      const perp = new THREE.Vector3(-cableDir.z, 0, cableDir.x);
+      const cableDir = _updCableDir.subVectors(this._cableTop, this._cableBase).normalize();
+      const perp = _updPerp.set(-cableDir.z, 0, cableDir.x);
       for (let ci = 0; ci < this.cableCars.length; ci++) {
         const car = this.cableCars[ci];
         car.t += car.dir * car.speed * dt;
@@ -3031,7 +3037,7 @@ export class World {
         );
         // ориентация кабинки вдоль направления троса
         const next = this._cablePointAt(Math.min(0.99, car.t + 0.01));
-        const lookDir = new THREE.Vector3().subVectors(next, pos);
+        const lookDir = _updLookDir.subVectors(next, pos);
         if (lookDir.lengthSq() > 0.001) {
           car.group.rotation.y = Math.atan2(lookDir.x, lookDir.z);
         }

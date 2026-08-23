@@ -1,17 +1,6 @@
 import * as THREE from 'three';
-import { CFG } from './config.js';
-import { clamp, dist2D, circleAABB, turnToward, buildPedMesh, buildDriverMesh } from './utils.js';
-
-/* Габариты кузова автомобиля для вычисления капсульного коллайдера (длина, ширина) */
-const PED_CAR_SHAPES = {
-  taxi:     { w: 1.9,  len: 4.3 },
-  classic:  { w: 1.85, len: 4.0 },
-  comfort:  { w: 1.92, len: 4.25 },
-  minivan:  { w: 2.05, len: 4.7 },
-  business: { w: 1.95, len: 4.6 },
-  sport:    { w: 1.9,  len: 4.35 },
-  offroad:  { w: 2.05, len: 4.8 },
-};
+import { CFG, CAR_TYPE_SHAPE } from './config.js';
+import { clamp, dist2D, circleAABB, turnToward, buildPedMesh, buildDriverMesh, disposeMeshGeometries } from './utils.js';
 
 /**
  * Класс пешехода-аватара игрока (физика, коллизии, визуал и анимация ходьбы/бега).
@@ -353,7 +342,7 @@ export class PlayerPed {
     // 4. Своя машина: капсульный коллайдер (3 круга)
     if (playerCar) {
       const cType = (playerCar.stats && playerCar.stats.carType) || 'taxi';
-      const shape = PED_CAR_SHAPES[cType] || PED_CAR_SHAPES.taxi;
+      const shape = CAR_TYPE_SHAPE[cType] || CAR_TYPE_SHAPE.taxi;
       const halfW = shape.w / 2;
       const halfL = shape.len / 2;
       const rc = halfW * 1.03;
@@ -495,6 +484,7 @@ export class PlayerPed {
   dispose() {
     if (this.mesh && this.scene) {
       this.scene.remove(this.mesh);
+      disposeMeshGeometries(this.mesh);
     }
   }
 }

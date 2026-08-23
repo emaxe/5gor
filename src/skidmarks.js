@@ -4,17 +4,7 @@
  * Кольцевой буфер из квадов — ноль аллокаций после конструктора.
  * Читает уже существующее поле player.slip (интенсивность заноса).
  * ============================================================ */
-
-/* Габариты задней оси по типу кузова (совпадает с CAR_TYPE_SHAPE в player.js) */
-const SKID_SHAPE = {
-  taxi:     { w: 1.9,  len: 4.3 },
-  classic:  { w: 1.85, len: 4.0 },
-  comfort:  { w: 1.92, len: 4.25 },
-  minivan:  { w: 2.05, len: 4.7 },
-  business: { w: 1.95, len: 4.6 },
-  sport:    { w: 1.9,  len: 4.35 },
-  offroad:  { w: 2.05, len: 4.8 },
-};
+import { CFG, CAR_TYPE_SHAPE } from './config.js';
 
 export class SkidMarks {
   /**
@@ -58,7 +48,7 @@ export class SkidMarks {
 
   /* Скалярный кэш геометрии задней оси для текущей машины (по carType). */
   _syncShape(player) {
-    const s = SKID_SHAPE[player.stats.carType] || SKID_SHAPE.taxi;
+    const s = CAR_TYPE_SHAPE[player.stats.carType] || CAR_TYPE_SHAPE.taxi;
     this._halfTrack = s.w * 0.42;      // полуширина колеи задней оси
     this._backOff = -s.len * 0.31;     // задняя ось от центра масс (капсула ~ центр)
   }
@@ -141,11 +131,6 @@ export class SkidMarks {
     P[rbase + 6] = rx1 - bxX * hl; P[rbase + 7] = y; P[rbase + 8] = rz1 - bxZ * hl;
     P[rbase + 9] = rx1 + bxX * hl; P[rbase + 10] = y; P[rbase + 11] = rz1 + bxZ * hl;
     this.mesh.geometry.attributes.position.needsUpdate = true;
-  }
-
-  /* Разрыв ленты (телепорт). */
-  resetTrail() {
-    this._hasPrev = false;
   }
 
   /* Полная очистка (новая смена / эвакуатор). Обнуляем все вершины. */

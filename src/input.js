@@ -33,9 +33,13 @@ export class InputManager {
     this.steerOrigin = 0;
     this.steerValue = 0;
 
+    // кнопки UI, читаемые каждый кадр в update() — кэшируем, чтобы не искать в DOM
+    this._hbBtn = null;
     this._bindKeys();
     this._bindMouse();
     this._bindVisibility();
+    // btn-hb создаётся UI-ом; пробуем достать сразу, деградируем в null (кнопки нет)
+    try { this._hbBtn = document.getElementById('btn-hb'); } catch { /* noop */ }
   }
 
   _bindKeys() {
@@ -111,7 +115,9 @@ export class InputManager {
     let gas = 0, brk = 0;
     if (k.has('ArrowUp') || k.has('KeyW')) gas = 1;
     if (k.has('ArrowDown') || k.has('KeyS')) brk = 1;
-    const hbBtn = document.getElementById('btn-hb');
+    // ленивый кэш кнопки ручника — ищем в DOM только пока не нашли (btn-hb создаётся UI-ом)
+    if (!this._hbBtn) { try { this._hbBtn = document.getElementById('btn-hb'); } catch { /* noop */ } }
+    const hbBtn = this._hbBtn;
     this.throttle = gas;
     this.brake = brk;
     this.handbrake = (k.has('Space') && !this.isTouch) || (hbBtn && hbBtn._pressed);
