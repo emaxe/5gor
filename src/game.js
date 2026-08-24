@@ -272,6 +272,22 @@ export class Game {
     this.stars = new THREE.Points(starGeo, new THREE.PointsMaterial({ color: 0xffffff, size: 1.4, sizeAttenuation: false, transparent: true, opacity: 0 }));
     this.scene.add(this.stars);
 
+    // Луна — мягкий спрайт с гало, появляется ночью (чистый декор, без PointLight)
+    const [mcv, mcx] = makeCanvas(128, 128);
+    const mgrad = mcx.createRadialGradient(64, 64, 20, 64, 64, 64);
+    mgrad.addColorStop(0, 'rgba(255,252,240,1)');
+    mgrad.addColorStop(0.35, 'rgba(255,246,214,0.55)');
+    mgrad.addColorStop(1, 'rgba(255,240,200,0)');
+    mcx.fillStyle = mgrad; mcx.fillRect(0, 0, 128, 128);
+    const moonMat = new THREE.SpriteMaterial({
+      map: canvasToTexture(mcv), transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
+    });
+    this.moon = new THREE.Sprite(moonMat);
+    this.moon.scale.set(70, 70, 1);
+    this.moon.position.set(-520, 620, -380);
+    this.scene.add(this.moon);
+
     // дождь (1200 частиц, анимация на GPU через ShaderMaterial)
     const RAIN_COUNT = 1200;
     const rainGeo = new THREE.BufferGeometry();
@@ -1147,6 +1163,12 @@ export class Game {
     // Звёзды
     this.stars.material.opacity = nf * (1 - this._rainFactor * 0.8 - this._fogFactor * 0.8);
     this.stars.visible = nf > 0.05 && this._rainFactor < 0.9 && this._fogFactor < 0.9;
+
+    // Луна
+    if (this.moon) {
+      this.moon.material.opacity = nf * (1 - this._rainFactor * 0.7 - this._fogFactor * 0.7);
+      this.moon.visible = nf > 0.1 && this._rainFactor < 0.95 && this._fogFactor < 0.95;
+    }
 
     // Система частиц дождя с ветром (анимация на GPU через uTime) — CFG.gfx.rain=false
     // полностью выключает частицы (и апдейт uniform-ов) даже при weather==='rain'

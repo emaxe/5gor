@@ -1297,6 +1297,8 @@ export class World {
 
     const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.4, 8, 8), new THREE.MeshBasicMaterial({ color: 0xff3333 }));
     beacon.position.y = baseY + 52; g.add(beacon);
+    this.tvBeacon = beacon; // пульсация маяка ночью в update()
+    this.tvTowerGroup = g;
 
     this.scene.add(g);
   }
@@ -2171,6 +2173,39 @@ export class World {
     heads.visible = false;
     this.scene.add(heads);
     this.lampHeadMesh = heads;
+
+    // ночное световое пятно под каждым фонарём — 1 аддитивный InstancedMesh,
+    // без реальных PointLight (mobile-safe), вне коллизий.
+    const glowGeo = new THREE.PlaneGeometry(3.4, 3.4);
+    glowGeo.rotateX(-Math.PI / 2);
+    const glowMat = new THREE.MeshBasicMaterial({
+      map: this._glowTex(), transparent: true, opacity: 0, depthWrite: false,
+      blending: THREE.AdditiveBlending, color: 0xffd98a,
+    });
+    const glows = new THREE.InstancedMesh(glowGeo, glowMat, pos.length);
+    const gq = new THREE.Quaternion(), ge = new THREE.Euler(), gs = new THREE.Vector3(1, 1, 1);
+    pos.forEach((p, i) => {
+      ge.set(0, 0, 0); gq.setFromEuler(ge);
+      gs.set(1, 1, 1);
+      m4.compose(new THREE.Vector3(p.x, 0.055, p.z), gq, gs);
+      glows.setMatrixAt(i, m4);
+    });
+    glows.visible = false;
+    this.scene.add(glows);
+    this.lampGlowMesh = glows;
+  }
+
+  /* Радиальная fade-текстура для светового пятна фонаря */
+  _glowTex() {
+    if (this._glowTexCache) return this._glowTexCache;
+    const [cv, cx] = makeCanvas(64, 64);
+    const grad = cx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    grad.addColorStop(0, 'rgba(255,220,160,1)');
+    grad.addColorStop(0.35, 'rgba(255,200,120,0.5)');
+    grad.addColorStop(1, 'rgba(255,180,80,0)');
+    cx.fillStyle = grad; cx.fillRect(0, 0, 64, 64);
+    this._glowTexCache = canvasToTexture(cv);
+    return this._glowTexCache;
   }
 
   /* --- Урны и кусты --- */
@@ -2951,6 +2986,19 @@ export class World {
     this.time += dt;
     const night = hour >= CFG.nightStartHour || hour < CFG.nightEndHour;
     if (this.lampHeadMesh) this.lampHeadMesh.visible = night;
+    // ночные световые пятна под фонарями (плавно проявляются с наступлением ночи)
+    if (this.lampGlowMesh) {
+      const targetGlow = night ? 0.55 : 0;
+      this._glowI = this._glowI === undefined ? 0 : this._glowI;
+      this._glowI += (targetGlow - this._glowI) * 0.04;
+      this.lampGlowMesh.material.opacity = this._glowI;
+      this.lampGlowMesh.visible = this._glowI > 0.02;
+    }
+    // пульсирующий красный маяк телевышки на Машуке (виден ночью как ориентир)
+    if (this.tvBeacon) {
+      this.tvBeacon.material.color.setHSL(0, 1, night ? 0.5 + Math.sin(this.time * 3.5) * 0.25 : 0.18);
+      if (this.tvTowerGroup) this.tvTowerGroup.visible = true;
+    }
     // плавная подсветка окон зданий ночью
     const winTarget = night ? 0.85 : 0.04;
     this._winI = this._winI === undefined ? 0.04 : this._winI;
