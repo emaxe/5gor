@@ -595,6 +595,8 @@ export class Game {
     this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0, drifts: 0, perfectStops: 0, maxCombo: 0 };
     // серия заказов — свой счётчик каждой смены, сбрасывается на границе смены
     this.comboStreak = 0;
+    // серия опасных сближений тоже не должна перетекать между сменами
+    this._nmStreak = 0; this._nmLastTime = 0;
     this._driftDuration = 0;
     this._driftDist = 0;
     this._psActive = false; this._psMaxDecel = 0; this._pendingPerfectStop = false;
