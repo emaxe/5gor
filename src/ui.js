@@ -22,7 +22,7 @@ export class UIManager {
     this.$ = (id) => document.getElementById(id);
     this._els = {};
     for (const id of [
-      'money', 'rating', 'clock', 'day', 'weather', 'police-nearby', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
+      'money', 'rating', 'clock', 'day', 'weather', 'police-nearby', 'wanted-level', 'wanted-stars', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
       'order-card', 'order-title', 'order-progress', 'order-desc', 'order-timer', 'order-pay',
       'order-mood', 'mood-emoji', 'mood-label', 'mood-bar-fill',
       'nav-arrow-wrap', 'nav-arrow', 'nav-dist',
@@ -48,6 +48,7 @@ export class UIManager {
     this._lastMoodVisible = null; // dirty-check видимости индикатора настроения
     this._lastMoodTier = -1;      // dirty-check ступени настроения
     this._lastMoodPct = -1;       // dirty-check процента полосы настроения
+    this._lastWanted = null;      // dirty-check уровня розыска
 
     Events.on('passenger:speak', (d) => this.showDialogue(d.speaker, d.text, d.avatar, d.color));
     Events.on('radio:changed', (st) => this.updateRadioDisplay(st));
@@ -323,6 +324,26 @@ export class UIManager {
         if (policeEl.classList.contains('hidden')) policeEl.classList.remove('hidden');
       } else if (!policeEl.classList.contains('hidden')) {
         policeEl.classList.add('hidden');
+      }
+    }
+    // индикатор уровня розыска (wanted level) — dirty-check по уровню и фазе спада
+    const wantedEl = els['wanted-level'];
+    if (wantedEl) {
+      const lvl = gameState.police ? gameState.police.getWantedLevel() : 0;
+      const decaying = gameState.police ? gameState.police.isWantedDecaying() : false;
+      const key = lvl + (decaying ? 'd' : '');
+      if (this._lastWanted !== key) {
+        this._lastWanted = key;
+        if (lvl <= 0) {
+          wantedEl.classList.add('hidden');
+        } else {
+          wantedEl.classList.remove('hidden');
+          let stars = '';
+          for (let i = 0; i < 5; i++) stars += i < lvl ? '★' : '☆';
+          els['wanted-stars'].textContent = stars;
+          wantedEl.classList.toggle('wanted-high', lvl >= 4);
+          wantedEl.classList.toggle('wanted-decay', decaying);
+        }
       }
     }
     const kmh = Math.round(Math.abs(player.speed) * 3.6);

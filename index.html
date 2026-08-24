@@ -39,6 +39,10 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 #weather.w-fog { color: #a5b4c2; }
 #weather.w-night { color: #d2a8ff; }
 #police-nearby { margin-top: 3px; font-size: 11.5px; font-weight: 700; color: #ff7b72; letter-spacing: 0.3px; }
+#wanted-level { margin-top: 3px; font-size: 11.5px; font-weight: 700; color: #ffd75e; letter-spacing: 0.3px; }
+#wanted-level.wanted-high { color: #ff7b72; animation: wanted-pulse 0.8s ease-in-out infinite; }
+#wanted-level.wanted-decay { opacity: 0.6; }
+@keyframes wanted-pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.45; } }
 
 #hud-tc {
   position: absolute; top: 14px; left: 58%; transform: translateX(-50%);
@@ -497,6 +501,7 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
     <div id="day">День 1</div>
     <div id="weather" class="hidden"></div>
     <div id="police-nearby" class="hidden">🚨 Полиция рядом</div>
+    <div id="wanted-level" class="hidden">🚓 Розыск: <span id="wanted-stars"></span></div>
     <div id="radio-status" style="margin-top: 4px; font-size: 11.5px; color: #58a6ff; font-weight: 600; display: flex; align-items: center; gap: 4px;">
       <span id="radio-icon">📻</span> <span id="radio-name">Пятигорск FM</span>
     </div>
@@ -896,6 +901,17 @@ const CFG = {
   maxOpenOrders: 4,
   orderExpireSec: 110,
   orderSpawnEverySec: 9,
+
+  // Уровень розыска (wanted level): повторные нарушения перед патрулём
+  // повышают уровень 1-5, увеличивая штрафы и радиус детекции полиции.
+  WANTED: {
+    maxLevel: 5,
+    decayTime: 25,          // сек на спад одного уровня без новых нарушений
+    fineMultPerLevel: 0.5,  // L2 => x1.5, L5 => x3.0 исходного штрафа
+    ratingMultPerLevel: 0.5,
+    detectRadiusBonus: 15,  // +м к радиусу детекции за каждый уровень выше 1
+    chaseLevel: 4,          // с этого уровня ближайший патруль переходит в преследование
+  },
 
   // Пешеходы: зоны ИИ и нарушения ПДД
   pedActiveRadius: 110,      // ≤110 м — полный ИИ (маршрут, ПДД, обход)
@@ -14654,6 +14670,22 @@ class PoliceManager {
     this._cooldowns = {};
     /** @type {number} секунд до истечения текущего кулдауна */
     this._cdTimers = {};
+    /** @type {number} уровень розыска 0..5 (0 = чисто) */
+    this.wantedLevel = 0;
+    /** @type {number} таймер спада одного уровня розыска, сек */
+    this._wantedDecay = 0;
+  }
+
+  /** Текущий уровень розыска (0..5). */
+  getWantedLevel() { return this.wantedLevel; }
+
+  /** Идёт ли спад розыска (для HUD-мерцания). */
+  isWantedDecaying() { return this.wantedLevel > 0 && this._wantedDecay <= 0; }
+
+  /** Эффективный радиус детекции с учётом уровня розыска. */
+  effectiveDetectRadius() {
+    if (this.wantedLevel <= 1) return POLICE_DETECT_RADIUS;
+    return POLICE_DETECT_RADIUS + (this.wantedLevel - 1) * CFG.WANTED.detectRadiusBonus;
   }
 
   /**
@@ -14681,7 +14713,7 @@ class PoliceManager {
     for (const car of traffic.cars) {
       if (!car.alive || !car.mesh || !car.mesh.visible || car.beacon !== 'police') continue;
       const d = dist2D(car.x, car.z, player.x, player.z);
-      if (d < POLICE_DETECT_RADIUS) {
+      if (d < this.effectiveDetectRadius()) {
         // Полиция штрафует только если видит нарушение — сквозь здания не видит
         if (!this._hasLineOfSight(car.x, car.z, player.x, player.z, world)) continue;
         return true;
@@ -14817,12 +14849,20 @@ class PoliceManager {
 
   /**
    * Применить штраф: списать деньги, понизить рейтинг, показать тост.
+   * Повышает уровень розыска и масштабирует штраф/рейтинг по уровню.
    * @param {ViolationConfig} v
    */
   _fine(v) {
     this._cdTimers[v.id] = v.cooldown;
-    Events.emit('police:fine', v);
-    Events.emit('toast', { text: `🚨 ${v.label} Штраф: ${v.fine} ₽, рейтинг -${v.ratingLoss}`, color: '#ff6b6b' });
+    // Эскалация розыска: каждое зафиксированное нарушение +1 уровень (потолок 5).
+    this.wantedLevel = clamp(this.wantedLevel + 1, 1, CFG.WANTED.maxLevel);
+    this._wantedDecay = CFG.WANTED.decayTime;
+    // Множитель по уровню (уже повышенному): L1 => x1.0, L2 => x1.5, ..., L5 => x3.0.
+    const mult = 1 + (this.wantedLevel - 1) * CFG.WANTED.fineMultPerLevel;
+    const scaledFine = Math.round(v.fine * mult);
+    const scaledRating = Math.round(v.ratingLoss * mult);
+    Events.emit('police:fine', { ...v, fine: scaledFine, ratingLoss: scaledRating });
+    Events.emit('toast', { text: `🚨 ${v.label} Штраф: ${scaledFine} ₽, рейтинг -${scaledRating}`, color: '#ff6b6b' });
   }
 
   /**
@@ -14845,6 +14885,15 @@ class PoliceManager {
         if (this._cdTimers[id] < 0) this._cdTimers[id] = 0;
       }
     }
+    // Спад уровня розыска: без новых нарушений уровень падает по одному за decayTime.
+    if (this.wantedLevel > 0) {
+      this._wantedDecay -= dt;
+      if (this._wantedDecay <= 0) {
+        this.wantedLevel--;
+        if (this.wantedLevel > 0) this._wantedDecay = CFG.WANTED.decayTime;
+        else this._wantedDecay = 0;
+      }
+    }
   }
 
   /**
@@ -14852,6 +14901,8 @@ class PoliceManager {
    */
   reset() {
     this._cdTimers = {};
+    this.wantedLevel = 0;
+    this._wantedDecay = 0;
   }
 }
 /* ===== achievements.js ===== */
@@ -15137,7 +15188,7 @@ class UIManager {
     this.$ = (id) => document.getElementById(id);
     this._els = {};
     for (const id of [
-      'money', 'rating', 'clock', 'day', 'weather', 'police-nearby', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
+      'money', 'rating', 'clock', 'day', 'weather', 'police-nearby', 'wanted-level', 'wanted-stars', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
       'order-card', 'order-title', 'order-progress', 'order-desc', 'order-timer', 'order-pay',
       'order-mood', 'mood-emoji', 'mood-label', 'mood-bar-fill',
       'nav-arrow-wrap', 'nav-arrow', 'nav-dist',
@@ -15163,6 +15214,7 @@ class UIManager {
     this._lastMoodVisible = null; // dirty-check видимости индикатора настроения
     this._lastMoodTier = -1;      // dirty-check ступени настроения
     this._lastMoodPct = -1;       // dirty-check процента полосы настроения
+    this._lastWanted = null;      // dirty-check уровня розыска
 
     Events.on('passenger:speak', (d) => this.showDialogue(d.speaker, d.text, d.avatar, d.color));
     Events.on('radio:changed', (st) => this.updateRadioDisplay(st));
@@ -15438,6 +15490,26 @@ class UIManager {
         if (policeEl.classList.contains('hidden')) policeEl.classList.remove('hidden');
       } else if (!policeEl.classList.contains('hidden')) {
         policeEl.classList.add('hidden');
+      }
+    }
+    // индикатор уровня розыска (wanted level) — dirty-check по уровню и фазе спада
+    const wantedEl = els['wanted-level'];
+    if (wantedEl) {
+      const lvl = gameState.police ? gameState.police.getWantedLevel() : 0;
+      const decaying = gameState.police ? gameState.police.isWantedDecaying() : false;
+      const key = lvl + (decaying ? 'd' : '');
+      if (this._lastWanted !== key) {
+        this._lastWanted = key;
+        if (lvl <= 0) {
+          wantedEl.classList.add('hidden');
+        } else {
+          wantedEl.classList.remove('hidden');
+          let stars = '';
+          for (let i = 0; i < 5; i++) stars += i < lvl ? '★' : '☆';
+          els['wanted-stars'].textContent = stars;
+          wantedEl.classList.toggle('wanted-high', lvl >= 4);
+          wantedEl.classList.toggle('wanted-decay', decaying);
+        }
       }
     }
     const kmh = Math.round(Math.abs(player.speed) * 3.6);

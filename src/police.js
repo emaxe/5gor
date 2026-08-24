@@ -38,6 +38,22 @@ export class PoliceManager {
     this._cooldowns = {};
     /** @type {number} секунд до истечения текущего кулдауна */
     this._cdTimers = {};
+    /** @type {number} уровень розыска 0..5 (0 = чисто) */
+    this.wantedLevel = 0;
+    /** @type {number} таймер спада одного уровня розыска, сек */
+    this._wantedDecay = 0;
+  }
+
+  /** Текущий уровень розыска (0..5). */
+  getWantedLevel() { return this.wantedLevel; }
+
+  /** Идёт ли спад розыска (для HUD-мерцания). */
+  isWantedDecaying() { return this.wantedLevel > 0 && this._wantedDecay <= 0; }
+
+  /** Эффективный радиус детекции с учётом уровня розыска. */
+  effectiveDetectRadius() {
+    if (this.wantedLevel <= 1) return POLICE_DETECT_RADIUS;
+    return POLICE_DETECT_RADIUS + (this.wantedLevel - 1) * CFG.WANTED.detectRadiusBonus;
   }
 
   /**
@@ -65,7 +81,7 @@ export class PoliceManager {
     for (const car of traffic.cars) {
       if (!car.alive || !car.mesh || !car.mesh.visible || car.beacon !== 'police') continue;
       const d = dist2D(car.x, car.z, player.x, player.z);
-      if (d < POLICE_DETECT_RADIUS) {
+      if (d < this.effectiveDetectRadius()) {
         // Полиция штрафует только если видит нарушение — сквозь здания не видит
         if (!this._hasLineOfSight(car.x, car.z, player.x, player.z, world)) continue;
         return true;
@@ -201,12 +217,20 @@ export class PoliceManager {
 
   /**
    * Применить штраф: списать деньги, понизить рейтинг, показать тост.
+   * Повышает уровень розыска и масштабирует штраф/рейтинг по уровню.
    * @param {ViolationConfig} v
    */
   _fine(v) {
     this._cdTimers[v.id] = v.cooldown;
-    Events.emit('police:fine', v);
-    Events.emit('toast', { text: `🚨 ${v.label} Штраф: ${v.fine} ₽, рейтинг -${v.ratingLoss}`, color: '#ff6b6b' });
+    // Эскалация розыска: каждое зафиксированное нарушение +1 уровень (потолок 5).
+    this.wantedLevel = clamp(this.wantedLevel + 1, 1, CFG.WANTED.maxLevel);
+    this._wantedDecay = CFG.WANTED.decayTime;
+    // Множитель по уровню (уже повышенному): L1 => x1.0, L2 => x1.5, ..., L5 => x3.0.
+    const mult = 1 + (this.wantedLevel - 1) * CFG.WANTED.fineMultPerLevel;
+    const scaledFine = Math.round(v.fine * mult);
+    const scaledRating = Math.round(v.ratingLoss * mult);
+    Events.emit('police:fine', { ...v, fine: scaledFine, ratingLoss: scaledRating });
+    Events.emit('toast', { text: `🚨 ${v.label} Штраф: ${scaledFine} ₽, рейтинг -${scaledRating}`, color: '#ff6b6b' });
   }
 
   /**
@@ -229,6 +253,15 @@ export class PoliceManager {
         if (this._cdTimers[id] < 0) this._cdTimers[id] = 0;
       }
     }
+    // Спад уровня розыска: без новых нарушений уровень падает по одному за decayTime.
+    if (this.wantedLevel > 0) {
+      this._wantedDecay -= dt;
+      if (this._wantedDecay <= 0) {
+        this.wantedLevel--;
+        if (this.wantedLevel > 0) this._wantedDecay = CFG.WANTED.decayTime;
+        else this._wantedDecay = 0;
+      }
+    }
   }
 
   /**
@@ -236,5 +269,7 @@ export class PoliceManager {
    */
   reset() {
     this._cdTimers = {};
+    this.wantedLevel = 0;
+    this._wantedDecay = 0;
   }
 }
