@@ -41,6 +41,18 @@ export class PoliceManager {
   }
 
   /**
+   * Публичный предикат: есть ли патруль рядом с игроком в зоне обнаружения
+   * И в прямой видимости. Используется HUD для живого предупреждения.
+   * @param {import('./player.js').PlayerCar} player
+   * @param {import('./traffic.js').TrafficManager} traffic
+   * @param {import('./citygen.js').World} [world]
+   * @returns {boolean}
+   */
+  isPoliceNearby(player, traffic, world) {
+    return this._policeNearby(player, traffic, world);
+  }
+
+  /**
    * Проверить, есть ли полицейская машина рядом с игроком И в прямой видимости
    * (не перекрыта зданием).
    * @param {import('./player.js').PlayerCar} player - Машина игрока

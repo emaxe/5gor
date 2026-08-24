@@ -22,7 +22,7 @@ export class UIManager {
     this.$ = (id) => document.getElementById(id);
     this._els = {};
     for (const id of [
-      'money', 'rating', 'clock', 'day', 'weather', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
+      'money', 'rating', 'clock', 'day', 'weather', 'police-nearby', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
       'order-card', 'order-title', 'order-progress', 'order-desc', 'order-timer', 'order-pay',
       'order-mood', 'mood-emoji', 'mood-label', 'mood-bar-fill',
       'nav-arrow-wrap', 'nav-arrow', 'nav-dist',
@@ -313,6 +313,16 @@ export class UIManager {
         if (weatherEl.classList.contains('hidden')) weatherEl.classList.remove('hidden');
       } else if (!weatherEl.classList.contains('hidden')) {
         weatherEl.classList.add('hidden');
+      }
+    }
+    // индикатор «полиция рядом» (патруль в зоне обнаружения + прямой видимости)
+    const policeEl = els['police-nearby'];
+    if (policeEl) {
+      const near = gameState.police && gameState.police.isPoliceNearby(player, gameState.traffic, gameState.world);
+      if (near) {
+        if (policeEl.classList.contains('hidden')) policeEl.classList.remove('hidden');
+      } else if (!policeEl.classList.contains('hidden')) {
+        policeEl.classList.add('hidden');
       }
     }
     const kmh = Math.round(Math.abs(player.speed) * 3.6);

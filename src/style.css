@@ -30,6 +30,7 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 #weather.w-rain { color: #79c0ff; }
 #weather.w-fog { color: #a5b4c2; }
 #weather.w-night { color: #d2a8ff; }
+#police-nearby { margin-top: 3px; font-size: 11.5px; font-weight: 700; color: #ff7b72; letter-spacing: 0.3px; }
 
 #hud-tc {
   position: absolute; top: 14px; left: 58%; transform: translateX(-50%);

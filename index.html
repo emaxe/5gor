@@ -38,6 +38,7 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 #weather.w-rain { color: #79c0ff; }
 #weather.w-fog { color: #a5b4c2; }
 #weather.w-night { color: #d2a8ff; }
+#police-nearby { margin-top: 3px; font-size: 11.5px; font-weight: 700; color: #ff7b72; letter-spacing: 0.3px; }
 
 #hud-tc {
   position: absolute; top: 14px; left: 58%; transform: translateX(-50%);
@@ -495,6 +496,7 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
     <div id="clock">09:00</div>
     <div id="day">День 1</div>
     <div id="weather" class="hidden"></div>
+    <div id="police-nearby" class="hidden">🚨 Полиция рядом</div>
     <div id="radio-status" style="margin-top: 4px; font-size: 11.5px; color: #58a6ff; font-weight: 600; display: flex; align-items: center; gap: 4px;">
       <span id="radio-icon">📻</span> <span id="radio-name">Пятигорск FM</span>
     </div>
@@ -14655,6 +14657,18 @@ class PoliceManager {
   }
 
   /**
+   * Публичный предикат: есть ли патруль рядом с игроком в зоне обнаружения
+   * И в прямой видимости. Используется HUD для живого предупреждения.
+   * @param {import('./player.js').PlayerCar} player
+   * @param {import('./traffic.js').TrafficManager} traffic
+   * @param {import('./citygen.js').World} [world]
+   * @returns {boolean}
+   */
+  isPoliceNearby(player, traffic, world) {
+    return this._policeNearby(player, traffic, world);
+  }
+
+  /**
    * Проверить, есть ли полицейская машина рядом с игроком И в прямой видимости
    * (не перекрыта зданием).
    * @param {import('./player.js').PlayerCar} player - Машина игрока
@@ -15123,7 +15137,7 @@ class UIManager {
     this.$ = (id) => document.getElementById(id);
     this._els = {};
     for (const id of [
-      'money', 'rating', 'clock', 'day', 'weather', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
+      'money', 'rating', 'clock', 'day', 'weather', 'police-nearby', 'speed-val', 'fuel-bar', 'dmg-bar', 'dirt-tip',
       'order-card', 'order-title', 'order-progress', 'order-desc', 'order-timer', 'order-pay',
       'order-mood', 'mood-emoji', 'mood-label', 'mood-bar-fill',
       'nav-arrow-wrap', 'nav-arrow', 'nav-dist',
@@ -15414,6 +15428,16 @@ class UIManager {
         if (weatherEl.classList.contains('hidden')) weatherEl.classList.remove('hidden');
       } else if (!weatherEl.classList.contains('hidden')) {
         weatherEl.classList.add('hidden');
+      }
+    }
+    // индикатор «полиция рядом» (патруль в зоне обнаружения + прямой видимости)
+    const policeEl = els['police-nearby'];
+    if (policeEl) {
+      const near = gameState.police && gameState.police.isPoliceNearby(player, gameState.traffic, gameState.world);
+      if (near) {
+        if (policeEl.classList.contains('hidden')) policeEl.classList.remove('hidden');
+      } else if (!policeEl.classList.contains('hidden')) {
+        policeEl.classList.add('hidden');
       }
     }
     const kmh = Math.round(Math.abs(player.speed) * 3.6);
