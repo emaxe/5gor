@@ -592,7 +592,7 @@ export class Game {
     this.day = day;
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
-    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0, drifts: 0, perfectStops: 0, maxCombo: 0 };
+    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0, drifts: 0, perfectStops: 0, maxCombo: 0, maxNmStreak: 0 };
     // серия заказов — свой счётчик каждой смены, сбрасывается на границе смены
     this.comboStreak = 0;
     // серия опасных сближений тоже не должна перетекать между сменами
@@ -1604,6 +1604,7 @@ export class Game {
     if (this.shiftStats) {
       this.shiftStats.earned += reward;
       this.shiftStats.nearMisses++;
+      if (this._nmStreak > this.shiftStats.maxNmStreak) this.shiftStats.maxNmStreak = this._nmStreak;
     }
     if (this.player.passengerCount > 0) this.player.style = clamp(this.player.style + CFG.nearMissStyleBonus, 0, 1);
     // Lifetime-статистика опасных сближений (для ачивок)
