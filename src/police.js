@@ -48,7 +48,7 @@ export class PoliceManager {
   getWantedLevel() { return this.wantedLevel; }
 
   /** Идёт ли спад розыска (для HUD-мерцания). */
-  isWantedDecaying() { return this.wantedLevel > 0 && this._wantedDecay <= 0; }
+  isWantedDecaying() { return this.wantedLevel > 0 && this._wantedDecay <= 0 && !this._decayPaused; }
 
   /** Эффективный радиус детекции с учётом уровня розыска. */
   effectiveDetectRadius() {
@@ -246,7 +246,10 @@ export class PoliceManager {
    * Обновление кулдаунов (вызывается каждый кадр).
    * @param {number} dt
    */
-  update(dt) {
+  update(dt, player = null, traffic = null, world = null) {
+    // Спад розыска приостанавливается, пока рядом активный патруль (с линией видимости) —
+    // нельзя «переждать» погоню на месте.
+    this._decayPaused = !!player && !!traffic && this._policeNearby(player, traffic, world);
     for (const id in this._cdTimers) {
       if (this._cdTimers[id] > 0) {
         this._cdTimers[id] -= dt;
@@ -254,7 +257,7 @@ export class PoliceManager {
       }
     }
     // Спад уровня розыска: без новых нарушений уровень падает по одному за decayTime.
-    if (this.wantedLevel > 0) {
+    if (this.wantedLevel > 0 && !this._decayPaused) {
       this._wantedDecay -= dt;
       if (this._wantedDecay <= 0) {
         this.wantedLevel--;
@@ -271,5 +274,6 @@ export class PoliceManager {
     this._cdTimers = {};
     this.wantedLevel = 0;
     this._wantedDecay = 0;
+    this._decayPaused = false;
   }
 }

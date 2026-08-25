@@ -1331,7 +1331,7 @@ export class Game {
     this.shiftStats.km += this.player.speed * dt / 1000;
 
     // полиция: проверка нарушений
-    this.police.update(dt);
+    this.police.update(dt, this.player, this.traffic, this.world);
     this.police.checkSpeeding(this.player, this.traffic, this.world);
     this.police.checkRedLight(this.player, this.traffic, this.world.lights, this.world);
 
@@ -1719,7 +1719,7 @@ export class Game {
     this.input.flush();
 
     // полиция: обновление кулдаунов
-    this.police.update(dt);
+    this.police.update(dt, this.playerPed || this.player, this.traffic, this.world);
 
     // километраж пешком
     if (this.shiftStats && this.playerPed) {
