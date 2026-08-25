@@ -472,6 +472,7 @@ export class Game {
       const ratingBonus = CFG.WANTED.escapeRatingBonus * level;
       this.addMoney(reward);
       this.setRating(this.rating + ratingBonus);
+      if (this.shiftStats) this.shiftStats.escapes++;
       this.ui.toast(`🚔 Скрылся от полиции! +${reward} ₽, рейтинг +${ratingBonus}`, '#7ee787');
     });
 
@@ -621,7 +622,7 @@ export class Game {
     this.day = day;
     this.shiftElapsed = 0;
     this.hour = CFG.shiftStartHour;
-    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0, drifts: 0, perfectStops: 0, maxCombo: 0, maxNmStreak: 0 };
+    this.shiftStats = { earned: 0, orders: 0, tips: 0, crashes: 0, peds: 0, km: 0, failed: 0, missions: 0, nearMisses: 0, drifts: 0, perfectStops: 0, maxCombo: 0, maxNmStreak: 0, escapes: 0 };
     // серия заказов — свой счётчик каждой смены, сбрасывается на границе смены
     this.comboStreak = 0;
     // серия опасных сближений тоже не должна перетекать между сменами
@@ -1101,6 +1102,7 @@ export class Game {
       policeFines: achStats.policeFines,
       drifts: achStats.drifts,
       perfectStops: achStats.perfectStops,
+      escapes: achStats.escapes,
     };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,

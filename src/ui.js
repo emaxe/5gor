@@ -983,6 +983,7 @@ export class UIManager {
       'Аварий: <b>' + s.crashes + '</b> · Пешеходов задето: <b>' + s.peds + '</b><br>' +
       'Опасных сближений: <b>' + (s.nearMisses || 0) + '</b> ⚡' + (s.maxNmStreak > 1 ? ' · Лучшая серия: <b>' + s.maxNmStreak + '</b> 💨' : '') + '<br>' +
       'Заносов: <b>' + (s.drifts || 0) + '</b> 💨 · Идеальных остановок: <b>' + (s.perfectStops || 0) + '</b> ✨<br>' +
+      ((s.escapes || 0) > 0 ? 'Скрылся от полиции: <b>' + s.escapes + '</b> 🚔<br>' : '') +
       (s.maxCombo ? 'Лучшая серия заказов: <b>' + s.maxCombo + '</b> 🔥<br>' : '') +
       'Рейтинг: <b>' + Math.round(g.rating) + '</b> ' + stars + '<br>' +
       'Миссий выполнено: <b>' + s.missions + '</b><br>' +

@@ -34,6 +34,8 @@ const ACHIEVEMENTS = [
   { id: 'night_owl',     name: 'Ночная сова',          desc: 'Выполните 10 ночных заказов',           toast: 'Ночной хозяин спящего курорта',         icon: '🦉', check: s => s.nightOrders >= 10 },
   { id: 'km_500',        name: 'Путешественник',       desc: 'Проедьте 500 км за все время',          toast: 'Пятьсот километров по серпантинам',     icon: '🛣️', check: s => s.totalKm >= 500 },
   { id: 'police_fined',  name: 'Враг народа',          desc: 'Получите 5 штрафов от полиции',         toast: 'С ГИБДД лучше дружить, а не дружиться', icon: '🚨', check: s => s.policeFines >= 5 },
+  { id: 'escape_1',      name: 'Лихой прохвост',       desc: 'Скройтесь от полиции 1 раз',             toast: 'От полиции ушёл — значит не пойман',    icon: '🚔', check: s => s.totalEscapes >= 1 },
+  { id: 'escape_10',     name: 'Король побега',        desc: 'Скройтесь от полиции 10 раз',           toast: 'Десять раз — и ни одной решётки',       icon: '🏃', check: s => s.totalEscapes >= 10 },
   { id: 'tips_5k',       name: 'Любимец клиентов',     desc: 'Заработайте 5 000 ₽ чаевых',            toast: 'Курортники не скупятся на чай',         icon: '🎁', check: s => s.totalTips >= 5000 },
   // --- Бойцовские ---
   { id: 'hot_head',      name: 'Горячая голова',       desc: 'Нападите на 10 прохожих за смену',      toast: 'Кулаки — вторая профессия таксиста',    icon: '👊', check: s => s.shiftPunches >= 10 },
@@ -91,11 +93,17 @@ export class AchievementManager {
       this.stats.policeFines++;
       this.checkAll();
     });
+    Events.on('police:escape', () => {
+      this.stats.totalEscapes++;
+      this.stats.shiftEscapes++;
+      this.checkAll();
+    });
     Events.on('shift:started', () => {
       this.stats.shiftOrders = 0;
       this.stats.shiftCrashes = 0;
       this.stats.shiftPeds = 0;
       this.stats.shiftPunches = 0;
+      this.stats.shiftEscapes = 0;
     });
     Events.on('night:order', () => {
       this.stats.nightOrders++;
@@ -130,6 +138,8 @@ export class AchievementManager {
       maxNearMissStreak: 0,
       totalDrifts: 0,
       totalPerfectStops: 0,
+      totalEscapes: 0,
+      shiftEscapes: 0,
     };
   }
 
@@ -232,6 +242,7 @@ export class AchievementManager {
     this.stats.policeFines = stats.policeFines || 0;
     this.stats.totalDrifts = stats.drifts || 0;
     this.stats.totalPerfectStops = stats.perfectStops || 0;
+    this.stats.totalEscapes = stats.escapes || 0;
   }
 
   /**
@@ -255,6 +266,7 @@ export class AchievementManager {
       maxNearMissStreak: this.stats.maxNearMissStreak,
       drifts: this.stats.totalDrifts,
       perfectStops: this.stats.totalPerfectStops,
+      escapes: this.stats.totalEscapes,
     };
   }
 }
