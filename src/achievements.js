@@ -36,6 +36,8 @@ const ACHIEVEMENTS = [
   { id: 'police_fined',  name: 'Враг народа',          desc: 'Получите 5 штрафов от полиции',         toast: 'С ГИБДД лучше дружить, а не дружиться', icon: '🚨', check: s => s.policeFines >= 5 },
   { id: 'escape_1',      name: 'Лихой прохвост',       desc: 'Скройтесь от полиции 1 раз',             toast: 'От полиции ушёл — значит не пойман',    icon: '🚔', check: s => s.totalEscapes >= 1 },
   { id: 'escape_10',     name: 'Король побега',        desc: 'Скройтесь от полиции 10 раз',           toast: 'Десять раз — и ни одной решётки',       icon: '🏃', check: s => s.totalEscapes >= 10 },
+  { id: 'escape_3',      name: 'Неуловимый',           desc: 'Скройтесь от полиции на 3+ уровне розыска', toast: 'Ушёл от хвоста на трёх звёздах!',     icon: '🏎️', check: s => (s.maxEscapeLevel || 0) >= 3 },
+  { id: 'escape_5',      name: 'Легенда побега',        desc: 'Скройтесь от полиции на максимальном 5-м уровне розыска', toast: 'Пять звёзд позади — абсолютный уход!', icon: '🔥', check: s => (s.maxEscapeLevel || 0) >= 5 },
   { id: 'tips_5k',       name: 'Любимец клиентов',     desc: 'Заработайте 5 000 ₽ чаевых',            toast: 'Курортники не скупятся на чай',         icon: '🎁', check: s => s.totalTips >= 5000 },
   // --- Бойцовские ---
   { id: 'hot_head',      name: 'Горячая голова',       desc: 'Нападите на 10 прохожих за смену',      toast: 'Кулаки — вторая профессия таксиста',    icon: '👊', check: s => s.shiftPunches >= 10 },
@@ -93,9 +95,11 @@ export class AchievementManager {
       this.stats.policeFines++;
       this.checkAll();
     });
-    Events.on('police:escape', () => {
+    Events.on('police:escape', (d) => {
+      const lvl = (d && d.level) || 1;
       this.stats.totalEscapes++;
       this.stats.shiftEscapes++;
+      if (lvl > (this.stats.maxEscapeLevel || 0)) this.stats.maxEscapeLevel = lvl;
       this.checkAll();
     });
     Events.on('shift:started', () => {
@@ -140,6 +144,7 @@ export class AchievementManager {
       totalPerfectStops: 0,
       totalEscapes: 0,
       shiftEscapes: 0,
+      maxEscapeLevel: 0,
     };
   }
 
@@ -243,6 +248,7 @@ export class AchievementManager {
     this.stats.totalDrifts = stats.drifts || 0;
     this.stats.totalPerfectStops = stats.perfectStops || 0;
     this.stats.totalEscapes = stats.escapes || 0;
+    this.stats.maxEscapeLevel = stats.maxEscapeLevel || 0;
   }
 
   /**
@@ -267,6 +273,7 @@ export class AchievementManager {
       drifts: this.stats.totalDrifts,
       perfectStops: this.stats.totalPerfectStops,
       escapes: this.stats.totalEscapes,
+      maxEscapeLevel: this.stats.maxEscapeLevel,
     };
   }
 }

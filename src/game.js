@@ -1103,6 +1103,7 @@ export class Game {
       drifts: achStats.drifts,
       perfectStops: achStats.perfectStops,
       escapes: achStats.escapes,
+      maxEscapeLevel: achStats.maxEscapeLevel,
     };
     this.upgrades.save({
       money: this.money, rating: this.rating, stats: this.stats, day: this.day,
