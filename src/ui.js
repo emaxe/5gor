@@ -348,7 +348,9 @@ export class UIManager {
     }
     const kmh = Math.round(Math.abs(player.speed) * 3.6);
     els['speed-val'].textContent = kmh;
-    els['fuel-bar'].style.width = clamp(player.fuel / player.stats.tank * 100, 0, 100) + '%';
+    const fuelFrac = player.fuel / player.stats.tank;
+    els['fuel-bar'].style.width = clamp(fuelFrac * 100, 0, 100) + '%';
+    els['fuel-bar'].style.background = fuelFrac < CFG.lowFuelRatio ? 'linear-gradient(90deg,#ff7b72,#ffb030)' : 'linear-gradient(90deg,#7ee787,#e3b341)';
     els['dmg-bar'].style.width = player.damage + '%';
     els['dmg-bar'].style.background = player.damage > 60 ? '#ff7b72' : 'linear-gradient(90deg,#e3b341,#ff7b72)';
     els['dirt-tip'].classList.toggle('hidden', player.dirt < 0.35);
