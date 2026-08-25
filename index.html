@@ -1162,7 +1162,6 @@ const smin = (a, b, k) => { const h = Math.max(k - Math.abs(a - b), 0) / k; retu
 const smax = (a, b, k) => -smin(-a, -b, k);
 const lerp = (a, b, t) => a + (b - a) * t;
 const rand = (a, b) => (b === undefined ? Math.random() * a : a + Math.random() * (b - a));
-const randInt = (a, b) => Math.floor(rand(a, b + 1));
 const choice = (arr) => arr[(Math.random() * arr.length) | 0];
 const dist2D = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 const fmtMoney = (n) => Math.round(n).toLocaleString('ru-RU') + ' ₽';
@@ -1197,14 +1196,6 @@ function turnToward(a, b, maxDelta) {
   while (d < -Math.PI) d += Math.PI * 2;
   if (Math.abs(d) <= maxDelta) return b;
   return a + Math.sign(d) * maxDelta;
-}
-
-/* Линейная интерполяция углов по кратчайшей дуге */
-function lerpAngle(a, b, t) {
-  let d = b - a;
-  while (d > Math.PI) d -= Math.PI * 2;
-  while (d < -Math.PI) d += Math.PI * 2;
-  return a + d * t;
 }
 
 /* --- Event Bus moved to src/eventbus.js --- */
@@ -1268,30 +1259,6 @@ function getRoofMaterial(palette, baseColorHex) {
   const mat = new THREE.MeshLambertMaterial({ color: roofC });
   _matCache.set(key, mat);
   return mat;
-}
-
-/* Текстура «шашечек такси» + надпись */
-function makeTaxiTexture(colorHex) {
-  const key = 'taxi_' + colorHex;
-  if (_texCache.has(key)) return _texCache.get(key);
-  const c = makeCanvas(512, 256);
-  const g = c.getContext('2d');
-  g.fillStyle = colorHex; g.fillRect(0, 0, 512, 256);
-  // шашечки по низу
-  const ch = 44, cw = 44;
-  for (let i = 0; i < 12; i++) for (let j = 0; j < 2; j++) {
-    if ((i + j) % 2 === 0) { g.fillStyle = '#1a1a1a'; g.fillRect(i * cw, 256 - ch * (j + 1), cw, ch); }
-  }
-  // надпись TAXI
-  g.fillStyle = '#1a1a1a';
-  g.font = 'bold 120px Arial';
-  g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.fillText('TAXI', 256, 105);
-  g.strokeStyle = '#1a1a1a'; g.lineWidth = 6;
-  g.strokeRect(6, 6, 500, 244);
-  const t = canvasToTexture(c, key);
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
 }
 
 /* Текстура плафона "ТАКСИ" на крыше (жёлтый фон, тёмная надпись по центру

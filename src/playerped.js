@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG, CAR_TYPE_SHAPE } from './config.js';
-import { clamp, dist2D, circleAABB, turnToward, buildPedMesh, buildDriverMesh, disposeMeshGeometries } from './utils.js';
+import { clamp, dist2D, circleAABB, turnToward, buildDriverMesh, disposeMeshGeometries } from './utils.js';
 
 /**
  * Класс пешехода-аватара игрока (физика, коллизии, визуал и анимация ходьбы/бега).

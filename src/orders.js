@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { CFG, LANDMARKS, DISTRICTS } from './config.js';
+import { CFG, DISTRICTS } from './config.js';
 import { dist2D, rand, choice, pickWeighted, fmtMoney, makeMarkerTexture, makeBeamSprite, buildPedMesh, attachParcelBox, detachParcelBox, disposeMeshGeometries } from './utils.js';
 import { Events } from './eventbus.js';
 import { getPassengerDialogue, PASSENGER_NAMES, CLIENT_AVATARS } from './dialogues.js';

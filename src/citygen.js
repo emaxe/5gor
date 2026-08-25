@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { CFG, DISTRICTS, PALETTES, LANDMARKS, FUEL_STATIONS } from './config.js';
-import { mulberry32, dist2D, rand, clamp, choice, makeCanvas, canvasToTexture, lerp, mergeColored, mergeGeoms, makePlateTexture, makeTaxiTexture, getWindowMaterial, getRoofMaterial, smin, smax } from './utils.js';
+import { mulberry32, dist2D, rand, clamp, choice, makeCanvas, canvasToTexture, lerp, mergeColored, mergeGeoms, makePlateTexture, getWindowMaterial, getRoofMaterial, smin, smax } from './utils.js';
 
 /* Переиспользуемые 3D-объекты для update() (zero-alloc в hot-path фуникулёра/светофоров) */
 const _updColor = new THREE.Color();

@@ -5,7 +5,7 @@ import { Events } from './eventbus.js';
 import { World } from './citygen.js';
 import { PlayerCar } from './player.js';
 import { PlayerPed } from './playerped.js';
-import { TRAFFIC_TYPES, TrafficManager, setWorldIntersections } from './traffic.js';
+import { TrafficManager, setWorldIntersections } from './traffic.js';
 import { PedestrianManager } from './peds.js';
 import { ChaseCamera } from './camera.js';
 import { PassengerManager } from './orders.js';

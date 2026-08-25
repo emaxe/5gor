@@ -1,5 +1,5 @@
 import { CFG, DISTRICTS, UPGRADES, CARS, TUNING, MOOD_TIERS } from './config.js';
-import { fmtMoney, fmtTime, fmtClock, choice, dist2D } from './utils.js';
+import { fmtMoney, fmtTime, fmtClock, dist2D } from './utils.js';
 import { routeLength } from './gps.js';
 import { Events } from './eventbus.js';
 
