@@ -467,6 +467,14 @@ export class Game {
       this.setRating(this.rating - v.ratingLoss);
     });
 
+    events.on('police:escape', ({ level }) => {
+      const reward = CFG.WANTED.escapeRewardPerLevel * level;
+      const ratingBonus = CFG.WANTED.escapeRatingBonus * level;
+      this.addMoney(reward);
+      this.setRating(this.rating + ratingBonus);
+      this.ui.toast(`🚔 Скрылся от полиции! +${reward} ₽, рейтинг +${ratingBonus}`, '#7ee787');
+    });
+
     events.on('spatial:shout', (d) => {
       if (d.text && this.player) {
         const dist = Math.hypot(d.x - this.player.x, d.z - this.player.z);

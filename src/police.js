@@ -42,6 +42,8 @@ export class PoliceManager {
     this.wantedLevel = 0;
     /** @type {number} таймер спада одного уровня розыска, сек */
     this._wantedDecay = 0;
+    /** @type {number} пиковый уровень розыска за текущую погоню (для награды за уход) */
+    this._peakWantedLevel = 0;
   }
 
   /** Текущий уровень розыска (0..5). */
@@ -225,6 +227,7 @@ export class PoliceManager {
     // Эскалация розыска: каждое зафиксированное нарушение +1 уровень (потолок 5).
     this.wantedLevel = clamp(this.wantedLevel + 1, 1, CFG.WANTED.maxLevel);
     this._wantedDecay = CFG.WANTED.decayTime;
+    if (this.wantedLevel > this._peakWantedLevel) this._peakWantedLevel = this.wantedLevel;
     // Множитель по уровню (уже повышенному): L1 => x1.0, L2 => x1.5, ..., L5 => x3.0.
     const mult = 1 + (this.wantedLevel - 1) * CFG.WANTED.fineMultPerLevel;
     const scaledFine = Math.round(v.fine * mult);
@@ -262,7 +265,13 @@ export class PoliceManager {
       if (this._wantedDecay <= 0) {
         this.wantedLevel--;
         if (this.wantedLevel > 0) this._wantedDecay = CFG.WANTED.decayTime;
-        else this._wantedDecay = 0;
+        else {
+          this._wantedDecay = 0;
+          // Момент успешного ухода от полиции: розыск полностью спал.
+          const peakLevel = this._peakWantedLevel || 1;
+          this._peakWantedLevel = 0;
+          Events.emit('police:escape', { level: peakLevel });
+        }
       }
     }
   }
@@ -275,5 +284,6 @@ export class PoliceManager {
     this.wantedLevel = 0;
     this._wantedDecay = 0;
     this._decayPaused = false;
+    this._peakWantedLevel = 0;
   }
 }

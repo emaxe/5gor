@@ -911,6 +911,8 @@ const CFG = {
     ratingMultPerLevel: 0.5,
     detectRadiusBonus: 15,  // +м к радиусу детекции за каждый уровень выше 1
     chaseLevel: 4,          // с этого уровня ближайший патруль переходит в преследование
+    escapeRewardPerLevel: 150, // ₽ награды за успешный уход от полиции за каждый уровень розыска
+    escapeRatingBonus: 2,   // +рейтинг за успешный уход от полиции за каждый уровень
   },
 
   // Пешеходы: зоны ИИ и нарушения ПДД
@@ -14722,6 +14724,8 @@ class PoliceManager {
     this.wantedLevel = 0;
     /** @type {number} таймер спада одного уровня розыска, сек */
     this._wantedDecay = 0;
+    /** @type {number} пиковый уровень розыска за текущую погоню (для награды за уход) */
+    this._peakWantedLevel = 0;
   }
 
   /** Текущий уровень розыска (0..5). */
@@ -14905,6 +14909,7 @@ class PoliceManager {
     // Эскалация розыска: каждое зафиксированное нарушение +1 уровень (потолок 5).
     this.wantedLevel = clamp(this.wantedLevel + 1, 1, CFG.WANTED.maxLevel);
     this._wantedDecay = CFG.WANTED.decayTime;
+    if (this.wantedLevel > this._peakWantedLevel) this._peakWantedLevel = this.wantedLevel;
     // Множитель по уровню (уже повышенному): L1 => x1.0, L2 => x1.5, ..., L5 => x3.0.
     const mult = 1 + (this.wantedLevel - 1) * CFG.WANTED.fineMultPerLevel;
     const scaledFine = Math.round(v.fine * mult);
@@ -14942,7 +14947,13 @@ class PoliceManager {
       if (this._wantedDecay <= 0) {
         this.wantedLevel--;
         if (this.wantedLevel > 0) this._wantedDecay = CFG.WANTED.decayTime;
-        else this._wantedDecay = 0;
+        else {
+          this._wantedDecay = 0;
+          // Момент успешного ухода от полиции: розыск полностью спал.
+          const peakLevel = this._peakWantedLevel || 1;
+          this._peakWantedLevel = 0;
+          Events.emit('police:escape', { level: peakLevel });
+        }
       }
     }
   }
@@ -14955,6 +14966,7 @@ class PoliceManager {
     this.wantedLevel = 0;
     this._wantedDecay = 0;
     this._decayPaused = false;
+    this._peakWantedLevel = 0;
   }
 }
 /* ===== achievements.js ===== */
@@ -16879,6 +16891,14 @@ class Game {
       this.comboStreak = 0;
       this.addMoney(-v.fine);
       this.setRating(this.rating - v.ratingLoss);
+    });
+
+    events.on('police:escape', ({ level }) => {
+      const reward = CFG.WANTED.escapeRewardPerLevel * level;
+      const ratingBonus = CFG.WANTED.escapeRatingBonus * level;
+      this.addMoney(reward);
+      this.setRating(this.rating + ratingBonus);
+      this.ui.toast(`🚔 Скрылся от полиции! +${reward} ₽, рейтинг +${ratingBonus}`, '#7ee787');
     });
 
     events.on('spatial:shout', (d) => {
