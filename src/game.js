@@ -506,7 +506,12 @@ export class Game {
       }
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
       const streakText = this.comboStreak > 1 ? ' 🔥 серия ' + this.comboStreak + ' ×' + comboMult.toFixed(2) : '';
-      this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay + bonusPay) + bonus + streakText, '#7ee787');
+      let starText = '';
+      if (r.stars) {
+        starText = ' · ' + '★'.repeat(Math.max(1, Math.min(5, r.stars))) + ' '.repeat(Math.max(0, 5 - Math.min(5, r.stars)));
+        if (r.review) starText += ' «' + r.review + '»';
+      }
+      this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay + bonusPay) + bonus + streakText + starText, '#7ee787');
       // Идеальная остановка: бонус за плавное торможение перед высадкой
       if (this._pendingPerfectStop) {
         this._pendingPerfectStop = false;
