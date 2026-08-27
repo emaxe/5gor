@@ -5100,6 +5100,19 @@ class AudioManager {
       if (!this._ready) return;
       this.sfx.orderTimerBeep(d ? d.left : 0);
     });
+    // Наградные события: фанфара достижения, зинг заноса, звон идеальной остановки
+    Events.on('achievement:unlocked', () => {
+      if (!this._ready) return;
+      this.sfx.achievementFanfare();
+    });
+    Events.on('drift:completed', (d) => {
+      if (!this._ready) return;
+      this.sfx.comboMilestone(d && d.duration ? Math.min(3, Math.floor(d.duration / 2)) : 1);
+    });
+    Events.on('stop:perfect', () => {
+      if (!this._ready) return;
+      this.sfx.pickup();
+    });
   }
 
   /* Разблокировка AudioContext по первому жесту пользователя — сразу
