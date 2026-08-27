@@ -522,6 +522,15 @@ export class Game {
       }
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
       const streakText = this.comboStreak > 1 ? ' 🔥 серия ' + this.comboStreak + ' ×' + comboMult.toFixed(2) : '';
+      // milestone-фидбек при достижении порога серии заказов (аналог near-miss streak)
+      for (let i = 0; i < CFG.comboStreakTiers.length; i++) {
+        const t = CFG.comboStreakTiers[i];
+        if (this.comboStreak === t.count) {
+          this.ui.toast('🔥 СЕРИЯ ЗАКАЗОВ ×' + this.comboStreak + '! Бонус ×' + comboMult.toFixed(2), '#ffd75e');
+          Events.emit('combo:milestone', { streak: this.comboStreak, mult: comboMult, level: t.level });
+          break;
+        }
+      }
       let starText = '';
       if (r.stars) {
         starText = ' · ' + '★'.repeat(Math.max(1, Math.min(5, r.stars))) + ' '.repeat(Math.max(0, 5 - Math.min(5, r.stars)));

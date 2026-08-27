@@ -73,6 +73,10 @@ export class AudioManager {
       if (!this._ready) return;
       this.sfx.nearMissStreak(d && d.level ? d.level : 1);
     });
+    Events.on('combo:milestone', (d) => {
+      if (!this._ready) return;
+      this.sfx.comboMilestone(d && d.level ? d.level : 1);
+    });
     Events.on('ped:kick', () => {
       if (!this._ready) return;
       this.sfx.thud();

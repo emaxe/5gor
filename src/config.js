@@ -222,6 +222,12 @@ export const CFG = {
     { count: 10, mult: 10, level: 3 },
   ],
 
+  comboStreakTiers: [        // пороги серии заказов для milestone-фидбека (juice)
+    { count: 3,  level: 1 },
+    { count: 5,  level: 2 },
+    { count: 10, level: 3 },
+  ],
+
   // Качество (устаревший алиас, держится ради обратной совместимости старых
   // сохранений — реальные настройки теперь в CFG.gfx)
   quality: 'high', // high | low (вкл/выкл тени, pixelRatio)

@@ -199,6 +199,20 @@ export class SfxLibrary {
     }
   }
 
+  /* Milestone серии заказов — восходящий arpeggio (3 ноты, тем выше чем больше уровень) */
+  comboMilestone(level = 1) {
+    const e = this.engine;
+    if (!e.enabled) return;
+    const g = 0.12 + level * 0.03;
+    const base = 440 + level * 80;               // 520 / 600 / 680 Гц
+    e.tone(base, 0.10, 'triangle', g, 0, base * 1.2);
+    e.tone(base * 1.25, 0.10, 'triangle', g * 0.9, 0.06, base * 1.4);
+    e.tone(base * 1.5, 0.14, 'sine', g * 0.85, 0.12, base * 1.6);
+    if (level >= 3) {
+      e.tone(base * 2, 0.16, 'sawtooth', g * 0.5, 0.18, base * 1.8);
+    }
+  }
+
   /* Закрытие двери — щелчок + удар + короткий резонанс кузова (посадка) */
   doorClose() {
     const e = this.engine;

@@ -991,6 +991,12 @@ const CFG = {
     { count: 10, mult: 10, level: 3 },
   ],
 
+  comboStreakTiers: [        // пороги серии заказов для milestone-фидбека (juice)
+    { count: 3,  level: 1 },
+    { count: 5,  level: 2 },
+    { count: 10, level: 3 },
+  ],
+
   // Качество (устаревший алиас, держится ради обратной совместимости старых
   // сохранений — реальные настройки теперь в CFG.gfx)
   quality: 'high', // high | low (вкл/выкл тени, pixelRatio)
@@ -3668,6 +3674,20 @@ class SfxLibrary {
     }
   }
 
+  /* Milestone серии заказов — восходящий arpeggio (3 ноты, тем выше чем больше уровень) */
+  comboMilestone(level = 1) {
+    const e = this.engine;
+    if (!e.enabled) return;
+    const g = 0.12 + level * 0.03;
+    const base = 440 + level * 80;               // 520 / 600 / 680 Гц
+    e.tone(base, 0.10, 'triangle', g, 0, base * 1.2);
+    e.tone(base * 1.25, 0.10, 'triangle', g * 0.9, 0.06, base * 1.4);
+    e.tone(base * 1.5, 0.14, 'sine', g * 0.85, 0.12, base * 1.6);
+    if (level >= 3) {
+      e.tone(base * 2, 0.16, 'sawtooth', g * 0.5, 0.18, base * 1.8);
+    }
+  }
+
   /* Закрытие двери — щелчок + удар + короткий резонанс кузова (посадка) */
   doorClose() {
     const e = this.engine;
@@ -4970,6 +4990,10 @@ class AudioManager {
     Events.on('nearmiss:streak', (d) => {
       if (!this._ready) return;
       this.sfx.nearMissStreak(d && d.level ? d.level : 1);
+    });
+    Events.on('combo:milestone', (d) => {
+      if (!this._ready) return;
+      this.sfx.comboMilestone(d && d.level ? d.level : 1);
     });
     Events.on('ped:kick', () => {
       if (!this._ready) return;
@@ -16973,6 +16997,15 @@ class Game {
       }
       const bonus = r.tips > 0 ? ' + ' + fmtMoney(r.tips) + ' чаевых' : '';
       const streakText = this.comboStreak > 1 ? ' 🔥 серия ' + this.comboStreak + ' ×' + comboMult.toFixed(2) : '';
+      // milestone-фидбек при достижении порога серии заказов (аналог near-miss streak)
+      for (let i = 0; i < CFG.comboStreakTiers.length; i++) {
+        const t = CFG.comboStreakTiers[i];
+        if (this.comboStreak === t.count) {
+          this.ui.toast('🔥 СЕРИЯ ЗАКАЗОВ ×' + this.comboStreak + '! Бонус ×' + comboMult.toFixed(2), '#ffd75e');
+          Events.emit('combo:milestone', { streak: this.comboStreak, mult: comboMult, level: t.level });
+          break;
+        }
+      }
       let starText = '';
       if (r.stars) {
         starText = ' · ' + '★'.repeat(Math.max(1, Math.min(5, r.stars))) + ' '.repeat(Math.max(0, 5 - Math.min(5, r.stars)));
