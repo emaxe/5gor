@@ -416,6 +416,21 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
   text-shadow: 0 1px 6px rgba(255, 107, 107, 0.5);
 }
 
+/* ---------- Всплеск "Занос!" ---------- */
+@keyframes driftPop {
+  0% { opacity: 0; transform: translateY(8px) scale(0.8); }
+  20% { opacity: 1; transform: translateY(0) scale(1.1); }
+  80% { opacity: 1; transform: translateY(-10px) scale(1); }
+  100% { opacity: 0; transform: translateY(-24px) scale(0.95); }
+}
+.drift-pop {
+  position: fixed; color: #5ec8ff; font-weight: 800; font-size: 16px;
+  pointer-events: none; z-index: 35;
+  animation: driftPop 1s ease-out forwards;
+  text-shadow: 0 1px 8px rgba(94, 200, 255, 0.6);
+  letter-spacing: 0.5px;
+}
+
 /* ---------- Рейтинг glow ---------- */
 @keyframes starGlow {
   0% { text-shadow: 0 0 12px #ffd75e; }
@@ -15313,6 +15328,8 @@ class UIManager {
     Events.on('money:changed', (d) => { if (d && d.delta) this.cashPop(d.delta); });
     Events.on('rating:changed', (d) => { if (d && d.delta) this.flashRating(d.delta > 0); });
     Events.on('order:rated', (d) => this.showOrderRatingBanner(d));
+    // VFX-всплеск на завершённый занос: деньги + индикатор "Занос!"
+    Events.on('drift:completed', (d) => { if (d && d.reward) this.driftPop(d.reward, d.duration); });
   }
 
   /* ---------- Кнопки ---------- */
@@ -16408,6 +16425,28 @@ class UIManager {
     span.style.top = (rect.bottom + 4) + 'px';
     document.body.appendChild(span);
     setTimeout(() => span.remove(), 1200);
+  }
+
+  /* ---------- Всплеск "Занос!" при завершении дрифта ---------- */
+  driftPop(reward, duration) {
+    // Всплеск денег над счётчиком
+    this.cashPop(reward);
+    // Индикатор "Занос!" в центре-верх HUD
+    const el = document.createElement('span');
+    el.className = 'drift-pop';
+    el.textContent = 'Занос!' + (duration > 2 ? ' x' + Math.round(duration) + 'с' : '');
+    // Позиция — чуть ниже верхнего HUD-бара, по центру
+    const moneyEl = this._els.money || this.$('money');
+    if (moneyEl) {
+      const rect = moneyEl.getBoundingClientRect();
+      el.style.left = (rect.left + rect.width / 2 - 30) + 'px';
+      el.style.top = (rect.top - 28) + 'px';
+    } else {
+      el.style.left = '50%';
+      el.style.top = '80px';
+    }
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1000);
   }
 
   /* ---------- Вспышка рейтинга ---------- */

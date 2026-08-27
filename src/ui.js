@@ -59,6 +59,8 @@ export class UIManager {
     Events.on('money:changed', (d) => { if (d && d.delta) this.cashPop(d.delta); });
     Events.on('rating:changed', (d) => { if (d && d.delta) this.flashRating(d.delta > 0); });
     Events.on('order:rated', (d) => this.showOrderRatingBanner(d));
+    // VFX-всплеск на завершённый занос: деньги + индикатор "Занос!"
+    Events.on('drift:completed', (d) => { if (d && d.reward) this.driftPop(d.reward, d.duration); });
   }
 
   /* ---------- Кнопки ---------- */
@@ -1154,6 +1156,28 @@ export class UIManager {
     span.style.top = (rect.bottom + 4) + 'px';
     document.body.appendChild(span);
     setTimeout(() => span.remove(), 1200);
+  }
+
+  /* ---------- Всплеск "Занос!" при завершении дрифта ---------- */
+  driftPop(reward, duration) {
+    // Всплеск денег над счётчиком
+    this.cashPop(reward);
+    // Индикатор "Занос!" в центре-верх HUD
+    const el = document.createElement('span');
+    el.className = 'drift-pop';
+    el.textContent = 'Занос!' + (duration > 2 ? ' x' + Math.round(duration) + 'с' : '');
+    // Позиция — чуть ниже верхнего HUD-бара, по центру
+    const moneyEl = this._els.money || this.$('money');
+    if (moneyEl) {
+      const rect = moneyEl.getBoundingClientRect();
+      el.style.left = (rect.left + rect.width / 2 - 30) + 'px';
+      el.style.top = (rect.top - 28) + 'px';
+    } else {
+      el.style.left = '50%';
+      el.style.top = '80px';
+    }
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1000);
   }
 
   /* ---------- Вспышка рейтинга ---------- */
