@@ -61,6 +61,8 @@ export class UIManager {
     Events.on('order:rated', (d) => this.showOrderRatingBanner(d));
     // VFX-всплеск на завершённый занос: деньги + индикатор "Занос!"
     Events.on('drift:completed', (d) => { if (d && d.reward) this.driftPop(d.reward, d.duration); });
+    // VFX-всплеск на идеальную остановку: золотой «✨ Идеально!» над счётчиком
+    Events.on('stop:perfect', (d) => { if (d && d.reward) this.perfectStopPop(d.reward); });
   }
 
   /* ---------- Кнопки ---------- */
@@ -1171,6 +1173,28 @@ export class UIManager {
     if (moneyEl) {
       const rect = moneyEl.getBoundingClientRect();
       el.style.left = (rect.left + rect.width / 2 - 30) + 'px';
+      el.style.top = (rect.top - 28) + 'px';
+    } else {
+      el.style.left = '50%';
+      el.style.top = '80px';
+    }
+    document.body.appendChild(el);
+    setTimeout(() => el.remove(), 1000);
+  }
+
+  /* ---------- Всплеск "Идеально!" при идеальной остановке ---------- */
+  perfectStopPop(reward) {
+    // Всплеск денег над счётчиком
+    this.cashPop(reward);
+    // Индикатор "✨ Идеально!" в центре-верх HUD
+    const el = document.createElement('span');
+    el.className = 'drift-pop';
+    el.textContent = '✨ Идеально!';
+    el.style.color = '#fcd34d';
+    const moneyEl = this._els.money || this.$('money');
+    if (moneyEl) {
+      const rect = moneyEl.getBoundingClientRect();
+      el.style.left = (rect.left + rect.width / 2 - 40) + 'px';
       el.style.top = (rect.top - 28) + 'px';
     } else {
       el.style.left = '50%';

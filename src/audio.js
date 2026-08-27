@@ -114,6 +114,10 @@ export class AudioManager {
       this.sfx.spatialSpeak(null, null, 0, 0, toneType);
       this.radio.duck(0.45, 0.3, 0.9);
     });
+    Events.on('police:escape', (d) => {
+      if (!this._ready) return;
+      this.sfx.policeEscape(d && d.level ? d.level : 1);
+    });
     Events.on('stall', () => {
       if (!this._ready) return;
       this.sfx.stall();

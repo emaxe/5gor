@@ -185,6 +185,23 @@ export class SfxLibrary {
     e.tone(550, 0.14, 'sine', 0.12, 0, 280);    // нисходящий питч 550→280 Гц
   }
 
+  /* Побег от полиции — триумфальный восходящий arpeggio + лёгкий шум «улитки» */
+  policeEscape(level = 1) {
+    const e = this.engine;
+    if (!e.enabled) return;
+    const g = 0.14 + level * 0.03;
+    const base = 440 + level * 60;               // 500 / 560 / 620 Гц
+    // Восходящее arpeggio — «мы вырвались!»
+    e.tone(base, 0.10, 'triangle', g, 0, base * 1.3);
+    e.tone(base * 1.25, 0.10, 'triangle', g * 0.9, 0.06, base * 1.5);
+    e.tone(base * 1.5, 0.14, 'sine', g * 0.85, 0.12, base * 1.7);
+    if (level >= 3) {
+      e.tone(base * 2, 0.16, 'sawtooth', g * 0.5, 0.18, base * 1.9);
+    }
+    // Короткий нисходящий «свист сливающейся сирены» — полиция осталась позади
+    e.noiseBurst(0.12, g * 0.4, 1200, 0);
+  }
+
   /* Достижение порога серии сближений — восходящий аккорд, громче и выше с уровнем */
   nearMissStreak(level = 1) {
     const e = this.engine;

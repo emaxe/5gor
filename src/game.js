@@ -480,6 +480,9 @@ export class Game {
       this.addMoney(reward);
       this.setRating(this.rating + ratingBonus);
       if (this.shiftStats) this.shiftStats.escapes++;
+      // VFX: тряска экрана — растёт с уровнем розыска (1★=0.15, 2★=0.25, 3★=0.35)
+      this.shakeT = 0.3 + level * 0.08;
+      this.shakeAmp = 0.15 + level * 0.08;
       this.ui.toast(`🚔 Скрылся от полиции! +${reward} ₽, рейтинг +${ratingBonus}`, '#7ee787');
     });
 
