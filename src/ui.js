@@ -55,6 +55,10 @@ export class UIManager {
     Events.on('achievement:unlocked', (ach) => this.showAchievementBanner(ach));
     Events.on('order:completed', (r) => { if (r && r.total != null) this.cashPop(r.total); });
     Events.on('crash', () => this.flashCrashVignette());
+    // VFX-подсветка изменения денег/рейтинга + баннер оценки заказа
+    Events.on('money:changed', (d) => { if (d && d.delta) this.cashPop(d.delta); });
+    Events.on('rating:changed', (d) => { if (d && d.delta) this.flashRating(d.delta > 0); });
+    Events.on('order:rated', (d) => this.showOrderRatingBanner(d));
   }
 
   /* ---------- Кнопки ---------- */
@@ -1136,18 +1140,38 @@ export class UIManager {
     try { this.game.audio.sfx.achievementFanfare(); } catch (_) {}
   }
 
-  /* ---------- Кэшбайн +₽ ---------- */
+  /* ---------- Кэшбайн +₽/-₽ ---------- */
   cashPop(amount) {
+    if (!amount) return;
     const moneyEl = this._els.money || this.$('money');
     if (!moneyEl) return;
     const rect = moneyEl.getBoundingClientRect();
     const span = document.createElement('span');
-    span.className = 'cash-pop';
-    span.textContent = '+' + fmtMoney(amount);
+    const isNeg = amount < 0;
+    span.className = 'cash-pop' + (isNeg ? ' negative' : '');
+    span.textContent = (isNeg ? '-' : '+') + fmtMoney(Math.abs(amount));
     span.style.left = (rect.left + rect.width / 2) + 'px';
     span.style.top = (rect.bottom + 4) + 'px';
     document.body.appendChild(span);
     setTimeout(() => span.remove(), 1200);
+  }
+
+  /* ---------- Вспышка рейтинга ---------- */
+  flashRating(positive) {
+    const el = this._els.rating || this.$('rating');
+    if (!el) return;
+    const cls = positive ? 'rating-glow' : 'rating-loss';
+    el.classList.remove('rating-glow', 'rating-loss');
+    void el.offsetWidth;
+    el.classList.add(cls);
+    setTimeout(() => el.classList.remove(cls), 500);
+  }
+
+  /* ---------- Баннер оценки заказа ---------- */
+  showOrderRatingBanner(d) {
+    if (!d) return;
+    const stars = '★'.repeat(d.stars) + '☆'.repeat(Math.max(0, 5 - d.stars));
+    this.showAchievementBanner({ icon: '⭐', name: stars + '  ' + (d.review || 'Спасибо!') });
   }
 
   /* ---------- Крэш-виньетка ---------- */

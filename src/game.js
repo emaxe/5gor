@@ -461,6 +461,12 @@ export class Game {
       }
     });
     events.on('toast', (d) => this.ui.toast(d.text, d.color));
+    // Авто-пауза при сворачивании вкладки
+    events.on('visibilityHidden', () => {
+      if (this.stateName === 'driving' || this.stateName === 'walking') {
+        this.togglePause();
+      }
+    });
 
     events.on('police:fine', (v) => {
       this.comboStreak = 0;

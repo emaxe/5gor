@@ -402,6 +402,11 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
   animation: cashPop 1.2s ease-out forwards;
   text-shadow: 0 1px 6px rgba(255,215,94,0.5);
 }
+/* Отрицательный кэш-поп (-₽) */
+.cash-pop.negative {
+  color: #ff6b6b;
+  text-shadow: 0 1px 6px rgba(255, 107, 107, 0.5);
+}
 
 /* ---------- Рейтинг glow ---------- */
 @keyframes starGlow {
@@ -410,6 +415,14 @@ canvas#game-canvas { position: fixed; inset: 0; width: 100%; height: 100%; displ
 }
 .rating-glow {
   animation: starGlow 0.4s ease-out;
+}
+/* Красная вспышка при снижении рейтинга */
+@keyframes ratingLossGlow {
+  0% { text-shadow: 0 0 12px #ff4444; color: #ff6b6b; }
+  100% { text-shadow: none; color: inherit; }
+}
+.rating-loss {
+  animation: ratingLossGlow 0.5s ease-out;
 }
 
 /* ---------- Крэш-виньетка ---------- */
