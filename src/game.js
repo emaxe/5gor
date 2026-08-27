@@ -273,14 +273,15 @@ export class Game {
     this.scene.add(this.stars);
 
     // Луна — мягкий спрайт с гало, появляется ночью (чистый декор, без PointLight)
-    const [mcv, mcx] = makeCanvas(128, 128);
-    const mgrad = mcx.createRadialGradient(64, 64, 20, 64, 64, 64);
+    const c = makeCanvas(128, 128);
+    const g = c.getContext('2d');
+    const mgrad = g.createRadialGradient(64, 64, 20, 64, 64, 64);
     mgrad.addColorStop(0, 'rgba(255,252,240,1)');
     mgrad.addColorStop(0.35, 'rgba(255,246,214,0.55)');
     mgrad.addColorStop(1, 'rgba(255,240,200,0)');
-    mcx.fillStyle = mgrad; mcx.fillRect(0, 0, 128, 128);
+    g.fillStyle = mgrad; g.fillRect(0, 0, 128, 128);
     const moonMat = new THREE.SpriteMaterial({
-      map: canvasToTexture(mcv), transparent: true, opacity: 0,
+      map: canvasToTexture(c), transparent: true, opacity: 0,
       blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
     });
     this.moon = new THREE.Sprite(moonMat);

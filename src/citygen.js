@@ -2198,13 +2198,14 @@ export class World {
   /* Радиальная fade-текстура для светового пятна фонаря */
   _glowTex() {
     if (this._glowTexCache) return this._glowTexCache;
-    const [cv, cx] = makeCanvas(64, 64);
-    const grad = cx.createRadialGradient(32, 32, 0, 32, 32, 32);
+    const c = makeCanvas(64, 64);
+    const g = c.getContext('2d');
+    const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
     grad.addColorStop(0, 'rgba(255,220,160,1)');
     grad.addColorStop(0.35, 'rgba(255,200,120,0.5)');
     grad.addColorStop(1, 'rgba(255,180,80,0)');
-    cx.fillStyle = grad; cx.fillRect(0, 0, 64, 64);
-    this._glowTexCache = canvasToTexture(cv);
+    g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+    this._glowTexCache = canvasToTexture(c);
     return this._glowTexCache;
   }
 
