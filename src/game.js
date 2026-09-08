@@ -576,7 +576,11 @@ export class Game {
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
       this._pendingPerfectStop = false;
-      this.setRating(this.rating - CFG.ratingFail.failOrder);
+      // Провал/отмена: пассажир вышел. Без сброса плафон такси остаётся тусклым,
+      // а бонусы стиля за вождение с пассажиром капают на пустой машине.
+      this.player.passengerCount = 0;
+      // Уход VIP-клиента стоит дороже обычного провала (vipLeave был мёртвым полем).
+      this.setRating(this.rating - ((d && d.reason === 'vip') ? CFG.ratingFail.vipLeave : CFG.ratingFail.failOrder));
     });
     events.on('shift:started', () => {
       this.comboStreak = 0;
@@ -659,6 +663,8 @@ export class Game {
     Events.emit('weather:changed', { weather: this.weather });
     this._applyDensity();
     this.orders.reset();
+    // Смена/день сменились: активного заказа нет — пассажир высаджен (плафон, стиль).
+    this.player.passengerCount = 0;
     this._gpsRoute = null;
     this._gpsLastDrop = null;
     this._gpsFuelRoute = null;
