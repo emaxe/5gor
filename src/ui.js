@@ -376,10 +376,20 @@ export class UIManager {
         if (prog) {
           prog.classList.remove('hidden');
           prog.textContent = 'Остановка ' + (a.dropIdx + 1) + '/' + dropCount;
+          prog._fragileText = 'multi'; // сброс кэша: else-ветка перерисует при переходе
         }
       } else {
         const prog = els['order-progress'];
-        if (prog) prog.classList.add('hidden');
+        if (prog) {
+          // Посылка: единственная остановка, освобождаем прогресс-строку под
+          // индикатор целости хрупкого груза (грязь-чек: DOM только при смене).
+          const fs = a.type === 'package' ? (a.fragileBroken ? '💔 Груз разбит — выплата −50%' : '📦 Груз цел') : '';
+          if (prog._fragileText !== fs) {
+            prog._fragileText = fs;
+            prog.classList.toggle('hidden', !fs);
+            if (fs) prog.textContent = fs;
+          }
+        }
       }
       els['order-desc'].textContent = a.drops[a.dropIdx].name;
       els['order-timer'].style.display = a.timeLimit ? '' : 'none';

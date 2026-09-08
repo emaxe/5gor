@@ -450,6 +450,9 @@ class PassengerManager {
     this.active = order;
     this.open = this.open.filter((o) => o.id !== order.id);
     player.passengerCount = order.type === 'package' ? 0 : 1;
+    if (order.type === 'package') {
+      Events.emit('toast', { text: '📦 Хрупкий груз в багажнике — избегайте сильных ударов!', color: '#d4a017' });
+    }
     player.style = 0.7;
     player.styleTimer = 0;
 
@@ -692,6 +695,7 @@ class PassengerManager {
     const res = {
       title: a.title, pay: pay, tips, total, type: a.type, missionId: a.missionId,
       est: a.estPay, dist: a.dist, partial: false, stars, review,
+      fragileBroken: !!a.fragileBroken,
     };
     const dlg = getPassengerDialogue('dropoff', a, this.weather);
     Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#7ee787' });
@@ -731,10 +735,15 @@ class PassengerManager {
   onCrash(impact) {
     const a = this.active;
     if (!a) return;
-    if (a.type === 'package') a.fragileBroken = true;
+    // Хрупкий груз: ломается только от удара выше порога (раньше — от любого
+    // касания молча, и игрок узнавал о -50% лишь при оплате).
+    if (a.type === 'package' && !a.fragileBroken && impact > 4.5) {
+      a.fragileBroken = true;
+      Events.emit('toast', { text: '💔 Хрупкий груз повреждён! Выплата −50%', color: '#e0a030' });
+    }
     if (impact > 8) {
       const dlg = getPassengerDialogue('crash', a, this.weather);
-      Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: '😱', color: '#ff6b6b' });
+      Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#ff6b6b' });
     }
     if (a.type === 'vip' && impact > 12) {
       this.fail(a, 'vip');

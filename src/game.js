@@ -539,7 +539,9 @@ export class Game {
         starText = ' · ' + '★'.repeat(Math.max(1, Math.min(5, r.stars))) + ' '.repeat(Math.max(0, 5 - Math.min(5, r.stars)));
         if (r.review) starText += ' «' + r.review + '»';
       }
-      this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay + bonusPay) + bonus + streakText + starText, '#7ee787');
+      // Явный маркер штрафа за разбитый груз в итоговом тосте посылки.
+      const fragText = r.fragileBroken ? ' · 💔 груз −50%' : '';
+      this.ui.toast('Заказ выполнен: +' + fmtMoney(r.pay + bonusPay) + bonus + streakText + starText + fragText, '#7ee787');
       // Идеальная остановка: бонус за плавное торможение перед высадкой
       if (this._pendingPerfectStop) {
         this._pendingPerfectStop = false;
