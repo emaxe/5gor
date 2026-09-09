@@ -131,7 +131,7 @@ export const CFG = {
 
   // Рейтинг и прокачка
   ratingPerOrder: { normal: 4, urgent: 6, vip: 7, group: 9, tourist: 10, package: 5, drunk: 6, race: 12 },
-  ratingFail: { crash: 2, hitPed: 15, failOrder: 5, vipLeave: 8, pedPunch: 3 },
+  ratingFail: { hitPed: 15, failOrder: 5, vipLeave: 8 },
 
   // Смена: 12 реальных минут = 24 игровых часа
   shiftStartHour: 9,
