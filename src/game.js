@@ -576,6 +576,9 @@ export class Game {
     events.on('order:failed', (d) => {
       this.shiftStats.failed++;
       this._pendingPerfectStop = false;
+      // Провал заказа рвёт серию: без сброса следующий заказ ошибочно продолжает
+      // множитель comboStreak и триггерит milestone-награды «с нуля».
+      this.comboStreak = 0;
       // Провал/отмена: пассажир вышел. Без сброса плафон такси остаётся тусклым,
       // а бонусы стиля за вождение с пассажиром капают на пустой машине.
       this.player.passengerCount = 0;
