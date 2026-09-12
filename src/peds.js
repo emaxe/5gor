@@ -1967,7 +1967,8 @@ export class PedestrianManager {
       // Вариант A: «Ругается и убегает»
       const quote = choice(this._punchFleePool(p.archetype));
       this.say(p, quote, 2.5);
-      this._startFlee(p, dx, dz, 4.0);
+      // Скорость отлёта — из конфига (ключ pedPunchKnockSpeed был мёртвым).
+      this._startFlee(p, dx, dz, (CFG && CFG.pedPunchKnockSpeed !== undefined) ? CFG.pedPunchKnockSpeed : 4.0);
     }
   }
 

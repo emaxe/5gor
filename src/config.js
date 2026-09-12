@@ -116,10 +116,6 @@ export const CFG = {
   farePerUnit: 1.35,     // ₽ за 1 метр пути (город ~500 м)
   timeBonusMax: 0.35,    // до +35% за быстрое выполнение
   tipsMax: 90,           // максимум чаевых
-  urgentMult: 1.6,
-  vipMult: 1.5,
-  groupMult: 0.9,
-  touristMult: 2.0,
   nightMult: 2.0,        // ночью тариф x2
   repairCostPerDmg: 22,  // ₽ за 1% урона
   washCost: 60,
