@@ -17628,7 +17628,7 @@ class Game {
     if (this.money < cost) { this.ui.toast('Не хватает денег на бензин', '#ff6b6b'); return; }
     this.money -= cost;
     this.player.refuel();
-    this.audio.chime();
+    this.audio.refuel();
     this.ui.toast('Заправлено за ' + fmtMoney(cost), '#7ee787');
     this._gpsFuelRoute = null; this._gpsFuelTarget = null; this._gpsTargetType = null;
     this._gpsRoute = null; this._gpsLastDrop = null;
