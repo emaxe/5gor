@@ -1530,6 +1530,7 @@ export class Game {
         this._driftReactionCd = 8;
         const a = this.orders.active;
         Events.emit('passenger:speak', {
+          event: 'fast',
           speaker: a.clientName || 'Пассажир',
           text: choice(PASSENGER_DRIFT_REACTIONS),
           avatar: a.clientAvatar || '🧑',

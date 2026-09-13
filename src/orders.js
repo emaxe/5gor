@@ -743,7 +743,7 @@ class PassengerManager {
     }
     if (impact > 8) {
       const dlg = getPassengerDialogue('crash', a, this.weather);
-      Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#ff6b6b' });
+      Events.emit('passenger:speak', { event: 'crash', speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#ff6b6b' });
     }
     if (a.type === 'vip' && impact > 12) {
       this.fail(a, 'vip');

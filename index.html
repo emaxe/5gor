@@ -910,7 +910,7 @@ const CFG = {
   lowFuelRatio: 0.25,   // ниже этой доли бака GPS ведёт к ближайшей заправке
 
   // Рейтинг и прокачка
-  ratingPerOrder: { normal: 4, urgent: 6, vip: 7, group: 9, tourist: 10, package: 5, drunk: 6, race: 12 },
+  ratingPerOrder: { normal: 4, urgent: 6, vip: 7, group: 9, tour: 10, package: 5, drunk: 6, race: 12 },
   ratingFail: { hitPed: 15, failOrder: 5, vipLeave: 8 },
 
   // Смена: 12 реальных минут = 24 игровых часа
@@ -14590,7 +14590,7 @@ class PassengerManager {
     }
     if (impact > 8) {
       const dlg = getPassengerDialogue('crash', a, this.weather);
-      Events.emit('passenger:speak', { speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#ff6b6b' });
+      Events.emit('passenger:speak', { event: 'crash', speaker: dlg.name, text: dlg.text, avatar: dlg.avatar, color: '#ff6b6b' });
     }
     if (a.type === 'vip' && impact > 12) {
       this.fail(a, 'vip');
@@ -18118,6 +18118,7 @@ class Game {
         this._driftReactionCd = 8;
         const a = this.orders.active;
         Events.emit('passenger:speak', {
+          event: 'fast',
           speaker: a.clientName || 'Пассажир',
           text: choice(PASSENGER_DRIFT_REACTIONS),
           avatar: a.clientAvatar || '🧑',

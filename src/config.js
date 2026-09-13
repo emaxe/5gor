@@ -126,7 +126,7 @@ export const CFG = {
   lowFuelRatio: 0.25,   // ниже этой доли бака GPS ведёт к ближайшей заправке
 
   // Рейтинг и прокачка
-  ratingPerOrder: { normal: 4, urgent: 6, vip: 7, group: 9, tourist: 10, package: 5, drunk: 6, race: 12 },
+  ratingPerOrder: { normal: 4, urgent: 6, vip: 7, group: 9, tour: 10, package: 5, drunk: 6, race: 12 },
   ratingFail: { hitPed: 15, failOrder: 5, vipLeave: 8 },
 
   // Смена: 12 реальных минут = 24 игровых часа
